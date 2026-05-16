@@ -1,13 +1,21 @@
 #include <archive.h>
 #include <archive_entry.h>
+#include <blake3.h>
 
+#include <algorithm>
+#include <array>
 #include <cerrno>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <unistd.h>
 #include <vector>
 
@@ -15,13 +23,26 @@ namespace {
 
 struct Options {
 	std::string output;
-	std::string source_dir;
+	std::vector<std::string> sources;
 	int verbose = 0;
 	bool one_file_system = false;
 };
 
+struct SourceSpec {
+	std::string original;
+	std::filesystem::path open_path;
+	std::filesystem::path open_parent;
+	std::filesystem::path archive_root;
+};
+
+struct HashingOutput {
+	FILE *file = nullptr;
+	bool close_file = false;
+	blake3_hasher hasher;
+};
+
 void usage(const char *prog) {
-	std::cerr << "usage: " << prog << " -f <out-file|-> [-v|-vv] [-x] <directory>\n";
+	std::cerr << "usage: " << prog << " -f <out-file|-> [-v|-vv] [-x] <path> [path ...]\n";
 }
 
 [[noreturn]] void fail_archive(const char *context, archive *a) {
@@ -38,6 +59,12 @@ void usage(const char *prog) {
 	std::exit(1);
 }
 
+[[noreturn]] void fail_error_code(const std::string &context,
+    const std::error_code &ec) {
+	std::cerr << "pax: " << context << ": " << ec.message() << '\n';
+	std::exit(1);
+}
+
 void check_archive(int r, archive *a, const char *context) {
 	if (r == ARCHIVE_OK)
 		return;
@@ -50,6 +77,49 @@ void check_archive(int r, archive *a, const char *context) {
 		return;
 	}
 	fail_archive(context, a);
+}
+
+int output_open_callback(archive *, void *) {
+	return ARCHIVE_OK;
+}
+
+la_ssize_t output_write_callback(archive *a, void *client_data, const void *buffer,
+    size_t length) {
+	auto *out = static_cast<HashingOutput *>(client_data);
+	size_t written = fwrite(buffer, 1, length, out->file);
+	if (written > 0)
+		blake3_hasher_update(&out->hasher, buffer, written);
+	if (written != length && ferror(out->file)) {
+		archive_set_error(a, errno, "failed to write archive output");
+		return -1;
+	}
+	return static_cast<la_ssize_t>(written);
+}
+
+int output_close_callback(archive *a, void *client_data) {
+	auto *out = static_cast<HashingOutput *>(client_data);
+	if (fflush(out->file) != 0) {
+		archive_set_error(a, errno, "failed to flush archive output");
+		return ARCHIVE_FATAL;
+	}
+	if (out->close_file && fclose(out->file) != 0) {
+		out->file = nullptr;
+		archive_set_error(a, errno, "failed to close archive output");
+		return ARCHIVE_FATAL;
+	}
+	out->file = nullptr;
+	return ARCHIVE_OK;
+}
+
+std::string blake3_hex(const blake3_hasher &hasher) {
+	std::array<uint8_t, BLAKE3_OUT_LEN> output{};
+	blake3_hasher_finalize(&hasher, output.data(), output.size());
+
+	std::ostringstream hex;
+	hex << std::hex << std::setfill('0');
+	for (uint8_t byte : output)
+		hex << std::setw(2) << static_cast<unsigned>(byte);
+	return hex.str();
 }
 
 Options parse_args(int argc, char **argv) {
@@ -76,30 +146,91 @@ Options parse_args(int argc, char **argv) {
 			std::cerr << "pax: unknown option: " << arg << '\n';
 			usage(argv[0]);
 			std::exit(2);
-		} else if (opts.source_dir.empty()) {
-			opts.source_dir = std::string(arg);
 		} else {
-			std::cerr << "pax: only one source directory is supported for now\n";
-			usage(argv[0]);
-			std::exit(2);
+			opts.sources.emplace_back(arg);
 		}
 	}
 
-	if (opts.output.empty() || opts.source_dir.empty()) {
+	if (opts.output.empty() || opts.sources.empty()) {
 		usage(argv[0]);
 		std::exit(2);
 	}
 	return opts;
 }
 
-std::string generic_archive_path(const std::filesystem::path &source_parent,
-    const char *source_path) {
-	std::filesystem::path absolute =
-	    std::filesystem::absolute(std::filesystem::path(source_path)).lexically_normal();
-	std::filesystem::path relative = absolute.lexically_relative(source_parent);
-	if (relative.empty())
-		relative = absolute.filename();
-	return relative.generic_string();
+bool has_trailing_slash(std::string_view path) {
+	return path.size() > 1 && path.back() == '/';
+}
+
+std::string strip_trailing_slashes(std::string_view path) {
+	while (path.size() > 1 && path.back() == '/')
+		path.remove_suffix(1);
+	return std::string(path);
+}
+
+SourceSpec make_source_spec(const std::string &arg) {
+	namespace fs = std::filesystem;
+
+	SourceSpec spec;
+	spec.original = arg;
+
+	std::string stripped = strip_trailing_slashes(arg);
+	bool follow_top_symlink = has_trailing_slash(arg);
+	fs::path display_path = fs::absolute(stripped).lexically_normal();
+
+	std::error_code ec;
+	if (follow_top_symlink) {
+		fs::file_status status = fs::status(display_path, ec);
+		if (ec)
+			fail_error_code(std::string("stat ") + arg, ec);
+		if (!fs::is_directory(status)) {
+			std::cerr << "pax: source is not a directory: " << arg << '\n';
+			std::exit(1);
+		}
+		spec.open_path = fs::canonical(display_path, ec);
+		if (ec)
+			fail_error_code(std::string("canonical ") + arg, ec);
+	} else {
+		fs::file_status status = fs::symlink_status(display_path, ec);
+		if (ec)
+			fail_error_code(std::string("lstat ") + arg, ec);
+		if (!fs::exists(status)) {
+			std::cerr << "pax: source does not exist: " << arg << '\n';
+			std::exit(1);
+		}
+		spec.open_path = display_path;
+	}
+
+	spec.open_parent = spec.open_path.parent_path();
+	spec.archive_root = display_path.filename();
+	if (spec.archive_root.empty())
+		spec.archive_root = ".";
+	return spec;
+}
+
+std::filesystem::path drop_first_component(const std::filesystem::path &path) {
+	std::filesystem::path out;
+	bool first = true;
+	for (const auto &component : path) {
+		if (first) {
+			first = false;
+			continue;
+		}
+		out /= component;
+	}
+	return out;
+}
+
+std::string archive_path_for_source(const SourceSpec &spec, const char *source_path) {
+	namespace fs = std::filesystem;
+
+	fs::path absolute = fs::absolute(fs::path(source_path)).lexically_normal();
+	fs::path relative = absolute.lexically_relative(spec.open_parent);
+	fs::path path_in_archive = spec.archive_root;
+	fs::path child_path = drop_first_component(relative);
+	if (!child_path.empty())
+		path_in_archive /= child_path;
+	return path_in_archive.generic_string();
 }
 
 void copy_file_data(archive *writer, archive_entry *entry) {
@@ -140,30 +271,7 @@ void copy_file_data(archive *writer, archive_entry *entry) {
 		fail_errno(std::string("close ") + source_path);
 }
 
-void write_pax_archive(const Options &opts) {
-	namespace fs = std::filesystem;
-
-	fs::path source = fs::absolute(opts.source_dir).lexically_normal();
-	if (!fs::is_directory(fs::symlink_status(source))) {
-		std::cerr << "pax: source is not a directory: " << opts.source_dir << '\n';
-		std::exit(1);
-	}
-	fs::path source_parent = source.parent_path();
-
-	archive *writer = archive_write_new();
-	if (writer == nullptr) {
-		std::cerr << "pax: cannot allocate archive writer\n";
-		std::exit(1);
-	}
-
-	check_archive(archive_write_add_filter_none(writer), writer, "set uncompressed output");
-	check_archive(archive_write_set_format_pax(writer), writer, "set pax format");
-	check_archive(archive_write_set_options(writer, "xattrheader=ALL,hdrcharset=UTF-8"),
-	    writer, "set pax options");
-
-	const char *output_name = opts.output == "-" ? nullptr : opts.output.c_str();
-	check_archive(archive_write_open_filename(writer, output_name), writer, "open output");
-
+void write_source(archive *writer, const Options &opts, const SourceSpec &source) {
 	archive *disk = archive_read_disk_new();
 	if (disk == nullptr) {
 		std::cerr << "pax: cannot allocate disk reader\n";
@@ -178,7 +286,8 @@ void write_pax_archive(const Options &opts) {
 	}
 	check_archive(archive_read_disk_set_standard_lookup(disk), disk,
 	    "set uid/gid name lookup");
-	check_archive(archive_read_disk_open(disk, source.c_str()), disk, "open source directory");
+	check_archive(archive_read_disk_open(disk, source.open_path.c_str()), disk,
+	    "open source path");
 
 	for (;;) {
 		archive_entry *entry = archive_entry_new();
@@ -197,7 +306,7 @@ void write_pax_archive(const Options &opts) {
 
 		const char *source_path = archive_entry_sourcepath(entry);
 		if (source_path != nullptr) {
-			std::string archive_path = generic_archive_path(source_parent, source_path);
+			std::string archive_path = archive_path_for_source(source, source_path);
 			archive_entry_set_pathname(entry, archive_path.c_str());
 		}
 
@@ -225,8 +334,43 @@ void write_pax_archive(const Options &opts) {
 
 	check_archive(archive_read_close(disk), disk, "close disk reader");
 	check_archive(archive_read_free(disk), disk, "free disk reader");
+}
+
+void write_pax_archive(const Options &opts) {
+	archive *writer = archive_write_new();
+	if (writer == nullptr) {
+		std::cerr << "pax: cannot allocate archive writer\n";
+		std::exit(1);
+	}
+
+	check_archive(archive_write_add_filter_none(writer), writer, "set uncompressed output");
+	check_archive(archive_write_set_format_pax(writer), writer, "set pax format");
+	check_archive(archive_write_set_options(writer, "xattrheader=ALL,hdrcharset=UTF-8"),
+	    writer, "set pax options");
+
+	HashingOutput output;
+	blake3_hasher_init(&output.hasher);
+	if (opts.output == "-") {
+		output.file = stdout;
+		output.close_file = false;
+	} else {
+		output.file = fopen(opts.output.c_str(), "wb");
+		if (output.file == nullptr)
+			fail_errno(std::string("open ") + opts.output);
+		output.close_file = true;
+	}
+	check_archive(archive_write_open(writer, &output, output_open_callback,
+			  output_write_callback, output_close_callback),
+	    writer, "open output");
+
+	for (const std::string &source_arg : opts.sources)
+		write_source(writer, opts, make_source_spec(source_arg));
+
 	check_archive(archive_write_close(writer), writer, "close output");
 	check_archive(archive_write_free(writer), writer, "free writer");
+
+	std::cerr << blake3_hex(output.hasher) << "  "
+		  << (opts.output == "-" ? "-" : opts.output) << '\n';
 }
 
 } // namespace

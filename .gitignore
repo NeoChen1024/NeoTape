@@ -2,4 +2,5 @@
 *.d
 build/
 bin/
+lib/
 *.log
