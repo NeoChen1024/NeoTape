@@ -4,3 +4,6 @@ build/
 bin/
 lib/
 *.log
+.agent/
+.codex/
+.vscode/
