@@ -21,18 +21,18 @@ All records in an archive volume use a fixed **block_size** declared in the Volu
 
 ## Project Status
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 0 | pax writer CLI | Done |
-| 1 | Binary header layout | Spec |
-| 2 | Filesystem spool backend | Spec |
-| 3 | Minimal reader | Spec |
-| 4 | NeoTape/PAX integration | Spec |
-| 5 | Slice trailer metadata & catalog | Spec |
-| 6 | Tape device backend | Spec |
-| 7 | Recovery & salvage | Spec |
-| 8 | Cartridge header & self-description | Spec |
-| 9 | Filesystem-native payload profiles | Spec |
+| Phase | Description                         | Status |
+| ----- | ----------------------------------- | ------ |
+| 0     | pax writer CLI                      | Done   |
+| 1     | Binary header layout                | Spec   |
+| 2     | Filesystem spool backend            | Spec   |
+| 3     | Minimal reader                      | Spec   |
+| 4     | NeoTape/PAX integration             | Spec   |
+| 5     | Slice trailer metadata & catalog    | Spec   |
+| 6     | Tape device backend                 | Spec   |
+| 7     | Recovery & salvage                  | Spec   |
+| 8     | Cartridge header & self-description | Spec   |
+| 9     | Filesystem-native payload profiles  | Spec   |
 
 See `docs/RFC_Draft.md` for the full format specification and `docs/ROADMAP.md` for the implementation plan.
 
