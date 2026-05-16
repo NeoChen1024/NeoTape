@@ -7,3 +7,6 @@
 [submodule "3rdparty/mt-st"]
 	path = 3rdparty/mt-st
 	url = https://github.com/iustin/mt-st.git
+[submodule "3rdparty/crc32c"]
+	path = 3rdparty/crc32c
+	url = https://github.com/google/crc32c.git
