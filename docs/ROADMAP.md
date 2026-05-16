@@ -56,7 +56,7 @@ Candidate headers to freeze first:
 - Archive End Header
 
 Deferred:  
-- Full Cartridge Header byte layout.  
+- Full Medium Header byte layout.  
 - Full Slice Trailer metadata item schema.  
 - Final catalog binary schema.
 
@@ -180,7 +180,7 @@ Validation:
 - Filemark spacing tests.  
 - Multi-volume manual prompt test.  
 - Mismatch handling test.  
-- ScanNextVolumeHeader test on a cartridge containing multiple archive instances.
+- ScanNextVolumeHeader test on a medium containing multiple archive instances.
 
 Spec feedback expected:  
 - Portable mapping from SCSI sequential-access behavior to user-space operations.  
@@ -216,27 +216,29 @@ Spec feedback expected:
 - stdout contamination prevention rules.  
 - Salvage output marking requirements.
 
-# Phase 8: Cartridge Header and Long-Term Self-Description
+# Phase 8: Medium Header and Long-Term Self-Description
 
-Goal: define the immutable BOT cartridge header and recovery bundle.
+Goal: define the immutable BOT Medium Header and recovery bundle.
+
+Spec draft: [docs/spec/05-medium-header.md](spec/05-medium-header.md)
 
 Deliverables:  
-- Cartridge Header binary/ASCII prefix.  
-- Cartridge metadata bundle format using restricted ar-style flat member container.  
-- Embedded FORMAT-SPEC, RESTORE, README, and minimal neotape-cat-volumes source archive.  
-- Cartridge initialization tool.
+- Medium Header binary/ASCII prefix.  
+- Medium metadata bundle format using restricted ar-style flat member container.  
+- Embedded FORMAT-SPEC, RESTORE, README, and optional minimal neotape-cat-volumes source package.  
+- Medium initialization tool.
 
 Validation:  
-- Initialize blank virtual cartridge or tape.  
-- Read BOT cartridge header without external database.  
+- Initialize blank virtual medium or tape.  
+- Read BOT Medium Header without external database.  
 - Verify metadata bundle integrity.  
 - Confirm header does not contain mutable archive index or free-space state.
 
 Spec feedback expected:  
-- Cartridge header first-record minimum fields.  
-- Multi-record cartridge header layout.  
+- Medium Header first-record minimum fields.  
+- Multi-record Medium Header layout.  
 - Recommended content of self-description bundle.  
-- Relationship with barcode, MAM, and external tape database.
+- Restricted ar member naming and integrity rules.
 
 # Phase 9: Filesystem-Native Payload Profiles
 
@@ -302,12 +304,12 @@ Validation:
 - Restore drills.  
 - Partial restore drills.  
 - Damaged media simulation.  
-- Multi-archive cartridge scanning.
+- Multi-archive medium scanning.
 
 # Open Implementation Questions
 
 1. CLOSED: The first implementation should use C++ with a standard GNU Makefile.  
-2. Should the minimal reader be dependency-light enough to embed in cartridge metadata bundle as source code?  
+2. Should the minimal reader be dependency-light enough to embed in medium metadata bundle as source code?  
 3. What is the first stable block_size default for real LTO drives: 1 MiB, 4 MiB, 8 MiB, or device-specific?  
 4. Should the first public implementation support only spool mode and pax profile, delaying tape backend until format tests are stable?  
 5. Should the catalog format be binary-only, text-friendly, or dual-layer with binary records plus optional human-readable summaries?  

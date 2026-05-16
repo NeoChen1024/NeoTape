@@ -23,7 +23,7 @@ A spool archive may look like this:
 ```text
 archive.spool/
   volume-000001/
-    tape-file-000000.cartridge-header.ntf
+    tape-file-000000.medium-header.ntf
     tape-file-000001.volume-header.ntf
     tape-file-000002.slice-000001.ntf
     tape-file-000003.slice-000002.ntf
@@ -99,7 +99,7 @@ If a wrong disc or wrong volume directory is supplied, the reader should reject 
 
 ## Capacity Policy
 
-Optical media have much smaller capacity than LTO cartridges. The NeoTape core format does not need special rules for this. The writer or wrapper should choose suitable virtual volume size limits.
+Optical media have much smaller capacity than LTO media. The NeoTape core format does not need special rules for this. The writer or wrapper should choose suitable virtual volume size limits.
 
 Examples:
 

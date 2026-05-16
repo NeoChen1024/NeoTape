@@ -2,7 +2,7 @@
 
 Status: design note / implementation note.
 
-This document defines the intended safety behavior for the NeoTape tape-device backend. The goal is to prevent accidental destruction of existing tape data while still allowing multiple NeoTape archive instances to be stored on the same physical cartridge.
+This document defines the intended safety behavior for the NeoTape tape-device backend. The goal is to prevent accidental destruction of existing tape data while still allowing multiple NeoTape archive instances to be stored on the same physical medium.
 
 ## Core Rule
 
@@ -23,7 +23,7 @@ Initialization is the only mode that intentionally writes from BOT.
 
 Initialization may create or rewrite media-level structures such as:
 
-- Cartridge Header.
+- Medium Header.
 - Initial media identity metadata.
 - Optional implementation-specific label or diagnostic metadata.
 
@@ -160,14 +160,14 @@ Instead, it should enter one of these paths:
 
 This preserves the possibility of later salvage and avoids accidentally making recovery more confusing.
 
-## Multiple Archive Instances per Cartridge
+## Multiple Archive Instances per Medium
 
-The append-only rule supports multiple independent NeoTape archive instances on a single physical cartridge.
+The append-only rule supports multiple independent NeoTape archive instances on a single physical medium.
 
 Conceptual layout:
 
 ```text
-[Cartridge Header]
+[Medium Header]
 [Archive A Volume Header]
 [Archive A Slice...]
 [Archive A End Header]
