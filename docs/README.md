@@ -25,11 +25,12 @@ docs/
   roadmap.md
 
   spec/
+    terminology.md
     00-header-common.md
     01-medium-header.md
     02-volume-header.md
     03-segment-header.md
-     04-archive-end-header.md
+    04-archive-end-header.md
     06-volume-layout.md
     07-segments-and-slices.md
     08-continuation.md
@@ -63,6 +64,7 @@ behavior, reader state machine, error handling, and payload profile contracts.
 Phase 1 header byte layout work should primarily land in:
 
 ```text
+docs/spec/terminology.md
 docs/spec/00-header-common.md
 docs/spec/01-medium-header.md
 docs/spec/02-volume-header.md

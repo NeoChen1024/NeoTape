@@ -2,34 +2,43 @@
 
 Status: draft / common rules.
 
-This document defines rules shared by NeoTape fixed headers and trailers. Header
-type-specific field inventories are defined in their own documents.
+This document defines rules shared by NeoTape fixed headers. Header type-specific
+field inventories are defined in their own documents.
 
-## Field Table Conventions
+## Datatype Reference
 
-The exact binary layout, datatype mapping, and fixed field sizes are still being
-defined. Field tables may include empty `datatype` and `size (in bytes)` columns
-until those decisions are made explicitly.
+All fixed header field tables in this specification use the following datatypes:
 
-## Multi-byte Datatypes
-
-Unless explicitly stated, all multi-byte values (like int32) are little-endian.
+| Datatype     | Description                                                                  |
+| ------------ | ---------------------------------------------------------------------------- |
+| `uint8`      | Unsigned 8-bit integer.                                                      |
+| `uint8_enum` | Unsigned 8-bit integer with enumerated values defined per field.             |
+| `uint16`     | Unsigned 16-bit integer, little-endian.                                      |
+| `uint32`     | Unsigned 32-bit integer, little-endian.                                      |
+| `uint64`     | Unsigned 64-bit integer, little-endian.                                      |
+| `char[N]`    | Fixed N-byte character array. NUL-terminated or NUL-padded per field rules.  |
+| `byte[N]`    | Fixed N-byte raw binary array.                                               |
+| `byte[*]`    | Auto-calculated zero padding. Expands to the number of zero bytes needed to fill the 1024-byte fixed header area. Writers MUST write zero; readers MUST include all bytes in CRC32C. |
+| `nt_time`    | NUL-terminated UTC timestamp. 20 bytes. Encoding defined in Timestamp Format.  |
+| `nt_uuid`    | NUL-terminated UUID string per RFC 4122. 37 bytes.                            |
+| `nt_hash`    | BLAKE3 256-bit hash. 32 bytes.                                               |
+| `nt_crc32c`  | CRC32C checksum, little-endian. 4 bytes. Algorithm defined in CRC32C Algorithm section. |
 
 ## Magic Value
 
-All NeoTape fixed headers and trailers MUST use the same 8-byte magic value:
+All NeoTape fixed headers MUST use the same 8-byte magic value:
 
 ```text
 NeoTape\0
 ```
 
-Header type is distinguished by each header or trailer's type field, not by a
-different magic value.
+Header type is distinguished by each header's type field, not by a different
+magic value.
 
 ## Common Header Prefix
 
-Every NeoTape fixed header and trailer MUST begin with the same three fields in
-this exact order:
+Every NeoTape fixed header MUST begin with the same three fields in this exact
+order:
 
 | Field          | datatype | size (in bytes) |
 | -------------- | -------- | --------------- |
@@ -52,8 +61,7 @@ No fixed header may start at a non-zero offset within a tape record.
 
 ## Fixed Header Size
 
-Every NeoTape fixed header and trailer field area MUST occupy exactly 1024
-bytes.
+Every NeoTape fixed header field area MUST occupy exactly 1024 bytes.
 
 Every fixed header MUST place its CRC32C field as the last 4 bytes of that
 1024-byte fixed area. The CRC32C is computed over all preceding fixed header
@@ -63,6 +71,26 @@ excluded from its own calculation.
 Unused bytes in the 1024-byte fixed area MUST be represented as a reserved field
 and MUST be written as zero by writers. Readers MUST include reserved bytes in
 the CRC32C calculation.
+
+## CRC32C Algorithm
+
+NeoTape uses CRC32C (Castagnoli polynomial) with the following parameters:
+
+- Polynomial: `0x82F63B78`
+- Initial value: `0xFFFFFFFF`
+- Final XOR: `0xFFFFFFFF`
+- Input reflection: yes
+- Result reflection: yes
+
+Implementations MAY use any compatible method (lookup-table, slicing-by-8,
+hardware CRC32C instructions).
+
+The CRC32C is computed over all fixed header bytes preceding the
+`header_crc32c` field, including reserved and zero-filled fields, in their
+on-media byte order. The `header_crc32c` field itself is excluded from the
+computation.
+
+All `nt_crc32c` fields in NeoTape headers use this algorithm.
 
 ## Data Continuation Rule
 

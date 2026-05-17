@@ -111,7 +111,7 @@ BD-R DL:  approximately 50 GB nominal media class
 BD-R XL:  larger media classes, depending on drive and media support
 ```
 
-Implementations should reserve space for NeoTape headers, trailers, manifests, filesystem overhead, and disc filesystem metadata. The volume size limit should be conservative rather than attempting to fill media to the last byte.
+Implementations should reserve space for NeoTape headers, TRAILER_METADATA segments, manifests, filesystem overhead, and disc filesystem metadata. The volume size limit should be conservative rather than attempting to fill media to the last byte.
 
 ## Non-Goals
 

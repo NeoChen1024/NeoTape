@@ -38,52 +38,10 @@ NeoTape 因此採用 LTO 原生分隔能力：每個 archive volume 有 volume h
 
 # 2. Terminology
 
-## Logical Hierarchy:
+Terminology is split into [docs/spec/terminology.md](spec/terminology.md).
 
-Archive
-
-一整組 NeoTape 備份，由一卷或多卷 LTO 磁帶組成。Archive 由 archive_uuid 識別。
-
-Volume
-
-Archive volume 是某個 archive instance 在一卷 physical medium 上的部分。它有 tape_seq_num，從 1 起算。其 volume header 位於該 archive instance 在該 medium 上的第一個 archive tape file；若從 BOT 初始化，tape file 0 是 Medium Header，第一個 archive volume header 通常位於 tape file 1。
-
-Tape File
-
-由 LTO filemark 分隔出的磁帶邏輯檔案。NeoTape v0.1 使用 tape file 作為 volume header、logical slice、archive end 等 slice-level 或 archive-level 可 seek 物理 boundary；physical segment 通常不是獨立 tape file。
-
-Logical Slice
-
-一段 length-framed payload byte range。每個 logical slice 由一個或多個 physical segments 組成，總長度由最後一個 Segment Header 的 slice_payload_size 驗證。Payload 可以是 NeoTape/PAX profile、raw byte stream 或未來定義的其他 profile。
-
-Physical Segment
-
-logical slice tape file 內的一個 NeoTape segment。它包含一個 segment header block 與後續 payload blocks。Physical segment 是某個 logical slice 的連續 byte range。單一 Logical Slice 可以由多個 physical segments 組成；segments 之間以 explicit length fields 串接，通常不以 LTO filemark 分隔，並可在 EOT 時跨越多卷磁帶。
-
-Continuation
-
-當 logical slice 尚未完成但目前 volume 遇到 EOT / ENOSPC 時，下一卷磁帶可建立同一 logical slice 的下一個 physical segment。Continuation segment 不是新的 logical slice，而是前一 segment 的 byte-exact continuation。
-
-EOA
-
-End of Archive。對 tar/pax 而言，通常是至少兩個 512-byte zero records。In NeoTape core, EOA is payload-profile data only and is never used as a slice or segment boundary. On-tape logical slices do not need slice-local EOA markers.
-SLICE_END
-Segment Header 中的 SLICE_END flag 標記 writer 宣告的 logical slice 結束。此 segment header 同時攜帶 authoritative 的 slice_payload_size 與 slice_payload_blake3。TRAILER_METADATA segments 可隨後接續（在 slice-level filemark 之前），但不屬於 payload。若 EOT 發生在 SLICE_END segment header 成功寫入之前，下一卷的 continuation segment 必須帶有 SLICE_END flag。
-
-## NeoTape header
-
-Physical medium
-
-一個可順序讀寫且可由 NeoTape 初始化的實體儲存媒介。對 LTO 部署而言，一個 physical medium 通常就是一卷 LTO tape medium。每個 physical medium 可以包含零個、一個或多個完整 NeoTape archive instances，依序以 tape files 排列。
-
-Archive instance
-
-一個由 archive_uuid 識別的完整 NeoTape 備份實例。Archive instance 可以佔用一卷或多卷 physical media，也可以與其他 archive instances 共用同一卷 physical medium 的不同 tape file range。
-
-Medium Header:
-
-Physical medium 起始處的 mandatory immutable Medium Header。它描述 medium 層級的格式、初始化資訊、預設 tape block size、format version、restore instructions、medium name 以及 neotape-cat-volumes source bundle。它不是 archive table of contents，也不能作為後續 append archive 的可變索引。
-NeoTape 定義的固定格式 metadata header，用於 volume、segment 與 archive end record。NeoTape header 不屬於 payload stream，不會輸出給下游 extractor。
+When terminology in this RFC draft conflicts with `docs/spec/terminology.md`,
+the split-out terminology document is authoritative.
 
 # 3\. Design Goals
 
@@ -124,9 +82,9 @@ NeoTape assumes modern LTO tape drives accessed through the standard SCSI sequen
 
 NeoTape does not require raw SCSI passthrough for normal operation. It only requires the operating system's standard tape device interface for open/read/write, writing filemarks, spacing filemarks, rewind/offline, detecting EOT/EOD, and setting or using variable block mode. The precise mapping of those operations is implementation-specific, but the on-tape format is not tied to a private OS or vendor API.
 
-NeoTape v0.1 requires tape record sizes large enough to hold every archive-time fixed header as a single record. Implementations MUST support at least 256 KiB tape records for volume, segment, and archive end header records. Each archive volume MUST declare a fixed block_size in its Volume Header, and all NeoTape records in that archive volume MUST use that block size unless a future profile explicitly defines a compatible record-framing exception. The Medium Header is excluded from this archive-volume block_size rule because it is written at BOT during medium initialization and may span multiple records. block_size SHOULD be a positive multiple of 512 bytes for NeoTape/PAX payload profile compatibility. 8 MiB is the recommended default for high-throughput LTO operation when supported, but the chosen value is fixed per archive volume after the Volume Header is committed.
+NeoTape v0.1 requires tape record sizes large enough to hold every archive-time fixed header as a single record. Implementations MUST support at least 256 KiB tape records for volume, segment, and archive end header records. Each archive volume MUST declare a fixed volume_block_size in its Volume Header, and all NeoTape records in that archive volume MUST use that block size unless a future profile explicitly defines a compatible record-framing exception. The Medium Header is excluded from this archive-volume volume_block_size rule because it is written at BOT during medium initialization and may span multiple records. volume_block_size SHOULD be a positive multiple of 512 bytes for NeoTape/PAX payload profile compatibility. 8 MiB is the recommended default for high-throughput LTO operation when supported, but the chosen value is fixed per archive volume after the Volume Header is committed.
 
-A large fixed block_size also helps the target backend preserve long contiguous byte ranges for the tape drive. When drive hardware compression is enabled, larger records reduce artificial fragmentation introduced by the NeoTape transport layer and give the drive a better opportunity to compress the payload stream according to its own internal compression model. NeoTape MUST NOT assume any particular compression ratio, and catalog or capacity planning MUST distinguish native payload bytes from drive-compressed physical occupancy.
+A large fixed volume_block_size also helps the target backend preserve long contiguous byte ranges for the tape drive. When drive hardware compression is enabled, larger records reduce artificial fragmentation introduced by the NeoTape transport layer and give the drive a better opportunity to compress the payload stream according to its own internal compression model. NeoTape MUST NOT assume any particular compression ratio, and catalog or capacity planning MUST distinguish native payload bytes from drive-compressed physical occupancy.
 
 A physical medium may contain multiple archive instances. The example below shows a single archive instance; in multi-archive mode, the next archive may begin at the tape file immediately after a clean NeoTape end header.
 
@@ -199,7 +157,7 @@ The tape\_seq\_num field is scoped to a single archive\_uuid. Therefore, if two 
 
 NeoTape separates the logical archive format from the target backend used by a writer. A writer MAY write directly to a sequential tape device, or MAY write to an ordinary filesystem spool directory that represents the same archive as separated volume and tape-file objects.
 
-The tape-device backend maps NeoTape volume headers, logical slices, and archive end records to physical LTO tape files separated by filemarks. The filesystem-spool backend maps each NeoTape tape file to a regular file in a deterministic directory layout. For slice tape files, the file contains one or more segment headers and payload ranges; the last segment header carries SLICE_END with slice verification fields. The spool layout SHOULD preserve archive_uuid, tape_seq_num, tape_file_num, slice sequence numbers, segment sequence numbers, and payload lengths in filenames or a small manifest so that tools can inspect and replay the archive without parsing every byte.
+The tape-device backend maps NeoTape volume headers, logical slices, and archive end records to physical LTO tape files separated by filemarks. The filesystem-spool backend maps each NeoTape tape file to a regular file in a deterministic directory layout. For slice tape files, the file contains one or more segment headers and payload ranges; the last segment header carries SLICE_END with slice verification fields. The spool layout SHOULD preserve archive_uuid, volume_seq_num, tape_file_num, slice sequence numbers, segment sequence numbers, and payload lengths in filenames or a small manifest so that tools can inspect and replay the archive without parsing every byte.
 
 A recommended spool layout is:
 
@@ -219,7 +177,7 @@ Because ordinary filesystems do not provide physical EOT, a spool writer MAY acc
 
 This manual capacity limit is a simulation of media capacity, not an archive semantic. It is useful for preparing archive volumes before the physical tape drive is available, testing multi-volume continuation, and staging several archives while another process is using the tape drive. A later copy-to-tape tool MAY replay the spool directory to a real tape backend, preserving filemark boundaries and volume ordering.
 
-A spool archive SHOULD include a machine-readable manifest with at least archive_uuid, writer version, target backend, logical volume order, per-file sizes, BLAKE3 digests, declared block_size values, whether drive hardware compression is expected during replay, and the configured virtual volume size. The manifest is advisory; restore correctness still comes from NeoTape headers, lengths, and checksums inside the spool files. A spool writer SHOULD track virtual volume limits in native input bytes unless an implementation explicitly models expected compressed occupancy as an advisory estimate.
+A spool archive SHOULD include a machine-readable manifest with at least archive_uuid, writer version, target backend, logical volume order, per-file sizes, BLAKE3 digests, declared volume_block_size values, whether drive hardware compression is expected during replay, and the configured virtual volume size. The manifest is advisory; restore correctness still comes from NeoTape headers, lengths, and checksums inside the spool files. A spool writer SHOULD track virtual volume limits in native input bytes unless an implementation explicitly models expected compressed occupancy as an advisory estimate.
 
 # 6\. Archive Model
 
@@ -275,18 +233,15 @@ Common header prefix fields：
 - header_version：v0.1 使用 1
 - header_type：medium / volume / segment / archive_end
 
-All NeoTape fixed headers and trailers begin with this exact 10-byte common prefix. Header-specific fields follow after `header_type`. Every fixed header/trailer field area occupies exactly 1024 bytes, and each fixed header places its CRC32C field in the final 4 bytes.
+All NeoTape fixed headers begin with this exact 10-byte common prefix. Header-specific fields follow after `header_type`. Every fixed header field area occupies exactly 1024 bytes, and each fixed header places its CRC32C field in the final 4 bytes.
 
 Other common archive-time fields may include:
 
 - header_crc32c
 - archive_uuid
 - volume_write_at_utc
-- tape_seq_num
+- volume_seq_num
 - flags
-- metadata_offset
-- metadata_size
-- metadata_blake3
 
 Header 後方可內嵌 metadata bundle。Medium Header metadata bundle details are split into [docs/spec/01-medium-header.md](spec/01-medium-header.md). 固定 prefix 不得依賴 metadata bundle 才能辨識 header type。
 
@@ -330,7 +285,7 @@ data, warnings, source-read diagnostics, and other payload-profile metadata.
 
 # 12\. Archive End Header
 
-Archive End Header is split into [docs/spec/05-archive-end-header.md](spec/05-archive-end-header.md).
+Archive End Header is split into [docs/spec/04-archive-end-header.md](spec/04-archive-end-header.md).
 
 End header 是最後一個 cleanly completed archive record，位於最後一卷磁帶的最後一個 NeoTape tape file。它宣告整體 archive 已完整結束。
 
@@ -422,7 +377,7 @@ OPEN_SEGMENT
   Segment header is an atomic commit unit. If EOT/ENOSPC occurs before the complete segment header block is successfully written, the segment MUST be treated as not created. The writer MUST open the next volume, write a new volume header if needed, and write the same segment header on the next tape. No continuation semantics are needed until at least one payload block of the segment has been committed.
 
 WRITE_SEGMENT_PAYLOAD
-  接收 payload profile encoder output bytes，聚合成 target records 寫入。對 tape backend，target records 是 fixed-size tape blocks；對 filesystem spool backend，target records MUST preserve the same fixed block_size semantics, either as record-framed objects or as regular files with an explicit manifest describing record boundaries。成功寫入完整 target record 後才視為 commit。
+  接收 payload profile encoder output bytes，聚合成 target records 寫入。對 tape backend，target records 是 fixed-size tape blocks；對 filesystem spool backend，target records MUST preserve the same fixed volume_block_size semantics, either as record-framed objects or as regular files with an explicit manifest describing record boundaries。成功寫入完整 target record 後才視為 commit。
 
 EOT_DETECTED_OR_VOLUME_LIMIT
   若 tape writer 遇到 ENOSPC/EOM/EOT，或 filesystem spool backend 達到手動設定的 virtual volume capacity，不應直接讓 payload profile encoder 視為不可恢復的 archive error。transport layer 應暫停或切換 backend volume、寫新 volume header 與 continuation segment header，然後繼續同一 logical slice 的 payload byte range。
@@ -430,7 +385,7 @@ EOT_DETECTED_OR_VOLUME_LIMIT
 CLOSE_LOGICAL_SLICE
   當 buffered payload bytes 達到 segment target size，writer closes the current segment by writing exactly segment_payload_size bytes. 當 writer 決定 current logical slice 應結束時，該 segment 會成為 final segment and carries SLICE_END. For NeoTape/PAX payload profile, the writer MAY choose slice boundaries at pax member boundaries, but NeoTape core does not require pax EOA to determine the boundary.
 
-WRITE_SLICE_TRAILER
+FINALIZE_LOGICAL_SLICE
    在 writer 決定關閉 current logical slice，並寫完該 slice 的 final segment 後，該 segment header 帶有 SLICE_END flag 並記錄 slice_payload_size 與 slice_payload_blake3。The actual slice_payload_size is known only at this point and is recorded in the final segment header. Optionally, the writer may add zero or more TRAILER_METADATA segments after the final PAYLOAD segment. After all segments are committed, the writer SHOULD write a filemark to close the slice tape file. If EOT occurs before the SLICE_END segment header is committed, the next volume MUST write a continuation segment with SLICE_END.
 
 WRITE_CATALOG
@@ -450,8 +405,8 @@ ERROR
 neotape-cat-volumes 是最小還原工具。它的職責：
 
 * 讀取 volume header
-* 在使用者策略允許時，若 volume header 損壞、UUID 不符或 tape_seq_num 不符，掃描後續 tape files 尋找下一個候選 volume header
-* 驗證 archive_uuid 與 tape_seq_num
+* 在使用者策略允許時，若 volume header 損壞、UUID 不符或 volume_seq_num 不符，掃描後續 tape files 尋找下一個候選 volume header
+* 驗證 archive_uuid 與 volume_seq_num
 * 依 filemark 讀取 volume、slice、archive-end tape files
 * 驗證 segment header 中的 logical_slice_seq_num 與 segment_seq_num
 * 將同一 logical slice 的 segments payload 串接
@@ -477,7 +432,7 @@ neotape-cat-volumes 是最小還原工具。它的職責：
 Reader 主要狀態：
 
 START
-  初始化 expected archive_uuid（若未指定，從第一卷讀取），expected_tape_seq_num = 1，expected_slice_seq_num = 1。
+  初始化 expected archive_uuid（若未指定，從第一卷讀取），expected_volume_seq_num = 1，expected_slice_seq_num = 1。
 
 READ_VOLUME_HEADER
   讀取目前 archive volume 的 volume header。第一個 archive instance 通常位於 Medium Header 之後；若從 BOT 掃描，reader MUST skip Medium Header and scan for the requested archive_uuid。若 volume header checksum/header_type invalid、UUID 不符或 seq 不符，reader MUST NOT emit payload bytes from that candidate volume. It SHOULD enter MISMATCH_HANDLER, where policy may fail, prompt, or scan forward by filemarks to the next candidate Volume Header. This scan-forward option is important when a physical medium contains several independent archive instances and the inserted medium may be positioned near the tail of a different archive.
@@ -510,7 +465,7 @@ NeoTape 建議採用 Retry / Inspect / Fail / Force-Salvage 模型。
 * Volume header mismatch or corruption：
 * 預設不允許輸出 payload bytes。
 * 互動模式可提供 Retry、Inspect、ScanNextVolumeHeader、Fail。
-* ScanNextVolumeHeader MUST advance by tape-file/filemark boundaries and only accept a candidate whose header magic, type, size, checksum, archive_uuid, and expected tape_seq_num all validate.
+* ScanNextVolumeHeader MUST advance by tape-file/filemark boundaries and only accept a candidate whose header magic, type, size, checksum, archive_uuid, and expected volume_seq_num all validate.
 * This option is especially useful on media containing multiple archive instances, where the wrong candidate may be the tail or clean end area of another archive.
 * Force 僅在 salvage mode 且使用者明確輸入完整詞時提供；Force MUST mark stdout/output as not fully verified.
 * UUID mismatch：
@@ -627,14 +582,14 @@ Explicitly out of scope for v0.1:
 Tape 1:
 
 File 0: Medium Header, possibly multiple records, immutable media bootstrap
-File 1: Volume header, archive_uuid = A, tape_seq_num = 1
+File 1: Volume header, archive_uuid = A, volume_seq_num = 1
 File 2: Slice 1 tape file: segment header slice = 1 segment = 1, payload = first 8 GiB; segment header slice = 1 segment = 2 (SLICE_END), payload = rest of slice 1, slice_payload_size = 64 GiB, slice_payload_blake3 = ...
 File 3: Slice 2 tape file: segment header slice = 2 segment = 1, segment_payload_size = 8 GiB; payload = first part of slice 2; EOT before slice complete
 
 Tape 2:
 
 File 0: Medium Header, possibly multiple records, immutable media bootstrap for this physical medium
-File 1: Volume header, archive_uuid = A, tape_seq_num = 2
+File 1: Volume header, archive_uuid = A, volume_seq_num = 2
 File 2: Continuation of slice 2 tape file: segment header slice = 2 segment = 2 (SLICE_END), segment_payload_size = remaining bytes of slice 2; payload = rest of slice 2, slice_payload_size = 64 GiB, slice_payload_blake3 = ..., optional TRAILER_METADATA segments
 File 3: Slice 3 tape file: segment header slice = 3 segment = 1 (SLICE_END), segment_payload_size = complete slice 3 size; payload = complete final slice payload bytes, slice_payload_size = ..., slice_payload_blake3 = ..., optional TRAILER_METADATA segments
 File 4: Archive End Header, clean_end = true, last_slice_seq_num = 3

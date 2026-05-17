@@ -64,7 +64,7 @@ Spec feedback expected:
 - Exact byte offsets for common fields.  
 - Required vs optional fields per header type.  
 - Rules for unknown flags and forward-compatible reserved fields.  
-- Maximum header_size and metadata_size constraints.
+- 1024-byte fixed header area and metadata size constraints.
 
 # Phase 2: Filesystem Spool Backend MVP
 
@@ -85,7 +85,7 @@ MVP payload profile:
 - raw.
 
 Validation:  
-- Spool manifest lists archive_uuid, volume order, tape-file names, sizes, BLAKE3 digests, declared block_size, and virtual volume size.  
+- Spool manifest lists archive_uuid, volume order, tape-file names, sizes, BLAKE3 digests, declared volume_block_size, and virtual volume size.  
 - A debug tool can inspect every spool tape-file object and validate header order.
 
 Spec feedback expected:  
@@ -155,7 +155,7 @@ Deliverables:
 
 Validation:  
 - List archive contents without replaying entire payload where catalog is present.  
-- Verify metadata_blake3 before trusting catalog bytes.  
+- Verify TRAILER_METADATA segment hashes before trusting catalog bytes.  
 - Confirm restore correctness does not depend on catalog correctness.  
 - Catalog/payload disagreement tests where payload profile metadata wins.
 
@@ -171,7 +171,7 @@ Goal: replay the same logical format onto a real sequential tape device.
 
 Deliverables:  
 - Tape backend adapter using standard OS tape device operations.  
-- Fixed block_size configuration.  
+- Fixed volume_block_size configuration.  
 - Write volume header, filemark, slice tape files, archive end header.  
 - Detect EOT/EOM/ENOSPC and transition to next volume.  
 - Read path for /dev/nst0 or equivalent non-rewinding tape device.
@@ -205,7 +205,7 @@ Deliverables:
 Validation:  
 - Corrupted volume header.  
 - UUID mismatch.  
-- tape_seq_num mismatch.  
+- volume_seq_num mismatch.  
 - segment sequence mismatch.  
 - read error inside segment payload.  
 - incomplete slice.  
@@ -311,7 +311,7 @@ Validation:
 
 1. CLOSED: The first implementation should use C++ with a standard GNU Makefile.  
 2. Should the minimal reader be dependency-light enough to embed in medium metadata bundle as source code?  
-3. What is the first stable block_size default for real LTO drives: 1 MiB, 4 MiB, 8 MiB, or device-specific?  
+3. What is the first stable volume_block_size default for real LTO drives: 1 MiB, 4 MiB, 8 MiB, or device-specific?  
 4. Should the first public implementation support only spool mode and pax profile, delaying tape backend until format tests are stable?  
 5. Should the catalog format be binary-only, text-friendly, or dual-layer with binary records plus optional human-readable summaries?  
 6. How should NeoTape handle encrypted payload profiles while preserving catalog usability?  

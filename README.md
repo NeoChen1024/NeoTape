@@ -20,12 +20,12 @@ been split into `docs/spec/`.
 
 ```
 Archive
-  └─ Volume                   tape_seq_num, one cartridge or virtual volume
+  └─ Volume                   volume_seq_num, one physical medium or virtual volume
        └─ Logical Slice       writer-chosen payload range, filemark-delimited
             └─ Physical Segment  length-framed record with segment_payload_size
 ```
 
-A NeoTape **Archive** is the complete backup set, identified by an `archive_uuid`. It spans one or more **Volumes** (physical LTO cartridges or virtual volumes in spool mode), each carrying a `tape_seq_num`. Inside each volume, the payload is split into **Logical Slices** — writer-declared byte ranges that are independently verifiable via the slice's BLAKE3 digest and seekable by LTO filemark. A typical slice target size is ~64 GiB but a slice may far exceed that, especially when a single large file spans the entire archive. Each logical slice is composed of one or more **Physical Segments**; a segment header explicitly declares `segment_payload_size`, so the reader knows exactly how many bytes to read without parsing payload content. Segment size is determined by the writer's memory buffer (commonly ~4 GiB), since the writer streams payload directly without spooling entire slices to disk. A segment may continue across volumes if end-of-tape is reached mid-slice.
+A NeoTape **Archive** is the complete backup set, identified by an `archive_uuid`. It spans one or more **Volumes** (physical LTO media or virtual volumes in spool mode), each carrying a `volume_seq_num`. Inside each volume, the payload is split into **Logical Slices** — writer-declared byte ranges that are independently verifiable via the slice's BLAKE3 digest and seekable by LTO filemark. A typical slice target size is ~64 GiB but a slice may far exceed that, especially when a single large file spans the entire archive. Each logical slice is composed of one or more **Physical Segments**; a segment header explicitly declares `segment_payload_size`, so the reader knows exactly how many bytes to read without parsing payload content. Segment size is determined by the writer's memory buffer (commonly ~4 GiB), since the writer streams payload directly without spooling entire slices to disk. A segment may continue across volumes if end-of-tape is reached mid-slice.
 
 All records in an archive volume use a fixed **volume_block_size** declared in the Volume Header. The writer must commit to this block size before writing any payload and must use it for every subsequent record; readers treat a block-size change within a volume as a format error.
 
@@ -41,7 +41,7 @@ All records in an archive volume use a fixed **volume_block_size** declared in t
 | 5     | TRAILER_METADATA segments & catalog  | Spec   |
 | 6     | Tape device backend                 | Spec   |
 | 7     | Recovery & salvage                  | Spec   |
-| 8     | Cartridge header & self-description | Spec   |
+| 8     | Medium Header & self-description    | Spec   |
 | 9     | Filesystem-native payload profiles  | Spec   |
 
 See `docs/spec/` for the active format specification, `docs/RFC_Draft.md` for
