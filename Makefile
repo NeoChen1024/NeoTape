@@ -1,7 +1,7 @@
 CC	= cc
 CXX	= c++
 .DEFAULT_GOAL := all
-INCS	= -Iinclude -Llib
+INCS	= -Iinclude -Llib -I/usr/local/include -Lusr/local/lib
 CFLAGS	= -O3 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c17 -march=native -pedantic $(INCS)
 CXXFLAGS= -O3 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c++20 -march=native -pedantic $(INCS)
 LDLIBS	= lib/libb3sum.a lib/libcrc32c.a -larchive
