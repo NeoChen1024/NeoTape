@@ -50,14 +50,13 @@ A parser can always read the first 10 bytes of any fixed header, validate the
 magic value, determine the header layout version, and dispatch reader logic by
 header type.
 
-This common prefix applies to the Medium Header, Volume Header, Segment Header,
-and Archive End Header. The layout after byte 9 is
-type-specific.
+This common prefix applies to the Medium Header, Volume Header, Frame Header,
+and Archive End Header. The layout after byte 9 is type-specific.
 
 ## Header Position Rule
 
-Every NeoTape fixed header MUST begin at byte 0 of its containing tape record.
-No fixed header may start at a non-zero offset within a tape record.
+Every NeoTape fixed header MUST begin at byte 0 of its containing NeoTape
+record. No fixed header may start at a non-zero offset within a record.
 
 ## Fixed Header Size
 
@@ -95,14 +94,17 @@ All `nt_crc32c` fields in NeoTape headers use this algorithm.
 ## Data Continuation Rule
 
 If a header type semantically defines continuation data that follows its fixed
-field area (such as the Medium Header's ar metadata bundle or the Segment
-Header's payload bytes), that continuation data MUST begin in the same tape
-record immediately after the 1024-byte fixed field area, without padding or
-alignment gap.
+field area, that continuation data MUST begin in the same NeoTape record
+immediately after the 1024-byte fixed field area, without padding or alignment
+gap.
+
+Examples include the Medium Header's ar metadata bundle and the Frame Header's
+payload bytes.
 
 Header types that are not followed by continuation data (Volume Header, Archive
-End Header) MAY fill the remainder of their tape record with padding. All other header types MUST NOT waste record space between the
-fixed field area and their associated continuation data.
+End Header) MAY fill the remainder of their NeoTape record with padding. All
+other header types MUST NOT waste record space between the fixed field area and
+their associated continuation data.
 
 ## Requirement Keywords
 
