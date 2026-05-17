@@ -39,23 +39,23 @@ size.
 
 These fields are immutable descriptive metadata, not an append-time state index.
 
-| Field                         | datatype      | size (in bytes) | Requirement | Notes                                                                                         |
-| ----------------------------- | ------------- | --------------- | ----------- | --------------------------------------------------------------------------------------------- |
-| `magic`                       | `char[8]`     | 8               | MUST        | Fixed NeoTape identifier: `NeoTape\0`.                                                        |
-| `header_version`              | `uint8`       | 1               | MUST        | Version of the Medium Header layout, independent from archive format versions.                 |
-| `header_type`                 | `uint8_enum`  | 1               | MUST        | Must identify Medium Header.                                                                  |
-| `medium_uuid`                 | `nt_uuid`     | 37              | MUST        | UUID for this initialized NeoTape physical medium.                                             |
-| `medium_label`                | `nt_name`     | 256             | SHOULD      | Human-readable medium label, in UTF-8.                                                        |
-| `initialized_at_utc`          | `nt_time`     | 20              | MUST        | UTC initialization timestamp. Uses the fixed NeoTape timestamp format.                         |
-| `medium_header_block_size`    | `uint32`      | 4               | MUST        | Block size of the Medium Header. See §Block Size Constraints in 00-format-common.md.                                      |
-| `medium_header_block_count`   | `uint16`      | 2               | MUST        | Number of blocks occupied by the Medium Header known at write time.                            |
-| `flags`                       | `uint16`      | 2               | SHOULD      | Reserved feature or compatibility flags.                                                       |
-| `created_by_implementation`   | `char[64]`    | 64              | SHOULD      | Writer implementation name and version.                                                        |
-| `created_by_build_id`         | `char[64]`    | 64              | MAY         | Source revision, build ID, or other diagnostic identifier. May be empty.                       |
-| `metadata_bundle_size`        | `uint32`      | 4               | MUST        | Exact size of the ar metadata bundle.                                                          |
-| `metadata_bundle_blake3`      | `nt_hash`     | 32              | SHOULD      | Integrity hash for the ar metadata bundle bytes.                                               |
-| `reserved`                    | `byte[*]`     | *               | MUST        | Zero bytes. Reserved for future fixed fields.                                                  |
-| `medium_header_crc32c`        | `nt_crc32c`   | 4               | MUST        | CRC32C for the 1024-byte fixed Medium Header area, excluding this field.                       |
+| Field                         | datatype       | size (in bytes) | Requirement | Notes                                                                                 |
+| ----------------------------- | -------------- | --------------- | ----------- | ------------------------------------------------------------------------------------- |
+| `magic`                     | `char[8]`    | 8               | MUST        | Fixed NeoTape identifier:`NeoTape\0`.                                               |
+| `header_version`            | `uint8`      | 1               | MUST        | Version of the Medium Header layout, independent from archive format versions.        |
+| `header_type`               | `uint8_enum` | 1               | MUST        | Must identify Medium Header.                                                          |
+| `medium_uuid`               | `nt_uuid`    | 37              | MUST        | UUID for this initialized NeoTape physical medium.                                    |
+| `medium_label`              | `nt_name`    | 256             | SHOULD      | Human-readable medium label, in UTF-8.                                                |
+| `initialized_at_utc`        | `nt_time`    | 20              | MUST        | UTC initialization timestamp. Uses the fixed NeoTape timestamp format.                |
+| `medium_header_block_size`  | `uint32`     | 4               | MUST        | Block size of the Medium Header. See §Block Size Constraints in 00-format-common.md. |
+| `medium_header_block_count` | `uint16`     | 2               | MUST        | Number of blocks occupied by the Medium Header known at write time.                   |
+| `flags`                     | `uint16`     | 2               | SHOULD      | Reserved feature or compatibility flags.                                              |
+| `created_by_implementation` | `char[64]`   | 64              | SHOULD      | Writer implementation name and version.                                               |
+| `created_by_build_id`       | `char[64]`   | 64              | MAY         | Source revision, build ID, or other diagnostic identifier. May be empty.              |
+| `metadata_bundle_size`      | `uint32`     | 4               | MUST        | Exact size of the ar metadata bundle.                                                 |
+| `metadata_bundle_blake3`    | `nt_hash`    | 32              | SHOULD      | Integrity hash for the ar metadata bundle bytes.                                      |
+| `reserved`                  | `byte[*]`    | *               | MUST        | Zero bytes. Reserved for future fixed fields.                                         |
+| `medium_header_crc32c`      | `nt_crc32c`  | 4               | MUST        | CRC32C for the 1024-byte fixed Medium Header area, excluding this field.              |
 
 For a total of 1024 bytes. Future versions MAY allocate fields from the reserved
 space, but version 1 writers MUST write it as zero bytes and version 1 readers

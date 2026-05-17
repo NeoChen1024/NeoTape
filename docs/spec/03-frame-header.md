@@ -1,6 +1,6 @@
 # Frame Header
 
-Status: draft / field inventory.
+Status: field sizes and datatypes are concrete.
 
 A NeoTape Frame is the self-describing transport record used to carry slice
 content bytes or slice metadata bytes inside an archive volume. Each Frame
@@ -58,27 +58,27 @@ The fixed fields should be enough to identify the archive instance, identify the
 logical slice, sequence the Frame, describe the meaningful bytes in the current
 record, and validate the header.
 
-| Field                        | datatype      | size (in bytes) | Requirement | Notes                                                                                             |
-| ---------------------------- | ------------- | --------------- | ----------- | ------------------------------------------------------------------------------------------------- |
-| `magic`                      | `char[8]`     | 8               | MUST        | Fixed NeoTape identifier: `NeoTape\0`.                                                           |
-| `header_version`             | `uint8`       | 1               | MUST        | Version of the archive-time header layout.                                                        |
-| `header_type`                | `uint8_enum`  | 1               | MUST        | Must identify Frame Header.                                                                       |
-| `volume_block_size`          | `uint32`      | 4               | MUST        | Fixed NeoTape record size for this archive volume. See §Block Size Constraints in 00-format-common.md.                       |
-| `archive_uuid`               | `nt_uuid`     | 37              | MUST        | Stable UUID for this archive instance.                                                           |
-| `archive_name`               | `nt_name`     | 256             | SHOULD      | Human-readable archive name, in UTF-8.                                                           |
-| `volume_seq_num`             | `uint64`      | 8               | MUST        | Current archive volume sequence number.                                                          |
-| `payload_profile`            | `uint8_enum`  | 1               | MUST        | Payload profile used by this archive instance.                                                    |
-| `logical_slice_seq_num`      | `uint64`      | 8               | MUST        | Logical slice sequence number.                                                                    |
-| `global_frame_seq_num`       | `uint64`      | 8               | MUST        | Frame sequence number scoped to the archive instance.                                             |
-| `frame_seq_num_within_slice` | `uint64`      | 8               | MUST        | Frame sequence number scoped to the logical slice.                                                |
-| `frame_payload_size`         | `uint64`      | 8               | MUST        | Meaningful bytes in this NeoTape record after the 1024-byte header.                               |
-| `frame_content_type`         | `uint8_enum`  | 1               | MUST        | `SLICE_CONTENT` or `SLICE_METADATA`.                                                             |
-| `frame_payload_blake3`       | `nt_hash`     | 32              | MUST        | BLAKE3 over exactly `frame_payload_size` bytes.                                                   |
-| `flags`                      | `uint16`      | 2               | MUST        | Frame flags: `START`, `END`.                                                                     |
-| `slice_content_size`         | `uint64`      | 8               | MUST        | Slice-level content size; valid only when `END` flag is set for `SLICE_CONTENT`, otherwise zero.  |
-| `slice_content_blake3`       | `nt_hash`     | 32              | MUST        | BLAKE3 over slice content bytes; zero when `END` flag is not set for `SLICE_CONTENT`.             |
-| `reserved`                   | `byte[*]`     | *               | MUST        | Zero bytes reserved for future fixed fields.                                                      |
-| `header_crc32c`              | `nt_crc32c`   | 4               | MUST        | CRC32C for fixed header fields, excluding this field.                                             |
+| Field                          | datatype       | size (in bytes) | Requirement | Notes                                                                                                   |
+| ------------------------------ | -------------- | --------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
+| `magic`                      | `char[8]`    | 8               | MUST        | Fixed NeoTape identifier:`NeoTape\0`.                                                                 |
+| `header_version`             | `uint8`      | 1               | MUST        | Version of the archive-time header layout.                                                              |
+| `header_type`                | `uint8_enum` | 1               | MUST        | Must identify Frame Header.                                                                             |
+| `volume_block_size`          | `uint32`     | 4               | MUST        | Fixed NeoTape record size for this archive volume. See §Block Size Constraints in 00-format-common.md. |
+| `archive_uuid`               | `nt_uuid`    | 37              | MUST        | Stable UUID for this archive instance.                                                                  |
+| `archive_name`               | `nt_name`    | 256             | SHOULD      | Human-readable archive name, in UTF-8.                                                                  |
+| `volume_seq_num`             | `uint64`     | 8               | MUST        | Current archive volume sequence number.                                                                 |
+| `payload_profile`            | `uint8_enum` | 1               | MUST        | Payload profile used by this archive instance.                                                          |
+| `logical_slice_seq_num`      | `uint64`     | 8               | MUST        | Logical slice sequence number.                                                                          |
+| `global_frame_seq_num`       | `uint64`     | 8               | MUST        | Frame sequence number scoped to the archive instance.                                                   |
+| `frame_seq_num_within_slice` | `uint64`     | 8               | MUST        | Frame sequence number scoped to the logical slice.                                                      |
+| `frame_payload_size`         | `uint64`     | 8               | MUST        | Meaningful bytes in this NeoTape record after the 1024-byte header.                                     |
+| `frame_content_type`         | `uint8_enum` | 1               | MUST        | `SLICE_CONTENT` or `SLICE_METADATA`.                                                                |
+| `frame_payload_blake3`       | `nt_hash`    | 32              | MUST        | BLAKE3 over exactly `frame_payload_size` bytes.                                                       |
+| `flags`                      | `uint16`     | 2               | MUST        | Frame flags:`START`, `END`.                                                                         |
+| `slice_content_size`         | `uint64`     | 8               | MUST        | Slice-level content size; valid only when `END` flag is set for `SLICE_CONTENT`, otherwise zero.    |
+| `slice_content_blake3`       | `nt_hash`    | 32              | MUST        | BLAKE3 over slice content bytes; zero when `END` flag is not set for `SLICE_CONTENT`.               |
+| `reserved`                   | `byte[*]`    | *               | MUST        | Zero bytes reserved for future fixed fields.                                                            |
+| `header_crc32c`              | `nt_crc32c`  | 4               | MUST        | CRC32C for fixed header fields, excluding this field.                                                   |
 
 ## Flags
 
