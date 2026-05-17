@@ -14,7 +14,7 @@ field allocation remain open until the byte layout is frozen.
 
 Requirement keyword handling, empty fixed-field encoding, CRC32C calculation,
 and timestamp encoding are defined in
-[docs/spec/00-header-common.md](00-header-common.md).
+[docs/spec/00-format-common.md](00-format-common.md).
 
 ## Placement
 
@@ -47,7 +47,7 @@ These fields are immutable descriptive metadata, not an append-time state index.
 | `medium_uuid`                 | `nt_uuid`     | 37              | MUST        | UUID for this initialized NeoTape physical medium.                                             |
 | `medium_label`                | `nt_name`     | 256             | SHOULD      | Human-readable medium label, in UTF-8.                                                        |
 | `initialized_at_utc`          | `nt_time`     | 20              | MUST        | UTC initialization timestamp. Uses the fixed NeoTape timestamp format.                         |
-| `medium_header_block_size`    | `uint32`      | 4               | MUST        | Block size of the Medium Header. Must be at least 64 KiB.                                      |
+| `medium_header_block_size`    | `uint32`      | 4               | MUST        | Block size of the Medium Header. See §Block Size Constraints in 00-format-common.md.                                      |
 | `medium_header_block_count`   | `uint16`      | 2               | MUST        | Number of blocks occupied by the Medium Header known at write time.                            |
 | `flags`                       | `uint16`      | 2               | SHOULD      | Reserved feature or compatibility flags.                                                       |
 | `created_by_implementation`   | `char[64]`    | 64              | SHOULD      | Writer implementation name and version.                                                        |
@@ -102,7 +102,7 @@ Potential member files:
 ## ar Subset Format
 
 The Medium Header metadata bundle uses the restricted ar subset defined in
-[docs/spec/00-header-common.md](00-header-common.md#ar-subset-format).
+[docs/spec/00-format-common.md](00-format-common.md#ar-subset-format).
 
 ## Excluded Mutable State
 

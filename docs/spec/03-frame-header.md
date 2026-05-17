@@ -20,7 +20,7 @@ field allocation remain open until the byte layout is frozen.
 
 Requirement keyword handling, empty fixed-field encoding, CRC32C calculation,
 and timestamp encoding are defined in
-[docs/spec/00-header-common.md](00-header-common.md).
+[docs/spec/00-format-common.md](00-format-common.md).
 
 ## Placement
 
@@ -63,7 +63,7 @@ record, and validate the header.
 | `magic`                      | `char[8]`     | 8               | MUST        | Fixed NeoTape identifier: `NeoTape\0`.                                                           |
 | `header_version`             | `uint8`       | 1               | MUST        | Version of the archive-time header layout.                                                        |
 | `header_type`                | `uint8_enum`  | 1               | MUST        | Must identify Frame Header.                                                                       |
-| `volume_block_size`          | `uint32`      | 4               | MUST        | Fixed NeoTape record size for this archive volume. Must be at least 64 KiB.                       |
+| `volume_block_size`          | `uint32`      | 4               | MUST        | Fixed NeoTape record size for this archive volume. See §Block Size Constraints in 00-format-common.md.                       |
 | `archive_uuid`               | `nt_uuid`     | 37              | MUST        | Stable UUID for this archive instance.                                                           |
 | `archive_name`               | `nt_name`     | 256             | SHOULD      | Human-readable archive name, in UTF-8.                                                           |
 | `volume_seq_num`             | `uint64`      | 8               | MUST        | Current archive volume sequence number.                                                          |
@@ -155,7 +155,7 @@ directly from the concatenated `SLICE_CONTENT` Frame payload bytes.
 The writer MAY follow the last `SLICE_CONTENT` Frame of a logical slice with
 zero or more `SLICE_METADATA` Frames. Each such Frame carries bytes from a
 restricted ar archive conforming to the ar subset format defined in
-[docs/spec/00-header-common.md](00-header-common.md#ar-subset-format).
+[docs/spec/00-format-common.md](00-format-common.md#ar-subset-format).
 
 `SLICE_METADATA` Frames are NeoTape transport metadata associated with a logical
 slice. They are not part of the payload stream and MUST NOT be emitted to stdout

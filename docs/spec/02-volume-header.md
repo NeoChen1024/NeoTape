@@ -14,7 +14,7 @@ field allocation remain open until the byte layout is frozen.
 
 Requirement keyword handling, empty fixed-field encoding, CRC32C calculation,
 and timestamp encoding are defined in
-[docs/spec/00-header-common.md](00-header-common.md).
+[docs/spec/00-format-common.md](00-format-common.md).
 
 ## Placement
 
@@ -40,7 +40,7 @@ volume, and configure record framing for the rest of the archive volume.
 | `magic`               | `char[8]`     | 8               | MUST        | Fixed NeoTape identifier: `NeoTape\0`.                                      |
 | `header_version`      | `uint8`       | 1               | MUST        | Version of the archive-time header layout.                                  |
 | `header_type`         | `uint8_enum`  | 1               | MUST        | Must identify Volume Header.                                                |
-| `volume_block_size`   | `uint32`      | 4               | MUST        | Fixed NeoTape record size for this archive volume. Must be at least 64 KiB. |
+| `volume_block_size`   | `uint32`      | 4               | MUST        | Fixed NeoTape record size for this archive volume. See §Block Size Constraints in 00-format-common.md. |
 | `archive_uuid`        | `nt_uuid`     | 37              | MUST        | Stable UUID for this archive instance.                                      |
 | `archive_name`        | `nt_name`     | 256             | SHOULD      | Human-readable archive name, in UTF-8.                                      |
 | `volume_seq_num`      | `uint64`      | 8               | MUST        | Volume sequence number within `archive_uuid`, starting at 1.                |

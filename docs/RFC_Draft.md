@@ -146,7 +146,6 @@ Next tape file, if capacity remains:
   NeoTape archive volume header for another archive instance
 ...
 
-
 ## 5.2 Multiple Archives per Physical Tape
 
 A physical LTO medium MAY contain more than one complete NeoTape archive instance. This is useful when an archive does not fill the remaining capacity of a tape. In this mode, each archive instance begins at a tape file boundary with its own NeoTape volume header, has its own archive_uuid, logical slices, Frame numbering, catalog, and end header, and is cleanly closed before the next archive instance begins.
@@ -575,11 +574,6 @@ BLAKE3 is used for integrity verification, not as an authentication mechanism. I
 - Multiple catalog replicas across volumes
 - Multi-archive medium index for quickly listing all archive instances stored sequentially on one physical tape.
 - Optional low-level SCSI passthrough profiles for diagnostics only; normal operation should use the standard sequential tape device interface.
-
-Explicitly out of scope for v0.1:
-
-- Legacy DDS/DAT/QIC/non-LTO media profiles with small maximum tape record sizes.
-  \- Multi-record volume, Frame, or end headers. These headers may be written near EOT and therefore must remain single-record commit units. This restriction does not apply to the BOT Medium Header.
 
 # Appendix A. Example Multi-Volume Layout
 

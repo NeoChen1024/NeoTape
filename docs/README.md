@@ -26,7 +26,7 @@ docs/
 
   spec/
     terminology.md
-    00-header-common.md
+    00-format-common.md
     01-medium-header.md
     02-volume-header.md
     03-frame-header.md
@@ -65,7 +65,7 @@ Phase 1 header byte layout work should primarily land in:
 
 ```text
 docs/spec/terminology.md
-docs/spec/00-header-common.md
+docs/spec/00-format-common.md
 docs/spec/01-medium-header.md
 docs/spec/02-volume-header.md
 docs/spec/03-frame-header.md

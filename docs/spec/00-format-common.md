@@ -1,9 +1,10 @@
-# Header Common Rules
+# Common Format Rules
 
 Status: draft / common rules.
 
-This document defines rules shared by NeoTape fixed headers. Header type-specific
-field inventories are defined in their own documents.
+This document defines common rules and conventions shared across the NeoTape
+format. Header type-specific field inventories are defined in their own
+documents.
 
 ## Datatype Reference
 
@@ -115,6 +116,29 @@ Header types that are not followed by continuation data (Volume Header, Archive
 End Header) MAY fill the remainder of their NeoTape record with padding. All
 other header types MUST NOT waste record space between the fixed field area and
 their associated continuation data.
+
+## Block Size Constraints
+
+### Minimum
+
+The NeoTape record block size MUST be at least 4 KiB (4096 bytes).
+
+A writer SHOULD use at least 64 KiB (65536 bytes) in practice. Below 64 KiB
+the Frame Header overhead (1024 bytes per record) becomes significant: at 4 KiB
+the header consumes 25% of each record.
+
+### Maximum
+
+The NeoTape record block size MUST NOT exceed 16 MiB (16777216 bytes). A reader
+SHOULD reject larger values as unsupported.
+
+16 MiB is the typical variable-length record size limit of LTO tape drives.
+Values above 16 MiB may fail at the hardware layer.
+
+### Scope
+
+These constraints apply to both `volume_block_size` (Volume Header, Frame Header,
+Archive End Header) and `medium_header_block_size` (Medium Header).
 
 ## Requirement Keywords
 
