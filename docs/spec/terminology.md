@@ -9,7 +9,8 @@ When terminology here conflicts with `docs/RFC_Draft.md`, this document wins.
 
 ### Archive
 
-A complete NeoTape backup set, identified by `archive_uuid`.
+A complete NeoTape backup set, identified by `archive_uuid` and optionally
+named by `archive_name`.
 
 An Archive may span one or more archive volumes.
 
@@ -42,30 +43,42 @@ A logical tape file delimited by LTO filemarks.
 
 NeoTape uses tape files for coarse seekable boundaries such as the Medium
 Header, Volume Header, logical slice tape files, and Archive End Header.
-Physical segments are normally not independent tape files.
+Frames are normally not independent tape files.
 
 ### Logical Slice
 
-A writer-declared logical payload byte range.
+A writer-declared logical content byte range.
 
-Each logical slice consists of one or more physical segments. The final PAYLOAD
-segment carries the `SLICE_END` flag and records the authoritative
-`slice_payload_size` and `slice_payload_blake3`.
+Each logical slice consists of one or more `SLICE_CONTENT` Frames and may be
+followed by advisory `SLICE_METADATA` Frames. The final `SLICE_CONTENT` Frame
+carries the `END` flag and records the authoritative `slice_content_size` and
+`slice_content_blake3`.
 
-### Physical Segment
+### Frame
 
-A length-framed segment inside a logical slice tape file.
+A fixed-size NeoTape transport record inside an archive volume.
 
-A physical segment consists of a 1024-byte Segment Header followed by exactly
-the segment payload bytes described by that header. Segments are chained by
-explicit length fields, not by parsing payload bytes.
+Each Frame occupies exactly one NeoTape record of `volume_block_size` bytes. It
+consists of a 1024-byte Frame Header followed by `frame_payload_size`
+meaningful bytes and zero padding to the end of the record. Frames are chained
+by explicit sequence numbers and length fields, not by parsing payload bytes.
 
-### Continuation Segment
+### Slice Content
 
-A segment that continues data after EOT / ENOSPC or a virtual volume limit.
+The ordered payload byte stream carried by `SLICE_CONTENT` Frames for one
+logical slice.
 
-Continuation does not create a new logical slice. It resumes the same segment or
-logical slice according to the continuation fields in the Segment Header.
+Slice content is the only per-slice byte stream emitted by normal payload
+readers such as `neotape-cat-volumes`.
+
+### Slice Metadata
+
+Advisory metadata bytes carried by `SLICE_METADATA` Frames for one logical
+slice.
+
+Slice metadata is transport metadata for listing, diagnostics, partial restore,
+or acceleration. It is not part of the payload stream and must not be required
+for basic restore correctness.
 
 ## Headers And Metadata
 
@@ -82,16 +95,17 @@ media state.
 
 The first archive-time header for an archive volume.
 
-It identifies the archive instance, declares `volume_seq_num`, and fixes
-`volume_block_size` for all NeoTape records in that archive volume.
+It identifies the archive instance, stores `archive_name`, declares
+`volume_seq_num`, records `payload_profile`, and fixes `volume_block_size` for
+all NeoTape records in that archive volume.
 
-### Segment Header
+### Frame Header
 
-The fixed header at the start of each physical segment.
+The fixed header at the start of each Frame.
 
-It records segment length, sequencing, content type, optional continuation
-state, optional segment payload hash, and for `SLICE_END` segments the
-slice-level integrity fields.
+It records Frame sequencing, content type, meaningful byte count, Frame payload
+hash, repeated archive identity fields such as `archive_name`, and for final
+`SLICE_CONTENT` Frames the slice-level integrity fields.
 
 ### Archive End Header
 
@@ -100,13 +114,16 @@ The final clean archive-level header.
 An archive is not cleanly complete unless a valid Archive End Header is found
 and its clean-end semantics validate.
 
-### TRAILER_METADATA Segment
+It repeats archive identity fields such as `archive_name` so the clean end
+record remains human inspectable without auxiliary tools.
 
-A Segment Header with `segment_content_type = TRAILER_METADATA`.
+### Archive-Level Catalog
 
-TRAILER_METADATA segments are advisory metadata segments that may follow the
-last PAYLOAD segment of a logical slice. They are not payload, are not emitted
-to stdout, and must not be required for basic restore correctness.
+Optional advisory metadata associated with the whole archive.
+
+Archive-level catalog metadata may be referenced by the Archive End Header. It
+is separate from slice metadata and is not required for basic restore
+correctness.
 
 ## Payload Terms
 
@@ -130,22 +147,21 @@ framing.
 End of Archive marker inside a payload format.
 
 For tar/pax, EOA is usually at least two 512-byte zero records. In NeoTape core,
-EOA is payload-profile data only and is never used as a slice or segment
+EOA is payload-profile data only and is never used as a slice or Frame
 boundary.
 
 ## Flags
 
-### SLICE_START
+### START
 
-Segment flag indicating that the segment starts a logical slice.
+Frame flag indicating the first Frame of a content-type group within a logical
+slice.
 
-### SLICE_CONTINUATION
+### END
 
-Segment flag indicating that the segment continues an existing logical slice.
+Frame flag indicating the last Frame of a content-type group within a logical
+slice.
 
-### SLICE_END
-
-Segment flag indicating that the writer declares the logical slice complete.
-
-The Segment Header carrying `SLICE_END` also carries the authoritative
-`slice_payload_size` and `slice_payload_blake3` for that logical slice.
+The Frame Header carrying `END` with `frame_content_type = SLICE_CONTENT` also
+carries the authoritative `slice_content_size` and `slice_content_blake3` for
+that logical slice's content byte stream.

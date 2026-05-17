@@ -92,7 +92,7 @@ At minimum, the reader should check:
 - `archive_uuid` consistency.
 - Volume sequence number continuity.
 - Slice continuation rules.
-- SLICE_END segment header integrity.
+- Final `SLICE_CONTENT` Frame Header integrity.
 - Archive End Header integrity when present.
 
 If a wrong disc or wrong volume directory is supplied, the reader should reject it in normal mode. Interactive removable-media mode may prompt the user for the expected volume.
@@ -111,7 +111,7 @@ BD-R DL:  approximately 50 GB nominal media class
 BD-R XL:  larger media classes, depending on drive and media support
 ```
 
-Implementations should reserve space for NeoTape headers, TRAILER_METADATA segments, manifests, filesystem overhead, and disc filesystem metadata. The volume size limit should be conservative rather than attempting to fill media to the last byte.
+Implementations should reserve space for NeoTape headers, `SLICE_METADATA` Frames, manifests, filesystem overhead, and disc filesystem metadata. The volume size limit should be conservative rather than attempting to fill media to the last byte.
 
 ## Non-Goals
 

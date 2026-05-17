@@ -22,17 +22,17 @@ notes, experiments, and roadmap planning.
 ```text
 docs/
   README.md
-  roadmap.md
+  ROADMAP.md
 
   spec/
     terminology.md
     00-header-common.md
     01-medium-header.md
     02-volume-header.md
-    03-segment-header.md
+    03-frame-header.md
     04-archive-end-header.md
     06-volume-layout.md
-    07-segments-and-slices.md
+    07-frames-and-slices.md
     08-continuation.md
     09-payload-profiles.md
     10-reader-state-machine.md
@@ -58,7 +58,7 @@ docs/
 Use `docs/spec/` for the NeoTape format specification.
 
 This is where normative or near-normative material belongs: tape model,
-transport semantics, header fields, segment and slice rules, continuation
+transport semantics, header fields, Frame and slice rules, continuation
 behavior, reader state machine, error handling, and payload profile contracts.
 
 Phase 1 header byte layout work should primarily land in:
@@ -68,7 +68,7 @@ docs/spec/terminology.md
 docs/spec/00-header-common.md
 docs/spec/01-medium-header.md
 docs/spec/02-volume-header.md
-docs/spec/03-segment-header.md
+docs/spec/03-frame-header.md
 docs/spec/04-archive-end-header.md
 ```
 
@@ -86,7 +86,7 @@ Phase 1 implementation planning should primarily land in:
 docs/implementation/phase-1-header-layout.md
 ```
 
-### `roadmap.md`
+### `ROADMAP.md`
 
 Keep the roadmap focused on milestones, status, and sequencing.
 

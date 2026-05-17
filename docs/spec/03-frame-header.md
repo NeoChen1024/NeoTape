@@ -2,19 +2,19 @@
 
 Status: draft / field inventory.
 
-A NeoTape Frame is the self-describing transport record used to carry payload
-bytes or slice catalog bytes inside an archive volume. Each Frame occupies
-exactly one NeoTape record of `volume_block_size` bytes. The first 1024 bytes of
-that record are the Frame Header; the remaining bytes contain frame payload
-followed by zero padding.
+A NeoTape Frame is the self-describing transport record used to carry slice
+content bytes or slice metadata bytes inside an archive volume. Each Frame
+occupies exactly one NeoTape record of `volume_block_size` bytes. The first
+1024 bytes of that record are the Frame Header; the remaining bytes contain
+frame payload followed by zero padding.
 
 The Frame Header tells a reader how many bytes in the current record are
 meaningful, how those bytes contribute to the current logical slice, and whether
-the bytes belong to the payload stream or to advisory catalog data.
+the bytes belong to slice content or advisory slice metadata.
 
-The exact binary layout, datatype mapping, and fixed field sizes are
-intentionally left open in this draft. Field tables include empty `datatype` and
-`size (in bytes)` columns so those decisions can be made explicitly later.
+The field inventory below defines the current proposed datatypes and encoded
+field sizes. Exact byte offsets, enum numeric assignments, and future reserved
+field allocation remain open until the byte layout is frozen.
 
 ## Common Rules
 
@@ -58,27 +58,46 @@ The fixed fields should be enough to identify the archive instance, identify the
 logical slice, sequence the Frame, describe the meaningful bytes in the current
 record, and validate the header.
 
-| Field                      | datatype   | size (in bytes) | Requirement | Notes                                                                            |
-| -------------------------- | ---------- | --------------- | ----------- | -------------------------------------------------------------------------------- |
-| magic                      | char[8]    | 8               | MUST        | Fixed NeoTape identifier: `NeoTape\0`.                                          |
-| header_version             | uint8      | 1               | MUST        | Version of the archive-time header layout.                                       |
-| header_type                | uint8      | 1               | MUST        | Must identify Frame Header.                                                      |
-| archive_uuid               | nt_uuid    | 37              | MUST        | Stable UUID for this archive instance.                                           |
-| volume_seq_num             | uint32     | 4               | MUST        | Current archive volume sequence number.                                          |
-| logical_slice_seq_num      | uint32     | 4               | MUST        | Logical slice sequence number.                                                   |
-| frame_seq_num_within_slice | uint32     | 4               | MUST        | Frame sequence number scoped to the logical slice.                               |
-| global_frame_seq_num       | uint32     | 4               | MUST        | Frame sequence number scoped to the archive instance.                            |
-| frame_payload_size         | uint64     | 8               | MUST        | Meaningful payload bytes in this NeoTape record after the 1024-byte header.      |
-| frame_content_type         | uint8_enum | 1               | MUST        | `PAYLOAD` or `SLICE_CATALOG`.                                                    |
-| payload_profile            | uint8      | 1               | SHOULD      | Payload profile identifier such as pax, raw, or a future profile.                |
-| frame_payload_blake3       | nt_hash    | 32              | MUST        | BLAKE3 over exactly `frame_payload_size` bytes.                                  |
-| flags                      | uint16     | 2               | MUST        | Frame flags such as `SLICE_START`, `SLICE_END`, `CATALOG_START`, `CATALOG_END`.  |
-| slice_payload_size         | uint64     | 8               | MUST        | Slice-level payload size; valid only when `SLICE_END` flag is set, otherwise zero. |
-| slice_payload_blake3       | nt_hash    | 32              | MUST        | BLAKE3 over slice payload bytes; zero when `SLICE_END` flag is not set.          |
-| reserved                   | byte[*]    | *               | MUST        | Zero bytes reserved for future fixed fields.                                     |
-| header_crc32c              | nt_crc32c  | 4               | MUST        | CRC32C for fixed header fields, excluding this field.                            |
+| Field                        | datatype      | size (in bytes) | Requirement | Notes                                                                                             |
+| ---------------------------- | ------------- | --------------- | ----------- | ------------------------------------------------------------------------------------------------- |
+| `magic`                      | `char[8]`     | 8               | MUST        | Fixed NeoTape identifier: `NeoTape\0`.                                                           |
+| `header_version`             | `uint8`       | 1               | MUST        | Version of the archive-time header layout.                                                        |
+| `header_type`                | `uint8_enum`  | 1               | MUST        | Must identify Frame Header.                                                                       |
+| `volume_block_size`          | `uint32`      | 4               | MUST        | Fixed NeoTape record size for this archive volume. Must be at least 64 KiB.                       |
+| `archive_uuid`               | `nt_uuid`     | 37              | MUST        | Stable UUID for this archive instance.                                                           |
+| `archive_name`               | `nt_name`     | 256             | SHOULD      | Human-readable archive name, in UTF-8.                                                           |
+| `volume_seq_num`             | `uint64`      | 8               | MUST        | Current archive volume sequence number.                                                          |
+| `payload_profile`            | `uint8_enum`  | 1               | MUST        | Payload profile used by this archive instance.                                                    |
+| `logical_slice_seq_num`      | `uint64`      | 8               | MUST        | Logical slice sequence number.                                                                    |
+| `global_frame_seq_num`       | `uint64`      | 8               | MUST        | Frame sequence number scoped to the archive instance.                                             |
+| `frame_seq_num_within_slice` | `uint64`      | 8               | MUST        | Frame sequence number scoped to the logical slice.                                                |
+| `frame_payload_size`         | `uint64`      | 8               | MUST        | Meaningful bytes in this NeoTape record after the 1024-byte header.                               |
+| `frame_content_type`         | `uint8_enum`  | 1               | MUST        | `SLICE_CONTENT` or `SLICE_METADATA`.                                                             |
+| `frame_payload_blake3`       | `nt_hash`     | 32              | MUST        | BLAKE3 over exactly `frame_payload_size` bytes.                                                   |
+| `flags`                      | `uint16`      | 2               | MUST        | Frame flags: `START`, `END`.                                                                     |
+| `slice_content_size`         | `uint64`      | 8               | MUST        | Slice-level content size; valid only when `END` flag is set for `SLICE_CONTENT`, otherwise zero.  |
+| `slice_content_blake3`       | `nt_hash`     | 32              | MUST        | BLAKE3 over slice content bytes; zero when `END` flag is not set for `SLICE_CONTENT`.             |
+| `reserved`                   | `byte[*]`     | *               | MUST        | Zero bytes reserved for future fixed fields.                                                      |
+| `header_crc32c`              | `nt_crc32c`   | 4               | MUST        | CRC32C for fixed header fields, excluding this field.                                             |
 
-## Payload Length Rule
+## Flags
+
+| Bit   | Name         | Meaning                                                |
+| ----- | ------------ | ------------------------------------------------------ |
+| 0     | `START`    | First frame of a content-type group within this slice. |
+| 1     | `END`      | Last frame of a content-type group within this slice.  |
+| 2–15 | _reserved_ | MUST be zero. Reserved for future use.                 |
+
+`START` and `END` apply to the current `frame_content_type` group:
+
+| `START` | `END` | Meaning                    |
+| --------- | ------- | -------------------------- |
+| 0         | 0       | Continuation frame.        |
+| 0         | 1       | Last frame of this group.  |
+| 1         | 0       | First frame of this group. |
+| 1         | 1       | Single-frame group.        |
+
+## Frame Payload Length Rule
 
 `frame_payload_size` MUST be authoritative. The reader uses this length to
 separate meaningful payload bytes from trailing padding inside the same NeoTape
@@ -99,57 +118,58 @@ The writer SHOULD choose `volume_block_size` so that
 
 ## Content Types
 
-Frame payload content type is explicit:
+Frame content type is explicit:
 
-| Content type      | Meaning                                                              |
-| ----------------- | -------------------------------------------------------------------- |
-| `PAYLOAD`         | Opaque bytes belonging to the logical slice payload byte stream.     |
-| `SLICE_CATALOG`   | Advisory catalog bytes associated with a logical slice.              |
+| Content type       | Meaning                                                          |
+| ------------------ | ---------------------------------------------------------------- |
+| `SLICE_CONTENT`  | Opaque bytes belonging to the logical slice content byte stream. |
+| `SLICE_METADATA` | Advisory metadata bytes associated with a logical slice.         |
 
 A normal payload reader, such as `neotape-cat-volumes`, MUST emit only
-`PAYLOAD` Frame payload bytes. It MUST NOT emit `SLICE_CATALOG` bytes to
+`SLICE_CONTENT` Frame payload bytes. It MUST NOT emit `SLICE_METADATA` bytes to
 stdout.
 
-A catalog-aware reader MAY parse `SLICE_CATALOG` Frames for listing, partial
+A metadata-aware reader MAY parse `SLICE_METADATA` Frames for listing, partial
 restore, diagnostics, or acceleration.
 
 ## Slice-Level Integrity
 
-The Frame Header with `SLICE_END` flag carries the authoritative
-`slice_payload_size` and `slice_payload_blake3` for the logical slice.
+The Frame Header with `END` flag and `SLICE_CONTENT` content type carries the
+authoritative `slice_content_size` and `slice_content_blake3` for the logical
+slice content.
 
-`slice_payload_blake3` is computed over exactly `slice_payload_size` bytes of
-concatenated payload from all `PAYLOAD` Frames in the logical slice, in Frame
-sequence order. `SLICE_CATALOG` Frame bytes are NOT included in the slice-level
-BLAKE3.
+`slice_content_blake3` is computed over exactly `slice_content_size` bytes of
+concatenated payload from all `SLICE_CONTENT` Frames in the logical slice, in
+Frame sequence order. `SLICE_METADATA` Frame bytes are NOT included in the
+slice-level BLAKE3.
 
-Frames without `SLICE_END` MUST set both `slice_payload_size` and
-`slice_payload_blake3` to zero.
+Frames without the `END` flag and Frames with the `SLICE_METADATA` content type
+MUST set both `slice_content_size` and `slice_content_blake3` to zero.
 
 Frame-level hashes (`frame_payload_blake3`) are independent and are not combined
 to form the slice-level digest. A reader MUST compute the slice-level BLAKE3
-directly from the concatenated `PAYLOAD` Frame payload bytes.
+directly from the concatenated `SLICE_CONTENT` Frame payload bytes.
 
-## Optional Slice Catalog Frames
+## Optional Slice Metadata Frames
 
-The writer MAY follow the last `PAYLOAD` Frame of a logical slice with zero or
-more `SLICE_CATALOG` Frames. Each such Frame carries bytes from a restricted ar
-archive conforming to the ar subset format defined in
+The writer MAY follow the last `SLICE_CONTENT` Frame of a logical slice with
+zero or more `SLICE_METADATA` Frames. Each such Frame carries bytes from a
+restricted ar archive conforming to the ar subset format defined in
 [docs/spec/00-header-common.md](00-header-common.md#ar-subset-format).
 
-`SLICE_CATALOG` Frames are NeoTape transport metadata associated with a logical
+`SLICE_METADATA` Frames are NeoTape transport metadata associated with a logical
 slice. They are not part of the payload stream and MUST NOT be emitted to stdout
 by `neotape-cat-volumes`.
 
-`SLICE_CATALOG` Frames are advisory. A reader MUST NOT reject a logical slice or
-archive solely because of missing, truncated, or corrupt `SLICE_CATALOG` Frames,
-unless the selected operation explicitly requires catalog data. If
-`frame_payload_blake3` verification fails for a `SLICE_CATALOG` Frame, the
+`SLICE_METADATA` Frames are advisory. A reader MUST NOT reject a logical slice or
+archive solely because of missing, truncated, or corrupt `SLICE_METADATA` Frames,
+unless the selected operation explicitly requires slice metadata. If
+`frame_payload_blake3` verification fails for a `SLICE_METADATA` Frame, the
 reader SHOULD log a warning and continue in normal payload extraction mode.
 
-If EOT occurs before all `SLICE_CATALOG` Frames can be committed, the next
+If EOT occurs before all `SLICE_METADATA` Frames can be committed, the next
 volume SHOULD resume with a Volume Header followed by the next complete
-`SLICE_CATALOG` Frame for the same `logical_slice_seq_num`. No partial Frame is
+`SLICE_METADATA` Frame for the same `logical_slice_seq_num`. No partial Frame is
 continued across the volume boundary.
 
 The specific ar archive member names and their semantics are intentionally left
@@ -157,14 +177,13 @@ to a future specification.
 
 ## Volume Boundary Rule
 
-NeoTape uses complete Frames as the smallest committed payload/catalog transport
+NeoTape uses complete Frames as the smallest committed content/metadata transport
 unit.
 
 If EOT or a write error occurs while writing a Frame, that Frame MUST be treated
 as uncommitted unless the backend can prove that the entire `volume_block_size`
 record was written successfully. The writer resumes on the next volume by
-writing a Volume Header followed by the next complete Frame that has not been
-committed.
+writing a Volume Header (will first initialize Medium Header if not exist) followed by the next complete Frame that has not been committed.
 
-This rule replaces partial-segment continuation. There is no `segment_offset`
-field and no partial Frame continuation mechanism in this design.
+There is no offset field and no partial Frame continuation mechanism in this
+design.

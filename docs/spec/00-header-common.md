@@ -9,20 +9,21 @@ field inventories are defined in their own documents.
 
 All fixed header field tables in this specification use the following datatypes:
 
-| Datatype     | Description                                                                  |
-| ------------ | ---------------------------------------------------------------------------- |
-| `uint8`      | Unsigned 8-bit integer.                                                      |
-| `uint8_enum` | Unsigned 8-bit integer with enumerated values defined per field.             |
-| `uint16`     | Unsigned 16-bit integer, little-endian.                                      |
-| `uint32`     | Unsigned 32-bit integer, little-endian.                                      |
-| `uint64`     | Unsigned 64-bit integer, little-endian.                                      |
-| `char[N]`    | Fixed N-byte character array. NUL-terminated or NUL-padded per field rules.  |
-| `byte[N]`    | Fixed N-byte raw binary array.                                               |
+| Datatype       | Description                                                                                                                                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `uint8`      | Unsigned 8-bit integer.                                                                                                                                                              |
+| `uint8_enum` | Unsigned 8-bit integer with enumerated values defined per field.                                                                                                                     |
+| `uint16`     | Unsigned 16-bit integer, little-endian.                                                                                                                                              |
+| `uint32`     | Unsigned 32-bit integer, little-endian.                                                                                                                                              |
+| `uint64`     | Unsigned 64-bit integer, little-endian.                                                                                                                                              |
+| `char[N]`    | Fixed N-byte character array. NUL-terminated or NUL-padded per field rules.                                                                                                          |
+| `byte[N]`    | Fixed N-byte raw binary array.                                                                                                                                                       |
 | `byte[*]`    | Auto-calculated zero padding. Expands to the number of zero bytes needed to fill the 1024-byte fixed header area. Writers MUST write zero; readers MUST include all bytes in CRC32C. |
-| `nt_time`    | NUL-terminated UTC timestamp. 20 bytes. Encoding defined in Timestamp Format.  |
-| `nt_uuid`    | NUL-terminated UUID string per RFC 4122. 37 bytes.                            |
-| `nt_hash`    | BLAKE3 256-bit hash. 32 bytes.                                               |
-| `nt_crc32c`  | CRC32C checksum, little-endian. 4 bytes. Algorithm defined in CRC32C Algorithm section. |
+| `nt_name`    | Fixed 256-byte UTF-8 text field. NUL-terminated when shorter than 256 bytes, NUL-padded after the terminator, and not required to end with NUL when all 256 bytes are used.           |
+| `nt_time`    | NUL-terminated UTC timestamp. 20 bytes. Encoding defined in Timestamp Format.                                                                                                        |
+| `nt_uuid`    | NUL-terminated UUID string per RFC 4122. 37 bytes.                                                                                                                                   |
+| `nt_hash`    | BLAKE3 256-bit hash. 32 bytes.                                                                                                                                                       |
+| `nt_crc32c`  | CRC32C checksum, little-endian. 4 bytes. Algorithm defined in CRC32C Algorithm section.                                                                                              |
 
 ## Magic Value
 
@@ -40,11 +41,11 @@ magic value.
 Every NeoTape fixed header MUST begin with the same three fields in this exact
 order:
 
-| Field          | datatype | size (in bytes) |
-| -------------- | -------- | --------------- |
-| magic          | char[8]  | 8               |
-| header_version | uint8    | 1               |
-| header_type    | uint8    | 1               |
+| Field          | datatype   | size (in bytes) |
+| -------------- | ---------- | --------------- |
+| magic          | char[8]    | 8               |
+| header_version | uint8      | 1               |
+| header_type    | uint8_enum | 1               |
 
 A parser can always read the first 10 bytes of any fixed header, validate the
 magic value, determine the header layout version, and dispatch reader logic by
@@ -52,6 +53,16 @@ header type.
 
 This common prefix applies to the Medium Header, Volume Header, Frame Header,
 and Archive End Header. The layout after byte 9 is type-specific.
+
+## Repeated Archive Identity Fields
+
+Archive-time headers SHOULD repeat enough identity fields to make an archive
+recognizable during low-level inspection, even without a NeoTape-aware tool.
+
+Volume Header, Frame Header, and Archive End Header therefore include
+`archive_uuid` and `archive_name`. `archive_uuid` is the authoritative machine
+identifier. `archive_name` is a human-readable hint and MUST NOT be used as a
+unique key.
 
 ## Header Position Rule
 
@@ -84,10 +95,9 @@ NeoTape uses CRC32C (Castagnoli polynomial) with the following parameters:
 Implementations MAY use any compatible method (lookup-table, slicing-by-8,
 hardware CRC32C instructions).
 
-The CRC32C is computed over all fixed header bytes preceding the
-`header_crc32c` field, including reserved and zero-filled fields, in their
-on-media byte order. The `header_crc32c` field itself is excluded from the
-computation.
+The CRC32C is computed over all fixed header bytes preceding the CRC32C field,
+including reserved and zero-filled fields, in their on-media byte order. The
+CRC32C field itself is excluded from the computation.
 
 All `nt_crc32c` fields in NeoTape headers use this algorithm.
 
@@ -99,7 +109,7 @@ immediately after the 1024-byte fixed field area, without padding or alignment
 gap.
 
 Examples include the Medium Header's ar metadata bundle and the Frame Header's
-payload bytes.
+content or metadata bytes.
 
 Header types that are not followed by continuation data (Volume Header, Archive
 End Header) MAY fill the remainder of their NeoTape record with padding. All
@@ -122,6 +132,7 @@ Empty fixed-field values are encoded as follows:
 - Numeric fields: zero.
 - Fixed byte arrays: all zero bytes.
 - NUL-terminated string fields: first byte NUL, remaining bytes zero.
+- `nt_name` fields: first byte NUL, remaining bytes zero.
 
 CRC32C calculations over fixed fields MUST include every fixed field byte,
 including empty values and reserved fields. The relevant CRC32C field is

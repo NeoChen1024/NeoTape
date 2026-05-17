@@ -23,44 +23,49 @@ NeoTape record.
 ## Fixed Fields
 
 The fixed fields should be enough to identify the archive instance, summarize
-the final sequence position, validate optional final catalog metadata, and mark
+the final sequence position, name the archive for human inspection, and mark
 the archive as cleanly complete.
 
-| Field                      | datatype  | size (in bytes) | Requirement | Notes                                                                  |
-| -------------------------- | --------- | --------------- | ----------- | ---------------------------------------------------------------------- |
-| magic                      | char[8]   | 8               | MUST        | Fixed NeoTape identifier: `NeoTape\0`.                                |
-| header_version             | uint8     | 1               | MUST        | Version of the archive-time header layout.                             |
-| header_type                | uint8     | 1               | MUST        | Must identify Archive End Header.                                      |
-| archive_uuid               | nt_uuid   | 37              | MUST        | Stable UUID for this archive instance.                                 |
-| volume_seq_num             | uint32    | 4               | MUST        | Final archive volume sequence number.                                  |
-| last_logical_slice_seq_num | uint32    | 4               | MUST        | Last completed logical slice sequence number.                          |
-| last_global_frame_seq_num  | uint32    | 4               | MUST        | Last Frame sequence number scoped to the archive instance.             |
-| catalog_blake3             | nt_hash   | 32              | MAY         | BLAKE3 for archive-level catalog metadata when present; zero otherwise. |
-| created_by_implementation  | char[64]  | 64              | SHOULD      | Writer implementation name and version.                                |
-| created_by_build_id        | char[64]  | 64              | MAY         | Source revision, build ID, or other diagnostic identifier. May be empty.|
-| archive_end_at_utc         | nt_time   | 20              | MUST        | Archive end timestamp using the fixed NeoTape timestamp format.        |
-| flags                      | uint16    | 2               | MUST        | Archive end flags: `CLEAN_END`, `CATALOG_PRESENT`.                    |
-| reserved                   | byte[*]   | *               | MUST        | Zero bytes reserved for future fixed fields.                           |
-| header_crc32c              | nt_crc32c | 4               | MUST        | CRC32C for fixed header fields, excluding this field.                  |
+| Field                         | datatype      | size (in bytes) | Requirement | Notes                                                                       |
+| ----------------------------- | ------------- | --------------- | ----------- | --------------------------------------------------------------------------- |
+| `magic`                       | `char[8]`     | 8               | MUST        | Fixed NeoTape identifier: `NeoTape\0`.                                      |
+| `header_version`              | `uint8`       | 1               | MUST        | Version of the archive-time header layout.                                  |
+| `header_type`                 | `uint8_enum`  | 1               | MUST        | Must identify Archive End Header.                                           |
+| `volume_block_size`           | `uint32`      | 4               | MUST        | Fixed NeoTape record size for this archive volume. Must be at least 64 KiB. |
+| `archive_uuid`                | `nt_uuid`     | 37              | MUST        | Stable UUID for this archive instance.                                      |
+| `archive_name`                | `nt_name`     | 256             | SHOULD      | Human-readable archive name, in UTF-8.                                      |
+| `volume_seq_num`              | `uint64`      | 8               | MUST        | Final archive volume sequence number.                                       |
+| `payload_profile`             | `uint8_enum`  | 1               | MUST        | Payload profile used by this archive instance.                              |
+| `last_logical_slice_seq_num`  | `uint64`      | 8               | MUST        | Last completed logical slice sequence number.                               |
+| `last_global_frame_seq_num`   | `uint64`      | 8               | MUST        | Last Frame sequence number scoped to the archive instance.                  |
+| `created_by_implementation`   | `char[64]`    | 64              | SHOULD      | Writer implementation name and version.                                     |
+| `created_by_build_id`         | `char[64]`    | 64              | MAY         | Source revision, build ID, or other diagnostic identifier. May be empty.    |
+| `archive_end_at_utc`          | `nt_time`     | 20              | MUST        | Archive end timestamp using the fixed NeoTape timestamp format.             |
+| `flags`                       | `uint16`      | 2               | MUST        | Archive end flags: `CLEAN_END`, `CATALOG_PRESENT`.                         |
+| `reserved`                    | `byte[*]`     | *               | MUST        | Zero bytes reserved for future fixed fields.                                |
+| `header_crc32c`               | `nt_crc32c`   | 4               | MUST        | CRC32C for fixed header fields, excluding this field.                       |
 
 For a total of 1024 bytes.
 
 ## Flags
 
-| Bit  | Name              | Meaning                                                                                                  |
-| ---- | ----------------- | -------------------------------------------------------------------------------------------------------- |
+| Bit  | Name                | Meaning                                                                                                  |
+| ---- | ------------------- | -------------------------------------------------------------------------------------------------------- |
 | 0    | `CLEAN_END`       | Archive completed cleanly. MUST be 1. A value of 0 means the writer did not produce a clean archive end. |
-| 1    | `CATALOG_PRESENT` | Archive-level catalog metadata is present after the Archive End Header.                                  |
+| 1    | `CATALOG_PRESENT` | Archive-level catalog metadata is present in the archive before this Archive End Header.                  |
 | 2-15 | _reserved_        | MUST be zero. Reserved for future use.                                                                   |
 
 `CLEAN_END` is the authoritative indicator of a cleanly completed archive. If a
 reader finds an Archive End Header with `CLEAN_END` clear (bit 0 = 0), the
 archive MUST NOT be treated as cleanly complete.
 
-`CATALOG_PRESENT` indicates that the writer followed the Archive End Header
-with archive-level catalog metadata. The reader SHOULD attempt to read it. If
-`CATALOG_PRESENT` is set but the catalog metadata is missing or corrupt, the
-reader MUST NOT reject the archive (catalog metadata is advisory).
+`CATALOG_PRESENT` indicates that the writer included archive-level catalog
+metadata before the Archive End Header. The reader SHOULD attempt to locate and
+read it. If `CATALOG_PRESENT` is set but the catalog metadata is missing or
+corrupt, the reader MUST NOT reject the archive (catalog metadata is advisory).
+
+Archive-level catalog metadata is not part of the Archive End Header and is not
+protected by the Archive End Header CRC32C.
 
 ## Completion Rule
 

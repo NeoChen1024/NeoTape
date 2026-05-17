@@ -32,13 +32,13 @@ Open questions:
 
 ## Strict Data Validation
 
-Idea: on read, buffer the entire segment payload in memory and verify
-`segment_payload_blake3` before emitting any output bytes. This ensures that
+Idea: on read, buffer the entire Frame payload in memory and verify
+`frame_payload_blake3` before emitting any output bytes. This ensures that
 corrupted or truncated data is never forwarded to the consumer.
 
-Open question: for large segments exceeding available memory, a streaming
+Open question: for large Frames exceeding available memory, a streaming
 alternative (hash update during read, verify at end) could avoid OOM while
-still refusing output on mismatch. The strict buffer-verfiy-then-emit model
+still refusing output on mismatch. The strict buffer-verify-then-emit model
 and the streaming hash-verify-then-report model are not equivalent — the
 former guarantees zero bad output, the latter bounds memory at the cost of
 potentially emitting partial data to a pipe before detecting corruption.
