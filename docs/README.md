@@ -3,6 +3,16 @@
 This directory is the entry point for NeoTape design notes, format drafts, and
 implementation planning.
 
+## Specification Precedence
+
+`docs/spec/` is the active home of the NeoTape format specification. When a
+topic is defined in `docs/spec/`, that definition replaces and supersedes the
+corresponding material in `docs/RFC_Draft.md`.
+
+`docs/RFC_Draft.md` remains useful as source material, rationale, and historical
+draft context. It should not be treated as authoritative for sections that have
+already been split into `docs/spec/`.
+
 The documentation should be split by stability and purpose. The goal is to keep
 the future on-tape format readable while still leaving room for implementation
 notes, experiments, and roadmap planning.
@@ -15,22 +25,20 @@ docs/
   roadmap.md
 
   spec/
-    index.md
-    00-status.md
-    01-introduction.md
-    02-terminology.md
-    03-tape-model.md
-    04-core-format.md
-    05-medium-header.md
-    06-headers.md
-    07-volume-layout.md
-    08-segments-and-slices.md
-    09-continuation.md
-    10-payload-profiles.md
-    11-reader-state-machine.md
-    12-error-handling.md
-    13-security.md
-    14-future-extensions.md
+    00-header-common.md
+    01-medium-header.md
+    02-volume-header.md
+    03-segment-header.md
+    04-slice-trailer.md
+    05-archive-end-header.md
+    06-volume-layout.md
+    07-segments-and-slices.md
+    08-continuation.md
+    09-payload-profiles.md
+    10-reader-state-machine.md
+    11-error-handling.md
+    12-security.md
+    13-future-extensions.md
     appendix-layout-examples.md
     appendix-cli.md
     open-questions.md
@@ -56,8 +64,12 @@ behavior, reader state machine, error handling, and payload profile contracts.
 Phase 1 header byte layout work should primarily land in:
 
 ```text
-docs/spec/05-medium-header.md
-docs/spec/06-headers.md
+docs/spec/00-header-common.md
+docs/spec/01-medium-header.md
+docs/spec/02-volume-header.md
+docs/spec/03-segment-header.md
+docs/spec/04-slice-trailer.md
+docs/spec/05-archive-end-header.md
 ```
 
 ### `implementation/`
@@ -91,7 +103,8 @@ docs/ROADMAP.md
 ```
 
 They should be gradually split into the structure above instead of edited into
-even larger monolithic documents.
+even larger monolithic documents. Once a topic has been split into `docs/spec/`,
+the `docs/spec/` version is authoritative.
 
 ## Splitting Guidance
 

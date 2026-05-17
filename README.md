@@ -6,6 +6,16 @@ NeoTape wraps a payload byte stream (typically a POSIX pax/tar archive) in a lig
 
 This is a design-stage project. The current implementation is a **Phase 0 pax writer** — a libarchive-based CLI that produces a plain POSIX pax-format tar stream. The NeoTape framing layer (volume headers, segment headers, slice trailers, catalog, tape backend) exists only as a specification.
 
+## Specification Status
+
+The active format specification lives under `docs/spec/`. When a topic is
+defined in `docs/spec/`, that definition supersedes any older or conflicting
+text in `docs/RFC_Draft.md`.
+
+`docs/RFC_Draft.md` remains useful as background design material and historical
+draft text, but it is no longer the authoritative source for sections that have
+been split into `docs/spec/`.
+
 ## Hierarchy
 
 ```
@@ -34,7 +44,8 @@ All records in an archive volume use a fixed **block_size** declared in the Volu
 | 8     | Cartridge header & self-description | Spec   |
 | 9     | Filesystem-native payload profiles  | Spec   |
 
-See `docs/RFC_Draft.md` for the full format specification and `docs/ROADMAP.md` for the implementation plan.
+See `docs/spec/` for the active format specification, `docs/RFC_Draft.md` for
+background draft material, and `docs/ROADMAP.md` for the implementation plan.
 
 ## Dependencies
 

@@ -47,7 +47,7 @@ Deliverables:
 - Header parser and serializer.  
 - CRC32C verification over fixed header bytes.  
 - BLAKE3 verification utility for payload ranges.  
-- Explicit endian choice, integer widths, alignment rules, reserved fields, and string/UUID encoding.
+- Little Endian multi-byte integer encoding, integer widths, alignment rules, reserved fields, and string/UUID encoding.
 
 Candidate headers to freeze first:  
 - Volume Header  
@@ -220,7 +220,7 @@ Spec feedback expected:
 
 Goal: define the immutable BOT Medium Header and recovery bundle.
 
-Spec draft: [docs/spec/05-medium-header.md](spec/05-medium-header.md)
+Spec draft: [docs/spec/01-medium-header.md](spec/01-medium-header.md)
 
 Deliverables:  
 - Medium Header binary/ASCII prefix.  

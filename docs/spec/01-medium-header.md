@@ -10,51 +10,11 @@ The exact binary layout, datatype mapping, and fixed field sizes are
 intentionally left open in this draft. Field tables include empty `datatype` and
 `size (in bytes)` columns so those decisions can be made explicitly later.
 
-## Requirement Keywords
+## Common Rules
 
-For fixed Medium Header field tables, `MUST`, `SHOULD`, and `MAY` describe
-whether a writer is required or expected to produce a meaningful value. They do
-not make the field itself optional.
-
-Every fixed field listed in a Medium Header field table has a stable position
-and fixed encoded size. Writers MUST NOT omit fields from the encoded Medium
-Header. If a writer does not produce a meaningful value for a `SHOULD` or `MAY`
-field, it MUST write the field's empty value instead.
-
-Empty fixed-field values are encoded as follows:
-
-- Numeric fields: zero.
-- Fixed byte arrays: all zero bytes.
-- NUL-terminated string fields: first byte NUL, remaining bytes zero.
-
-CRC32C calculations over fixed fields MUST include every fixed field byte,
-including empty values, padding, and reserved fields. The `medium_header_crc32c`
-field is excluded from its own calculation and MUST be treated as zero bytes
-during that calculation.
-
-This rule applies to fixed Medium Header fields only. Metadata Bundle member
-tables are file lists; `MAY` member files may be absent from the ar archive.
-
-## Timestamp Format
-
-All fixed NeoTape timestamp fields MUST use UTC and MUST be encoded as a
-20-byte NUL-terminated string.
-
-The timestamp text before the NUL byte MUST match this exact `strftime` format:
-
-```text
-%Y-%m-%dT%H:%M:%S
-```
-
-This is exactly 19 ASCII bytes followed by one NUL byte:
-
-```text
-YYYY-MM-DDTHH:MM:SS\0
-```
-
-Writers MUST NOT use timezone suffixes, numeric offsets, fractional seconds,
-locale-specific text, RFC 3339 variants, ISO 8601 variants, or any other date
-format.
+Requirement keyword handling, empty fixed-field encoding, CRC32C calculation,
+and timestamp encoding are defined in
+[docs/spec/00-header-common.md](00-header-common.md).
 
 ## Placement
 
@@ -78,22 +38,22 @@ size.
 
 These fields are immutable descriptive metadata, not an append-time state index.
 
-| Field                      | datatype  | size (in bytes) | Requirement | Notes                                                                                         |
-| -------------------------- | --------- | --------------- | ----------- | --------------------------------------------------------------------------------------------- |
-| magic                      | char[8]   | 8               | MUST        | Fixed NeoTape Medium Header identifier. (`NeoTape\0`)                                       |
-| medium_header_version      | uint8     | 1               | MUST        | Version of the Medium Header layout, independent from archive format versions.                |
-| medium_header_block_size   | uint32    | 4               | MUST        | Block size of the Medium Header. Must be at least 512.                                        |
-| medium_header_record_count | uint8     | 1               | MUST        | Number of blocks occupied by the Medium Header known at write time.                         |
-| flags                      | uint16    | 2               | SHOULD      | Reserved feature or compatibility flags.                                                      |
-| medium_uuid                | char[37]  | 37              | MUST        | Stable UUID for this initialized NeoTape physical medium.                                     |
-| initialized_at_utc         | char[20]  | 20              | MUST        | UTC initialization timestamp. Uses the fixed NeoTape timestamp format.                        |
-| medium_label               | byte[256] | 256             | SHOULD      | Human label. UTF-8. May be much longer than LTO MAM labels; 255 bytes is a reasonable target. |
-| created_by_implementation  | char[64]  | 64              | SHOULD      | Writer implementation name and version.                                                       |
-| created_by_build_id        | char[64]  | 64              | MAY         | Source revision, build ID, or other diagnostic identifier. May be empty.                      |
-| metadata_bundle_size       | uint32    | 4               | MUST        | Exact size of the ar metadata bundle.                                                         |
-| metadata_bundle_blake3     | byte[32]  | 32              | SHOULD      | Integrity hash for the ar metadata bundle bytes.                                              |
-| reserved                   | byte[15]  | 15              | MUST        | Zero bytes. Reserved for future fixed fields.                                                 |
-| medium_header_crc32c       | uint32    | 4               | MUST        | CRC32C for the 512-byte fixed Medium Header block, excluding this field.                      |
+| Field                     | datatype  | size (in bytes) | Requirement | Notes                                                                                         |
+| ------------------------- | --------- | --------------- | ----------- | --------------------------------------------------------------------------------------------- |
+| magic                     | char[8]   | 8               | MUST        | Fixed NeoTape Medium Header identifier. (`NeoTape\0`)                                       |
+| medium_header_version     | uint8     | 1               | MUST        | Version of the Medium Header layout, independent from archive format versions.                |
+| medium_header_block_size  | uint32    | 4               | MUST        | Block size of the Medium Header. Must be at least 512.                                        |
+| medium_header_block_count | uint8     | 1               | MUST        | Number of blocks occupied by the Medium Header known at write time.                         |
+| flags                     | uint16    | 2               | SHOULD      | Reserved feature or compatibility flags.                                                      |
+| medium_uuid               | char[37]  | 37              | MUST        | Stable UUID for this initialized NeoTape physical medium.                                     |
+| initialized_at_utc        | char[20]  | 20              | MUST        | UTC initialization timestamp. Uses the fixed NeoTape timestamp format.                        |
+| medium_label              | byte[256] | 256             | SHOULD      | Human label. UTF-8. May be much longer than LTO MAM labels; 255 bytes is a reasonable target. |
+| created_by_implementation | char[64]  | 64              | SHOULD      | Writer implementation name and version.                                                       |
+| created_by_build_id       | char[64]  | 64              | MAY         | Source revision, build ID, or other diagnostic identifier. May be empty.                      |
+| metadata_bundle_size      | uint32    | 4               | MUST        | Exact size of the ar metadata bundle.                                                         |
+| metadata_bundle_blake3    | byte[32]  | 32              | SHOULD      | Integrity hash for the ar metadata bundle bytes.                                              |
+| reserved                  | byte[15]  | 15              | MUST        | Zero bytes. Reserved for future fixed fields.                                                 |
+| medium_header_crc32c      | uint32    | 4               | MUST        | CRC32C for the 512-byte fixed Medium Header block, excluding this field.                      |
 
 For a total of 512 bytes. Future versions MAY allocate fields from the reserved
 space, but version 1 writers MUST write it as zero bytes and version 1 readers
@@ -115,7 +75,7 @@ The ar metadata bundle immediately follows the fixed Medium Header fields.
 There is no metadata bundle offset field.
 
 NeoTape does not impose a separate fixed upper size limit on the Medium Header
-metadata bundle. It may span multiple tape records as part of the Medium Header.
+metadata bundle. It may span multiple blocks as part of the Medium Header.
 Practical limits come from the encoded header length fields, the ar member
 format, implementation resource limits, and available medium capacity.
 
