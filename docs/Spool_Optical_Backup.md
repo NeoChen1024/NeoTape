@@ -92,7 +92,7 @@ At minimum, the reader should check:
 - `archive_uuid` consistency.
 - Volume sequence number continuity.
 - Slice continuation rules.
-- Slice Trailer integrity.
+- SLICE_END segment header integrity.
 - Archive End Header integrity when present.
 
 If a wrong disc or wrong volume directory is supplied, the reader should reject it in normal mode. Interactive removable-media mode may prompt the user for the expected volume.

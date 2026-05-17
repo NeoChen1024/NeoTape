@@ -16,9 +16,9 @@ already split into `docs/spec/`.
 
 # Abstract
 
-NeoTape 是一種針對 LTO 磁帶設計的 seekable multi-volume length-framed payload transport container。它將整體備份切分為多個 logical slices；每個 logical slice 是 writer 在串流過程中決定關閉的一段 payload bytes，後接 NeoTape Slice Trailer，trailer 內記錄實際 slice_payload_size 與 slice_payload_blake3。每個 logical slice 對應一個主要 LTO tape file，內含一個或多個 length-framed physical segments；每個 segment 前置 NeoTape segment header，其中明確記錄 segment_payload_size，之後接續該 segment 的 payload byte range。filemark 位於 slice boundary，而不是每個 segment boundary，因此磁帶機原生 file seek 能力定位到可完整驗證的 slice，同時避免在整卷磁帶上建立過多 filemarks。
+NeoTape 是一種針對 LTO 磁帶設計的 seekable multi-volume length-framed payload transport container。它將整體備份切分為多個 logical slices；每個 logical slice 是 writer 在串流過程中決定關閉的一段 payload bytes；最後一個 Segment Header（帶 SLICE_END flag）記錄該 slice 的 slice_payload_size 與 slice_payload_blake3。每個 logical slice 對應一個主要 LTO tape file，內含一個或多個 length-framed physical segments；每個 segment 前置 NeoTape segment header，其中明確記錄 segment_payload_size，之後接續該 segment 的 payload byte range。filemark 位於 slice boundary，而不是每個 segment boundary，因此磁帶機原生 file seek 能力定位到可完整驗證的 slice，同時避免在整卷磁帶上建立過多 filemarks。
 
-NeoTape 的讀取工具 neotape-cat-volumes 會讀取多卷磁帶、驗證 volume / segment / slice trailer headers、處理 End of Tape continuation，並依 payload profile 將多個 logical slices 重組輸出至 stdout。Minimal reader 只需要依 length fields 串接 payload bytes；對 NeoTape/PAX payload profile，下游可以直接使用 bsdtar -xpf - 還原。
+NeoTape 的讀取工具 neotape-cat-volumes 會讀取多卷磁帶、驗證 volume / segment headers、處理 End of Tape continuation，並依 payload profile 將多個 logical slices 重組輸出至 stdout。Minimal reader 只需要依 length fields 串接 payload bytes；對 NeoTape/PAX payload profile，下游可以直接使用 bsdtar -xpf - 還原。
 
 # 1. Introduction
 
@@ -34,7 +34,7 @@ NeoTape format itself is filesystem-agnostic. The writer MAY use different sourc
 * LTO 並非 block device；它不能任意 seek 到 byte offset，但可以利用 filemark 快速跳到 tape file boundary。
 * archive 外層不宜使用需要尾端 trailer 或回填的 wrapper，因為 EOT 位置不可可靠預測
 
-NeoTape 因此採用 LTO 原生分隔能力：每個 archive volume 有 volume header；每個 logical slice 是一個主要 tape file；slice tape file 內可包含多個 physical segments，每個 segment 由 segment header 與 length-framed payload byte range 組成；logical slice 完成後在同一 slice tape file 內寫入 Slice Trailer，記錄 size、BLAKE3 與可選 slice-local catalog；slice tape file 完成後寫入 filemark。最後以 Archive End Header 宣告整體 archive cleanly complete。
+NeoTape 因此採用 LTO 原生分隔能力：每個 archive volume 有 volume header；每個 logical slice 是一個主要 tape file；slice tape file 內可包含多個 physical segments，每個 segment 由 segment header 與 length-framed payload byte range 組成；logical slice 的最後一個 segment 帶有 SLICE_END flag，在 segment header 中記錄 slice_payload_size 與 slice_payload_blake3；slice tape file 完成後寫入 filemark。最後以 Archive End Header 宣告整體 archive cleanly complete。
 
 # 2. Terminology
 
@@ -54,7 +54,7 @@ Tape File
 
 Logical Slice
 
-一段 length-framed payload byte range。每個 logical slice 由一個或多個 physical segments 組成，總長度由 Slice Trailer 的 slice_payload_size 驗證。Payload 可以是 NeoTape/PAX profile、raw byte stream 或未來定義的其他 profile。
+一段 length-framed payload byte range。每個 logical slice 由一個或多個 physical segments 組成，總長度由最後一個 Segment Header 的 slice_payload_size 驗證。Payload 可以是 NeoTape/PAX profile、raw byte stream 或未來定義的其他 profile。
 
 Physical Segment
 
@@ -67,8 +67,8 @@ Continuation
 EOA
 
 End of Archive。對 tar/pax 而言，通常是至少兩個 512-byte zero records。In NeoTape core, EOA is payload-profile data only and is never used as a slice or segment boundary. On-tape logical slices do not need slice-local EOA markers.
-Slice Trailer
-每個 logical slice 的 payload bytes 完成後必須接續的 NeoTape transport metadata record。Slice Trailer 記錄 slice_payload_size、slice_payload_blake3、可選 slice-local catalog、payload profile 與其他 advisory metadata。它不是 payload stream 的一部分，reader MUST NOT output it to stdout。Slice Trailer 的邏輯位置由跨 segments / physical media 累積的 payload length 決定；若 EOT 發生在 payload 完成後但 trailer commit 前，Slice Trailer 會位於下一卷 physical medium。
+SLICE_END
+Segment Header 中的 SLICE_END flag 標記 writer 宣告的 logical slice 結束。此 segment header 同時攜帶 authoritative 的 slice_payload_size 與 slice_payload_blake3。TRAILER_METADATA segments 可隨後接續（在 slice-level filemark 之前），但不屬於 payload。若 EOT 發生在 SLICE_END segment header 成功寫入之前，下一卷的 continuation segment 必須帶有 SLICE_END flag。
 
 ## NeoTape header
 
@@ -83,14 +83,14 @@ Archive instance
 Medium Header:
 
 Physical medium 起始處的 mandatory immutable Medium Header。它描述 medium 層級的格式、初始化資訊、預設 tape block size、format version、restore instructions、medium name 以及 neotape-cat-volumes source bundle。它不是 archive table of contents，也不能作為後續 append archive 的可變索引。
-NeoTape 定義的固定格式 metadata header，用於 volume、segment、slice trailer 與 archive end record。NeoTape header 不屬於 payload stream，不會輸出給下游 extractor。
+NeoTape 定義的固定格式 metadata header，用於 volume、segment 與 archive end record。NeoTape header 不屬於 payload stream，不會輸出給下游 extractor。
 
 # 3\. Design Goals
 
 NeoTape 的設計目標如下：
 
 1. NeoTape/PAX payload profile compatibility：v0.1 推薦的 NeoTape/PAX payload profile 應與 libarchive/bsdtar 的 POSIX pax 格式相容。
-2. Length-framed payload container：NeoTape core is payload-format agnostic. Segment and slice boundaries are determined by explicit length fields in NeoTape headers and Slice Trailers, not by parsing pax/tar EOA or any payload-internal marker.
+2. Length-framed payload container：NeoTape core is payload-format agnostic. Segment and slice boundaries are determined by explicit length fields in NeoTape headers, not by parsing pax/tar EOA or any payload-internal marker.
 3. Restore simplicity：最小還原工具 neotape-cat-volumes 只負責磁帶 transport、multi-volume sequencing 與 length-framed payload concatenation；payload 解讀由 payload profile 或下游工具處理。
 4. LTO-native seekability：使用 LTO filemark 作為 volume、logical slice、archive end 等 coarse-grained boundary，使磁帶能快速 seek 到完整可驗證的 slice，而不是為每個 internal segment 建立 filemark。
 5. Target backend abstraction：NeoTape writer SHOULD support multiple backing stores for the same logical format, including direct sequential tape device output and ordinary filesystem spool output. Filesystem spool output is useful for debugging, test fixtures, offline archive preparation, staging while the tape drive is busy, and deterministic reproduction of volume/segment layout.
@@ -102,7 +102,7 @@ NeoTape 的設計目標如下：
 11. Multi-archive media use：若單一 archive 無法填滿整卷磁帶，格式應允許在同一 physical medium 上順序寫入多個完整 archive instances，且每個 archive 仍保持自己的 archive_uuid 與 clean end header。
 12. Media self-description：每張 physical medium 必須在 BOT 有 immutable Medium Header，用於保存 format version、block size、格式說明與 minimal reader source code，使磁帶離開外部 database 後仍可自我描述。
 13. Filesystem-agnostic operation：NeoTape 格式不得假設 source filesystem 必須是 ZFS。Writer 應允許依 filesystem 與 workload 選擇 reader profile，例如 multi-threaded small-file reader、single sequential reader、metadata-prefetch walker 或混合模式。
-14. Single-record archive-time header commitment：volume、segment、slice trailer、archive end 等可能在接近 EOT 時寫入的 fixed headers 必須能放入單一 tape record；Medium Header 是例外，因為它只在 BOT 初始化時寫入，可由多個 records 組成。
+14. Single-record archive-time header commitment：volume、segment、archive end 等可能在接近 EOT 時寫入的 fixed headers 必須能放入單一 tape record；Medium Header 是例外，因為它只在 BOT 初始化時寫入，可由多個 records 組成。
 
 # 4\. Non-Goals
 
@@ -124,13 +124,13 @@ NeoTape assumes modern LTO tape drives accessed through the standard SCSI sequen
 
 NeoTape does not require raw SCSI passthrough for normal operation. It only requires the operating system's standard tape device interface for open/read/write, writing filemarks, spacing filemarks, rewind/offline, detecting EOT/EOD, and setting or using variable block mode. The precise mapping of those operations is implementation-specific, but the on-tape format is not tied to a private OS or vendor API.
 
-NeoTape v0.1 requires tape record sizes large enough to hold every archive-time fixed header as a single record. Implementations MUST support at least 256 KiB tape records for volume, segment, slice trailer, and archive end header records. Each archive volume MUST declare a fixed block_size in its Volume Header, and all NeoTape records in that archive volume MUST use that block size unless a future profile explicitly defines a compatible record-framing exception. The Medium Header is excluded from this archive-volume block_size rule because it is written at BOT during medium initialization and may span multiple records. block_size SHOULD be a positive multiple of 512 bytes for NeoTape/PAX payload profile compatibility. 8 MiB is the recommended default for high-throughput LTO operation when supported, but the chosen value is fixed per archive volume after the Volume Header is committed.
+NeoTape v0.1 requires tape record sizes large enough to hold every archive-time fixed header as a single record. Implementations MUST support at least 256 KiB tape records for volume, segment, and archive end header records. Each archive volume MUST declare a fixed block_size in its Volume Header, and all NeoTape records in that archive volume MUST use that block size unless a future profile explicitly defines a compatible record-framing exception. The Medium Header is excluded from this archive-volume block_size rule because it is written at BOT during medium initialization and may span multiple records. block_size SHOULD be a positive multiple of 512 bytes for NeoTape/PAX payload profile compatibility. 8 MiB is the recommended default for high-throughput LTO operation when supported, but the chosen value is fixed per archive volume after the Volume Header is committed.
 
 A large fixed block_size also helps the target backend preserve long contiguous byte ranges for the tape drive. When drive hardware compression is enabled, larger records reduce artificial fragmentation introduced by the NeoTape transport layer and give the drive a better opportunity to compress the payload stream according to its own internal compression model. NeoTape MUST NOT assume any particular compression ratio, and catalog or capacity planning MUST distinguish native payload bytes from drive-compressed physical occupancy.
 
 A physical medium may contain multiple archive instances. The example below shows a single archive instance; in multi-archive mode, the next archive may begin at the tape file immediately after a clean NeoTape end header.
 
-NeoTape v0.1 uses slice-level filemark granularity. Segment-level filemarks are not recommended for normal archives because they can create hundreds or thousands of tape files on a large LTO medium, while only a completed logical slice has an authoritative Slice Trailer and slice_payload_blake3. Therefore, filemarks SHOULD delimit volume headers, completed logical slices, and archive end records. Physical segments SHOULD be length-framed records inside a slice tape file unless a future profile or explicit diagnostic mode opts into finer-grained filemarks.
+NeoTape v0.1 uses slice-level filemark granularity. Segment-level filemarks are not recommended for normal archives because they can create hundreds or thousands of tape files on a large LTO medium, while only a completed logical slice (its last segment header with SLICE_END) has an authoritative slice_payload_blake3. Therefore, filemarks SHOULD delimit volume headers, completed logical slices, and archive end records. Physical segments SHOULD be length-framed records inside a slice tape file unless a future profile or explicit diagnostic mode opts into finer-grained filemarks.
 
 NeoTape 使用 filemark 作為 seekable boundary。典型磁帶布局如下：
 
@@ -143,23 +143,21 @@ filemark
 Tape file 2:
   NeoTape segment header for slice 1 segment 1
   payload bytes for slice 1 segment 1
-  NeoTape segment header for slice 1 segment 2, if needed
+  NeoTape segment header for slice 1 segment 2 (SLICE_END)
   payload bytes for slice 1 segment 2
-  NeoTape Slice Trailer for logical slice 1
 filemark
 Tape file 3:
   NeoTape segment header for slice 2 segment 1
   payload bytes for slice 2 segment 1
-  NeoTape segment header for slice 2 segment 2, if needed
+  NeoTape segment header for slice 2 segment 2 (SLICE_END)
   payload bytes for slice 2 segment 2
-  NeoTape Slice Trailer for logical slice 2
 filemark
 ...
 Final tape file for archive instance:
   NeoTape Archive End Header
 filemark
 
-若遇到 EOT，目前 slice tape file 可能未以正常 filemark 關閉，且最後一個 segment 可能只部分 committed，或 logical slice payload 已完成但 Slice Trailer 尚未 committed。下一卷應以 volume header 開始，之後建立同一 logical slice 的 continuation slice tape file，接續剩餘 payload range，或在 payload 已完成時寫入該 logical slice 的 Slice Trailer；完成後才寫入 slice-level filemark。
+若遇到 EOT，目前 slice tape file 可能未以正常 filemark 關閉，且最後一個 segment 可能只部分 committed，或 logical slice payload 已完成但 SLICE_END segment 尚未 committed。下一卷應以 volume header 開始，之後建立同一 logical slice 的 continuation tape file，接續剩餘 payload range，或以 SLICE_END segment 完成該 logical slice；完成後才寫入 slice-level filemark。
 
 ## 5.1 Medium Header
 
@@ -180,7 +178,7 @@ Tape file 1:
 filemark
 
 Tape file 2..N:
-  NeoTape logical slice tape files for the first archive instance; each slice tape file contains one or more segment headers, payload ranges, and the Slice Trailer for that logical slice
+  NeoTape logical slice tape files for the first archive instance; each slice tape file contains one or more segment headers and payload ranges; the last segment header carries SLICE_END with slice verification fields
 
 Final file for archive instance:
   NeoTape end header
@@ -201,7 +199,7 @@ The tape\_seq\_num field is scoped to a single archive\_uuid. Therefore, if two 
 
 NeoTape separates the logical archive format from the target backend used by a writer. A writer MAY write directly to a sequential tape device, or MAY write to an ordinary filesystem spool directory that represents the same archive as separated volume and tape-file objects.
 
-The tape-device backend maps NeoTape volume headers, logical slices, and archive end records to physical LTO tape files separated by filemarks. The filesystem-spool backend maps each NeoTape tape file to a regular file in a deterministic directory layout. For slice tape files, the file contains one or more segment headers and payload ranges followed by that slice's Slice Trailer. The spool layout SHOULD preserve archive_uuid, tape_seq_num, tape_file_num, slice sequence numbers, segment sequence numbers, and payload lengths in filenames or a small manifest so that tools can inspect and replay the archive without parsing every byte.
+The tape-device backend maps NeoTape volume headers, logical slices, and archive end records to physical LTO tape files separated by filemarks. The filesystem-spool backend maps each NeoTape tape file to a regular file in a deterministic directory layout. For slice tape files, the file contains one or more segment headers and payload ranges; the last segment header carries SLICE_END with slice verification fields. The spool layout SHOULD preserve archive_uuid, tape_seq_num, tape_file_num, slice sequence numbers, segment sequence numbers, and payload lengths in filenames or a small manifest so that tools can inspect and replay the archive without parsing every byte.
 
 A recommended spool layout is:
 
@@ -217,7 +215,7 @@ archive-<archive_uuid>/
 
 Filesystem spool mode MUST preserve the same logical record order as tape mode. It MUST NOT require a different reader algorithm for archive correctness. A reader MAY treat spool files as a virtual tape: file boundaries stand in for filemarks, and volume directories stand in for media or archive volumes. The same neotape-cat-volumes logical reader SHOULD be able to accept either a tape device path or a spool directory path, with the target adapter providing read-record, next-file, next-volume, and EOT/volume-limit events.
 
-Because ordinary filesystems do not provide physical EOT, a spool writer MAY accept a manual or configured volume capacity limit such as --spool-volume-size or --target-volume-size. When the next committed header, segment payload, Slice Trailer metadata block, or Archive End Header would exceed the configured volume capacity, the writer MUST perform the same logical transition it would perform on EOT: close the current volume at the last valid boundary, create the next volume, write its volume header, and continue the same logical slice or trailer metadata when required.
+Because ordinary filesystems do not provide physical EOT, a spool writer MAY accept a manual or configured volume capacity limit such as --spool-volume-size or --target-volume-size. When the next committed header, segment payload, TRAILER_METADATA segment, or Archive End Header would exceed the configured volume capacity, the writer MUST perform the same logical transition it would perform on EOT: close the current volume at the last valid boundary, create the next volume, write its volume header, and continue or drop the incomplete TRAILER_METADATA segments; the SLICE_END segment has already been committed.
 
 This manual capacity limit is a simulation of media capacity, not an archive semantic. It is useful for preparing archive volumes before the physical tape drive is available, testing multi-volume continuation, and staging several archives while another process is using the tape drive. A later copy-to-tape tool MAY replay the spool directory to a real tape backend, preserving filemark boundaries and volume ordering.
 
@@ -229,11 +227,11 @@ Archive 由多個 logical slices 依 slice_seq_num 排列而成：
 
 Archive = LogicalSlice[1] + LogicalSlice[2] + ... + LogicalSlice[N]
 
-每個 LogicalSlice 是由 writer 在串流過程中決定關閉的 payload byte range，後接 NeoTape Slice Trailer：
+每個 LogicalSlice 是由 writer 在串流過程中決定關閉的 payload byte range，最後一個 Segment Header 帶有 SLICE_END flag：
 
-LogicalSlice = payload_bytes[actual size known at slice close] + NeoTape Slice Trailer
+LogicalSlice = payload_bytes + SegmentHeader[SLICE_END, slice_payload_size, slice_payload_blake3]
 
-The actual slice_payload_size is not known when the logical slice begins. It is recorded later in the Slice Trailer after the final segment of that logical slice has been written.
+The actual slice_payload_size is not known when the logical slice begins. It is recorded in the final segment header's slice_payload_size and slice_payload_blake3 fields.
 
 NeoTape core does not require payload bytes to be pax, nor does it use payload-internal end markers for framing. A payload profile defines how those bytes should be interpreted. The NeoTape/PAX payload profile remains the recommended v0.1 backup profile because it preserves bsdtar/libarchive compatibility.
 
@@ -251,43 +249,46 @@ LogicalSlice[k] = Segment[k,1].payload + Segment[k,2].payload + ... + Segment[k,
 
 Slice target size remains a writer policy, commonly around 64 GiB or device/workload-specific. Segment target size SHOULD normally match the writer's bounded memory buffer size, such as 4 GiB, 8 GiB, or 16 GiB. Therefore, segment_payload_size is known before writing each segment.
 
-Logical slice completion is writer-declared at the final segment. The writer does not need to know the final slice_payload_size when the slice begins; it only needs to know each segment_payload_size before committing that segment header. When the writer decides to close the logical slice, it marks the final segment with SLICE_END_HINT. The following committed NeoTape record MUST be the Slice Trailer, which records the actual slice_payload_size and slice_payload_blake3. Payload-internal markers, such as pax EOA, MUST NOT be used for NeoTape core framing, and on-tape logical slices do not need to contain pax EOA markers.
+Logical slice completion is writer-declared at the final segment. The writer does not need to know the final slice_payload_size when the slice begins; it only needs to know each segment_payload_size before committing that segment header. When the writer decides to close the logical slice, it marks the final segment with SLICE_END and sets its slice_payload_size and slice_payload_blake3 fields to the authoritative values. Payload-internal markers, such as pax EOA, MUST NOT be used for NeoTape core framing, and on-tape logical slices do not need to contain pax EOA markers.
 
 Segment header 的 flags 可表示：
 
 - SLICE_START：此 segment 是 logical slice 的第一段。
 - SLICE_CONTINUATION：此 segment 延續同一 logical slice 的前一段。
-- SLICE_END_HINT：表示此 segment 是 writer 宣告的 logical slice final segment；下一個 NeoTape record MUST be the Slice Trailer for this logical slice. Reader then verifies actual slice_payload_size and slice_payload_blake3 from the Slice Trailer.
+- SLICE_END：表示此 segment 是 writer 宣告的 logical slice final segment。此 segment header 的 slice_payload_size 與 slice_payload_blake3 為 authoritative。Reader verifies slice-level BLAKE3 from these fields.
 - PAYLOAD_512_ALIGNED：payload 起點與長度符合 512-byte alignment；對 NeoTape/PAX payload profile，writer SHOULD preserve 512-byte tar record alignment when practical.
 
 # 8\. Header Types
 
-NeoTape v0.1 定義五種 header type：
+NeoTape v0.1 定義四種 header type：
 
 1. Medium Header
 2. Volume Header
 3. Segment Header
-4. Slice Trailer
-5. Archive End Header
+4. Archive End Header
 
-Volume, segment, slice trailer, and archive end fixed headers MUST fit within a single tape record and SHOULD occupy a single record at their commit point. Medium Header is the exception: it starts at BOT tape file 0 and MAY span multiple records, but its first record MUST contain a fixed binary/ASCII prefix sufficient to identify NeoTape and locate the medium metadata bundle.
+Volume, segment, and archive end fixed headers MUST fit within a single tape record and SHOULD occupy a single record at their commit point. Medium Header is the exception: it starts at BOT tape file 0 and MAY span multiple records, but its first record MUST contain a fixed binary/ASCII prefix sufficient to identify NeoTape and locate the medium metadata bundle.
 
-Common header fields：
+Common header prefix fields：
 
 - magic：例如 "NeoTape\0"
 - header_version：v0.1 使用 1
-- header_type：volume / segment / slice_trailer / archive_end；Medium Header 使用 dedicated BOT prefix and fields
-- header_size
+- header_type：medium / volume / segment / archive_end
+
+All NeoTape fixed headers and trailers begin with this exact 10-byte common prefix. Header-specific fields follow after `header_type`. Every fixed header/trailer field area occupies exactly 1024 bytes, and each fixed header places its CRC32C field in the final 4 bytes.
+
+Other common archive-time fields may include:
+
 - header_crc32c
 - archive_uuid
-- archive_write_timestamp_utc
+- volume_write_at_utc
 - tape_seq_num
 - flags
 - metadata_offset
 - metadata_size
 - metadata_blake3
 
-Header 後方可內嵌 metadata bundle。Medium Header metadata bundle details are split into [docs/spec/01-medium-header.md](spec/01-medium-header.md). 固定 prefix 不得依賴 metadata bundle 才能辨識 archive_uuid 與 tape_seq_num。
+Header 後方可內嵌 metadata bundle。Medium Header metadata bundle details are split into [docs/spec/01-medium-header.md](spec/01-medium-header.md). 固定 prefix 不得依賴 metadata bundle 才能辨識 header type。
 
 Header fixed fields use CRC32C to catch accidental corruption and misreads with minimal parser complexity. Metadata bundles, catalog files, optional segment payload hashes, logical-slice hashes, and archive-level manifests SHOULD use BLAKE3. SHA-256 MAY appear only as compatibility metadata if explicitly requested, but BLAKE3 is the preferred NeoTape integrity hash.
 
@@ -299,7 +300,7 @@ Volume Header is split into [docs/spec/02-volume-header.md](spec/02-volume-heade
 
 Volume header 位於每個 archive volume 的第一個 archive tape file。對已初始化的 physical medium 而言，它通常位於 Medium Header 之後的下一個 tape file；若同一 medium append 多個 archive instances，後續 archive instance 的 volume header 位於前一 archive clean end header 之後的下一個 tape file。
 
-`block_size` is the fixed NeoTape record size for this archive volume. It is not a recommendation. After the Volume Header is committed, the writer MUST use this `block_size` for all NeoTape records in the same archive volume. 整體完成狀態由 Archive End Header 表示。
+`volume_block_size` is the fixed NeoTape record size for this archive volume. It is not a recommendation. After the Volume Header is committed, the writer MUST use this `volume_block_size` for all NeoTape records in the same archive volume. 整體完成狀態由 Archive End Header 表示。
 
 # 10\. Segment Header
 
@@ -307,15 +308,25 @@ Segment Header is split into [docs/spec/03-segment-header.md](spec/03-segment-he
 
 Segment header 位於 slice tape file 內每個 segment 的開頭 record。第一個 segment header 通常位於該 slice tape file 的第一個 NeoTape record；後續 segment header 由前一個 segment_payload_size 精確定位。
 
-Segment header MUST record segment_payload_size. The reader uses this length, not payload contents or filemark position, to determine the end of the segment payload and the location of the next segment header or Slice Trailer inside the same slice tape file. Segment payload content type SHOULD distinguish ordinary payload from Slice Trailer metadata continuation.
+Segment header MUST record segment_payload_size. The reader uses this length, not payload contents or filemark position, to determine the end of the segment payload and the location of the next segment header inside the same slice tape file. Segment payload content type SHOULD distinguish ordinary payload from TRAILER_METADATA continuation.
 
-# 11\. Slice Trailer
+# 11\. Logical Slice Completion
 
-Slice Trailer is split into [docs/spec/04-slice-trailer.md](spec/04-slice-trailer.md).
+Slice-level integrity is defined in
+[docs/spec/03-segment-header.md](spec/03-segment-header.md#slice-level-integrity).
 
-Every logical slice MUST be followed by a NeoTape Slice Trailer after the writer has committed the final segment for that logical slice. The writer does not need to know slice_payload_size when the logical slice begins. The actual slice_payload_size is recorded in the Slice Trailer after the final segment has been written.
+The last PAYLOAD segment of a logical slice carries the SLICE_END flag. Its
+segment header records the authoritative `slice_payload_size` and
+`slice_payload_blake3` for the entire logical slice.
 
-`slice_payload_blake3` is computed over exactly `slice_payload_size` bytes of concatenated logical slice payload, excluding the Slice Trailer itself. The Slice Trailer metadata area MAY contain slice-local catalog data, warnings, source-read diagnostics, payload-profile information, and other advisory metadata.
+`slice_payload_blake3` is computed over exactly `slice_payload_size` bytes of
+concatenated payload from all PAYLOAD segments in the logical slice, in segment
+sequence order. TRAILER_METADATA segment bytes are NOT included in the
+slice-level BLAKE3.
+
+If TRAILER_METADATA segments are present, they follow the last PAYLOAD segment
+and precede the slice-level filemark. These segments carry advisory catalog
+data, warnings, source-read diagnostics, and other payload-profile metadata.
 
 # 12\. Archive End Header
 
@@ -325,7 +336,7 @@ End header 是最後一個 cleanly completed archive record，位於最後一卷
 
 Because NeoTape core framing is length-based, Archive End Header does not depend on pax/tar EOA detection. Payload-profile-specific end markers, including pax EOA, remain inside payload bytes and are interpreted only by the relevant payload profile or downstream extractor.
 
-若沒有讀到 Archive End Header，則 archive 不應被視為 cleanly complete，即使所有 expected logical slices and Slice Trailers 都已讀到。Archive-level completion 必須由 Archive End Header 判斷。
+若沒有讀到 Archive End Header，則 archive 不應被視為 cleanly complete，即使所有 expected logical slices 都已讀到。Archive-level completion 必須由 Archive End Header 判斷。
 
 # 13\. Catalog
 
@@ -349,7 +360,7 @@ Catalog records MUST NOT be interpreted as paths to restore from the metadata bu
 
 Catalog data MAY appear in two places:
 
-1. Per-slice catalog data inside each Slice Trailer metadata area. This describes payload ranges known to be contained in the logical slice and is useful for partial restore and salvage.
+1. Per-slice catalog data inside TRAILER_METADATA segments. This describes payload ranges known to be contained in the logical slice and is useful for partial restore and salvage.
 2. Final archive-level catalog data near the end of the archive, either inside the Archive End Header metadata area or, for NeoTape/PAX profile, optionally duplicated as payload entries such as:
    .neotape/catalog/catalog.ntc
    .neotape/catalog/catalog.ntc.zst
@@ -417,16 +428,16 @@ EOT_DETECTED_OR_VOLUME_LIMIT
   若 tape writer 遇到 ENOSPC/EOM/EOT，或 filesystem spool backend 達到手動設定的 virtual volume capacity，不應直接讓 payload profile encoder 視為不可恢復的 archive error。transport layer 應暫停或切換 backend volume、寫新 volume header 與 continuation segment header，然後繼續同一 logical slice 的 payload byte range。
 
 CLOSE_LOGICAL_SLICE
-  當 buffered payload bytes 達到 segment target size，writer closes the current segment by writing exactly segment_payload_size bytes. 當 writer 決定 current logical slice 應結束時，該 segment 會成為 final segment and carries SLICE_END_HINT. For NeoTape/PAX payload profile, the writer MAY choose slice boundaries at pax member boundaries, but NeoTape core does not require pax EOA to determine the boundary.
+  當 buffered payload bytes 達到 segment target size，writer closes the current segment by writing exactly segment_payload_size bytes. 當 writer 決定 current logical slice 應結束時，該 segment 會成為 final segment and carries SLICE_END. For NeoTape/PAX payload profile, the writer MAY choose slice boundaries at pax member boundaries, but NeoTape core does not require pax EOA to determine the boundary.
 
 WRITE_SLICE_TRAILER
-  在 writer 決定關閉 current logical slice，並寫完該 slice 的 final segment 後，寫入 NeoTape Slice Trailer fixed header，並可接續寫入 slice-local metadata bundle / catalog。The actual slice_payload_size is known only at this point and is recorded in the Slice Trailer together with slice_payload_blake3. After the complete Slice Trailer metadata area is committed, the writer SHOULD write a filemark to close the slice tape file. If EOT occurs after the final segment is committed but before the Slice Trailer is committed, the Slice Trailer MUST be written on the next medium after its volume header, as part of a continuation slice tape file. Slice Trailer fixed header is an archive-time fixed header and MUST fit within one tape record. Its metadata area MAY span multiple Metadata Blocks and MAY continue across volumes using TRAILER_METADATA continuation segments.
+   在 writer 決定關閉 current logical slice，並寫完該 slice 的 final segment 後，該 segment header 帶有 SLICE_END flag 並記錄 slice_payload_size 與 slice_payload_blake3。The actual slice_payload_size is known only at this point and is recorded in the final segment header. Optionally, the writer may add zero or more TRAILER_METADATA segments after the final PAYLOAD segment. After all segments are committed, the writer SHOULD write a filemark to close the slice tape file. If EOT occurs before the SLICE_END segment header is committed, the next volume MUST write a continuation segment with SLICE_END.
 
 WRITE_CATALOG
-  Writer SHOULD store per-slice catalog data in Slice Trailer metadata bundles when useful for partial restore or salvage. The final archive-level catalog MAY also be duplicated in the final logical slice as pax entries and/or in the Archive End Header metadata bundle.
+  Writer SHOULD store per-slice catalog data in TRAILER_METADATA segments when useful for partial restore or salvage. The final archive-level catalog MAY also be duplicated in the final logical slice as pax entries and/or in the Archive End Header metadata bundle.
 
 WRITE_END_HEADER
-  所有 logical slices 與其 Slice Trailers 完成後，寫入 Archive End Header，宣告 clean_end。
+  所有 logical slices 完成後，寫入 Archive End Header，宣告 clean_end。
 
 DONE
   正常結束。
@@ -445,7 +456,7 @@ neotape-cat-volumes 是最小還原工具。它的職責：
 * 驗證 segment header 中的 logical_slice_seq_num 與 segment_seq_num
 * 將同一 logical slice 的 segments payload 串接
 * 依 segment_payload_size 讀取每個 segment payload；MUST NOT inspect payload bytes to discover segment boundaries
-* 在讀到帶有 SLICE_END_HINT 的 final segment 後，讀取並驗證該 logical slice 的 Slice Trailer
+* 在讀到帶有 SLICE_END 的 final segment 後，從 segment header 的 slice_payload_size 與 slice_payload_blake3 驗證該 logical slice
 * 對 NeoTape/PAX payload profile，直接依 profile policy 輸出 payload bytes；core reader 不需要偵測或抑制 pax EOA
 * 讀到 Archive End Header 時，依 payload profile 完成 stdout 輸出，並以 exit code 0 結束
 * 將 stdout 保持為純 payload bytes；對 NeoTape/PAX payload profile，stdout 是 pax bytes；所有 prompt/log 都不得污染 stdout
@@ -481,10 +492,7 @@ STREAM_SEGMENT_PAYLOAD
   依 segment_payload_size 讀取 exactly that many payload bytes。Reader MUST NOT parse payload bytes to determine segment or slice boundaries.
 
 SLICE_PAYLOAD_COMPLETE
-  已讀完帶有 SLICE_END_HINT 的 final segment。進入 READ_SLICE_TRAILER。
-
-READ_SLICE_TRAILER
-  讀取並驗證 NeoTape Slice Trailer。Reader MUST verify slice_payload_blake3 before treating the logical slice as NeoTape-complete. 若 trailer metadata 跨 segment 或跨卷，reader MUST follow Slice Trailer metadata continuation semantics。
+   已讀完帶有 SLICE_END 的 final segment。從此 segment header 取得 slice_payload_size 與 slice_payload_blake3。Reader MUST verify slice_payload_blake3 over the concatenated PAYLOAD segment payloads before treating the logical slice as NeoTape-complete. 若存在 TRAILER_METADATA segments，在 BLAKE3 驗證之後繼續讀取。TRAILER_METADATA 為 advisory，其 BLAKE3 驗證失敗不影響 slice 完整性判斷。
 
 READ_END_HEADER
   驗證 clean_end。Archive End Header resides in its own archive-end tape file, delimited by filemarks like volume headers and completed logical slices. 依 payload profile 決定 stdout finalization policy，exit 0。
@@ -526,11 +534,11 @@ Read error：
 * 自動 retry N 次。
 * 仍失敗則 prompt Retry / Inspect / Fail。
 * Skip damaged block 僅在 salvage mode 提供，並應明確警告會破壞 pax stream。
-* EOT before segment, slice trailer, or archive end header：
+* EOT before segment or archive end header：
 * 若 segment header 已 committed 但實際讀到或寫入的 payload bytes 少於 segment_payload_size，則該 segment is incomplete。下一卷必須以同一 logical slice 的 continuation segment 接續剩餘 payload range 或重新宣告下一段 payload range。
-* 若 writer 已寫完某 logical slice 的 final segment，但尚未 commit 完整 Slice Trailer，則 archive 尚未 cleanly complete；下一卷必須提供該 logical slice 的 Slice Trailer 或其 metadata continuation，並在 trailer 完成後才寫入 slice-level filemark。
+* 若 writer 已寫完某 logical slice 的 final segment 但 SLICE_END segment header 尚未 committed，則 archive 尚未 cleanly complete；下一卷必須以 SLICE_END segment 完成該 logical slice 後才寫入 slice-level filemark。
 
-\- 若已讀到完整 Slice Trailer 但 slice-level filemark 或 Archive End Header 尚未讀到，則 archive 尚未 cleanly complete；下一個 tape file 可能包含下一個 logical slice 的 first segment header，或直接包含 Archive End Header。
+\- 若已讀到 SLICE_END segment 但 slice-level filemark 或 Archive End Header 尚未讀到，則 archive 尚未 cleanly complete；下一個 tape file 可能包含下一個 logical slice 的 first segment header，或直接包含 Archive End Header。
 
 # 19\. Control Plane
 
@@ -581,7 +589,7 @@ Slice/segment 設計提供以下恢復能力：
 Medium Header 提供的恢復能力：
 
 * 每卷 volume header metadata bundle 可內嵌 neotape-cat-volumes source code 與格式說明，提升長期可恢復性。
-* \- Slice Trailer records provide per-slice BLAKE3 verification and optional slice-local catalog metadata, allowing fast audit, salvage, and partial restore planning without treating catalog data as authoritative archive metadata.
+* \- SLICE_END segment headers provide per-slice BLAKE3 verification. TRAILER_METADATA segments may carry optional slice-local catalog metadata, allowing fast audit, salvage, and partial restore planning without treating catalog data as authoritative archive metadata.
 * 
 * # 22\. Security Considerations
 
@@ -620,15 +628,15 @@ Tape 1:
 
 File 0: Medium Header, possibly multiple records, immutable media bootstrap
 File 1: Volume header, archive_uuid = A, tape_seq_num = 1
-File 2: Slice 1 tape file: segment header slice = 1 segment = 1, payload = first 8 GiB; segment header slice = 1 segment = 2, payload = rest of slice 1; Slice Trailer for slice 1, slice_payload_size = 64 GiB, slice_payload_blake3 = ...
+File 2: Slice 1 tape file: segment header slice = 1 segment = 1, payload = first 8 GiB; segment header slice = 1 segment = 2 (SLICE_END), payload = rest of slice 1, slice_payload_size = 64 GiB, slice_payload_blake3 = ...
 File 3: Slice 2 tape file: segment header slice = 2 segment = 1, segment_payload_size = 8 GiB; payload = first part of slice 2; EOT before slice complete
 
 Tape 2:
 
 File 0: Medium Header, possibly multiple records, immutable media bootstrap for this physical medium
 File 1: Volume header, archive_uuid = A, tape_seq_num = 2
-File 2: Continuation of slice 2 tape file: segment header slice = 2 segment = 2, segment_payload_size = remaining bytes of slice 2; payload = rest of slice 2; Slice Trailer for slice 2, slice_payload_size = 64 GiB, slice_payload_blake3 = ..., optional slice-local catalog
-File 3: Slice 3 tape file: segment header slice = 3 segment = 1, segment_payload_size = complete slice 3 size; payload = complete final slice payload bytes; Slice Trailer for slice 3, slice_payload_size = ..., slice_payload_blake3 = ..., slice-local catalog
+File 2: Continuation of slice 2 tape file: segment header slice = 2 segment = 2 (SLICE_END), segment_payload_size = remaining bytes of slice 2; payload = rest of slice 2, slice_payload_size = 64 GiB, slice_payload_blake3 = ..., optional TRAILER_METADATA segments
+File 3: Slice 3 tape file: segment header slice = 3 segment = 1 (SLICE_END), segment_payload_size = complete slice 3 size; payload = complete final slice payload bytes, slice_payload_size = ..., slice_payload_blake3 = ..., optional TRAILER_METADATA segments
 File 4: Archive End Header, clean_end = true, last_slice_seq_num = 3
 
 neotape-cat-volumes stdout for NeoTape/PAX payload profile:
@@ -637,7 +645,7 @@ slice 1 payload bytes
 slice 2 payload bytes
 slice 3 payload bytes
 
-No Slice Trailer bytes are emitted to stdout. On-tape logical slices do not need to contain pax EOA markers; pax stream finalization, if needed, is a NeoTape/PAX payload profile output policy.
+No NeoTape header bytes (segment headers, TRAILER_METADATA) are emitted to stdout. On-tape logical slices do not need to contain pax EOA markers; pax stream finalization, if needed, is a NeoTape/PAX payload profile output policy.
 
 # Appendix B. Minimal neotape-cat-volumes Responsibilities
 
@@ -645,14 +653,14 @@ A minimal implementation may avoid libarchive entirely. It only needs:
 
 - standard tape device open/read/write operations
 - NeoTape header parser
-- CRC32C header verification and BLAKE3 verification for slice trailers, metadata bundles, catalogs, and optional payload hashes
+- CRC32C header verification and BLAKE3 verification for SLICE_END segment headers, metadata bundles, catalogs, and optional payload hashes
 - filemark/EOT handling
 - segment sequencing logic
 - length-framed segment and slice reader
 - stdout byte stream output
 - /dev/tty prompt support
 
-A minimal implementation may avoid libarchive and does not need to parse pax headers, understand filenames, restore files, interpret ACLs, or handle xattrs. It follows NeoTape segment length fields, observes SLICE\_END\_HINT to know that the following NeoTape record must be the Slice Trailer, verifies the trailer's slice\_payload\_size and slice\_payload\_blake3, and emits payload bytes according to the selected payload profile.
+A minimal implementation may avoid libarchive and does not need to parse pax headers, understand filenames, restore files, interpret ACLs, or handle xattrs. It follows NeoTape segment length fields, reads slice\_payload\_size and slice\_payload\_blake3 from the SLICE\_END segment header, verifies the slice-level BLAKE3, and emits payload bytes according to the selected payload profile.
 
 # Appendix C. Draft CLI
 
@@ -686,10 +694,10 @@ Salvage mode:
 8. Recommended default target logical slice size and override policy: 16 GiB, 32 GiB, 64 GiB, or device/workload-specific.
 9. CLOSED: A physical medium MUST begin with an immutable NeoTape Medium Header. This header is not a mutable table of contents and MUST NOT be used to record the list of archives later appended to the medium. Its role is media initialization, format bootstrap, default tape parameters, and long-term self-description.
 10. CLOSED: NeoTape v0.1 targets LTO-class tape media only. Legacy non-LTO tape formats are out of scope.
-11. CLOSED: Medium Header records may span multiple tape records because they are written at BOT during initialization. Volume, segment, slice trailer, and archive end fixed headers remain single-record commit units.
-12. CLOSED: Every logical slice MUST be finalized by a NeoTape Slice Trailer after the writer decides to close that logical slice and has written its final segment. The actual slice_payload_size is known only at slice close time and is recorded in the Slice Trailer. The Slice Trailer is the next NeoTape record after the logical slice payload completes; it may be on a later medium if EOT occurs first. Slice BLAKE3 and optional slice-local catalog metadata belong in the Slice Trailer, not in the next slice's segment header.
+11. CLOSED: Medium Header records may span multiple tape records because they are written at BOT during initialization. Volume, segment, and archive end fixed headers remain single-record commit units.
+12. SUPERSEDED: Slice-level integrity fields have moved from a dedicated Slice Trailer header into the SLICE_END segment header. The slice_payload_size and slice_payload_blake3 are now recorded in the final segment header of each logical slice. TRAILER_METADATA segments carry optional catalog metadata.
 13. SUPERSEDED: Slice-local pax EOA detection is no longer required for NeoTape framing. Slice and segment boundaries are length-framed by NeoTape headers; pax EOA is payload-profile data only.
-14. CLOSED: Segment headers MUST carry explicit segment_payload_size, and Slice Trailers MUST carry slice_payload_size and slice_payload_blake3. NeoTape core framing is therefore payload-format agnostic.
+14. CLOSED: Segment headers MUST carry explicit segment_payload_size, and the SLICE_END segment header MUST carry slice_payload_size and slice_payload_blake3. NeoTape core framing is therefore payload-format agnostic.
 
 End of Draft Spec v0.1
 

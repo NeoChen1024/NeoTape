@@ -4,7 +4,7 @@ A seekable multi-volume length-framed payload transport container designed for L
 
 NeoTape wraps a payload byte stream (typically a POSIX pax/tar archive) in a lightweight framing layer that provides per-slice and per-segment structure, integrity verification via BLAKE3, and multi-volume continuation. The on-tape format uses LTO filemarks at logical-slice boundaries, enabling native tape seek to independently verifiable checkpoint units without requiring per-segment filemarks.
 
-This is a design-stage project. The current implementation is a **Phase 0 pax writer** — a libarchive-based CLI that produces a plain POSIX pax-format tar stream. The NeoTape framing layer (volume headers, segment headers, slice trailers, catalog, tape backend) exists only as a specification.
+This is a design-stage project. The current implementation is a **Phase 0 pax writer** — a libarchive-based CLI that produces a plain POSIX pax-format tar stream. The NeoTape framing layer (volume headers, segment headers with SLICE_END, TRAILER_METADATA segments, catalog, tape backend) exists only as a specification.
 
 ## Specification Status
 
@@ -27,7 +27,7 @@ Archive
 
 A NeoTape **Archive** is the complete backup set, identified by an `archive_uuid`. It spans one or more **Volumes** (physical LTO cartridges or virtual volumes in spool mode), each carrying a `tape_seq_num`. Inside each volume, the payload is split into **Logical Slices** — writer-declared byte ranges that are independently verifiable via the slice's BLAKE3 digest and seekable by LTO filemark. A typical slice target size is ~64 GiB but a slice may far exceed that, especially when a single large file spans the entire archive. Each logical slice is composed of one or more **Physical Segments**; a segment header explicitly declares `segment_payload_size`, so the reader knows exactly how many bytes to read without parsing payload content. Segment size is determined by the writer's memory buffer (commonly ~4 GiB), since the writer streams payload directly without spooling entire slices to disk. A segment may continue across volumes if end-of-tape is reached mid-slice.
 
-All records in an archive volume use a fixed **block_size** declared in the Volume Header. The writer must commit to this block size before writing any payload and must use it for every subsequent record; readers treat a block-size change within a volume as a format error.
+All records in an archive volume use a fixed **volume_block_size** declared in the Volume Header. The writer must commit to this block size before writing any payload and must use it for every subsequent record; readers treat a block-size change within a volume as a format error.
 
 ## Project Status
 
@@ -38,7 +38,7 @@ All records in an archive volume use a fixed **block_size** declared in the Volu
 | 2     | Filesystem spool backend            | Spec   |
 | 3     | Minimal reader                      | Spec   |
 | 4     | NeoTape/PAX integration             | Spec   |
-| 5     | Slice trailer metadata & catalog    | Spec   |
+| 5     | TRAILER_METADATA segments & catalog  | Spec   |
 | 6     | Tape device backend                 | Spec   |
 | 7     | Recovery & salvage                  | Spec   |
 | 8     | Cartridge header & self-description | Spec   |

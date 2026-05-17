@@ -35,28 +35,29 @@ The fixed fields should be readable with minimal parser state. They should be
 enough to identify the archive instance, validate the header, sequence the
 volume, and configure record framing for the rest of the archive volume.
 
-| Field | datatype | size (in bytes) | Requirement | Notes |
-| --- | --- | --- | --- | --- |
-| magic | char[8] | 8 | MUST | Fixed NeoTape identifier: `NeoTape\0`. |
-| header_version |  |  | MUST | Version of the archive-time header layout. |
-| header_type |  |  | MUST | Must identify Volume Header. |
-| header_size |  |  | MUST | Encoded fixed header size. |
-| header_crc32c |  |  | MUST | CRC32C for fixed header fields, excluding this field. |
-| archive_uuid |  |  | MUST | Stable UUID for this archive instance. |
-| tape_seq_num |  |  | MUST | Volume sequence number within `archive_uuid`, starting at 1. |
-| volume_label |  |  | SHOULD | Human-facing label for this archive volume. |
-| format_version |  |  | MUST | Archive/container format version used by this archive instance. |
-| block_size |  |  | MUST | Fixed NeoTape record size for this archive volume. |
-| archive_write_timestamp_utc |  |  | MUST | Archive write timestamp using the fixed NeoTape timestamp format. |
-| archive_sequence_on_media |  |  | MAY | Sequence of this archive instance on the physical medium, if known. |
-| flags |  |  | SHOULD | Reserved feature or compatibility flags. |
-| reserved |  |  | MUST | Zero bytes reserved for future fixed fields. |
+| Field               | datatype  | size (in bytes) | Requirement | Notes                                                                       |
+| ------------------- | --------- | --------------- | ----------- | --------------------------------------------------------------------------- |
+| magic               | char[8]   | 8               | MUST        | Fixed NeoTape identifier:`NeoTape\0`.                                     |
+| header_version      | uint8     | 1               | MUST        | Version of the archive-time header layout.                                  |
+| header_type         | uint8     | 1               | MUST        | Must identify Volume Header.                                                |
+| volume_block_size   | uint32    | 4               | MUST        | Fixed NeoTape record size for this archive volume. Must be at least 64 KiB. |
+| archive_uuid        | char[37]  | 37              | MUST        | Stable UUID for this archive instance.                                      |
+| volume_label        | byte[256] | 256             | SHOULD      | Human-facing label for this archive volume, in UTF-8.                       |
+| volume_seq_num      | uint32    | 4               | MUST        | Volume sequence number within `archive_uuid`, starting at 1.              |
+| volume_write_at_utc | char[20]  | 20              | MUST        | Volume write timestamp using the fixed NeoTape timestamp format.            |
+| format_profile      | uint16    | 2               | MUST        | Archive/container profile used by this archive instance.                    |
+| flags               | uint16    | 2               | SHOULD      | Reserved feature or compatibility flags.                                    |
+| reserved            | byte[685] | 685             | MUST        | Zero bytes reserved for future fixed fields.                                |
+| header_crc32c       | uint32    | 4               | MUST        | CRC32C for fixed header fields, excluding this field.                       |
+
+For a total of 1024 bytes.
 
 ## Block Size Rule
 
-`block_size` is the fixed NeoTape record size for this archive volume. It is not
-a recommendation. After the Volume Header is committed, the writer MUST use this
-`block_size` for all NeoTape records in the same archive volume.
+`volume_block_size` is the fixed NeoTape record size for this archive volume.
+It is not a recommendation. After the Volume Header is committed, the writer
+MUST use this `volume_block_size` for all NeoTape records in the same archive
+volume.
 
 A reader SHOULD treat a record-size change inside the volume as a format error
 unless an explicit future extension allows it.

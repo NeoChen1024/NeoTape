@@ -144,7 +144,7 @@ A tape may end with an incomplete archive because of interruption, EOT, device e
 Examples:
 
 ```text
-[Volume Header][Slice payload without Slice Trailer]
+[Volume Header][Slice payload without SLICE_END]
 [Archive End Header partially written]
 [Unknown or unreadable final tape file]
 ```

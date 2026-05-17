@@ -26,7 +26,7 @@ records. The first record MUST contain enough fixed binary/ASCII information to
 identify NeoTape, identify the Medium Header format, locate the remaining
 Medium Header data, and verify the remaining records.
 
-Volume, Segment, Slice Trailer (excluding catalog part), and Archive End (excluding catalog part) headers are archive-time commit records and must fit within a single tape record. The Medium Header is the only
+Volume, Segment (including SLICE_END fields), and Archive End (excluding catalog part) headers are archive-time commit records and must fit within a single tape record. The Medium Header is the only
 v0.1 header type that may span multiple tape records.
 
 ## Fixed Fields
@@ -40,10 +40,11 @@ These fields are immutable descriptive metadata, not an append-time state index.
 
 | Field                     | datatype  | size (in bytes) | Requirement | Notes                                                                                         |
 | ------------------------- | --------- | --------------- | ----------- | --------------------------------------------------------------------------------------------- |
-| magic                     | char[8]   | 8               | MUST        | Fixed NeoTape Medium Header identifier. (`NeoTape\0`)                                       |
-| medium_header_version     | uint8     | 1               | MUST        | Version of the Medium Header layout, independent from archive format versions.                |
-| medium_header_block_size  | uint32    | 4               | MUST        | Block size of the Medium Header. Must be at least 512.                                        |
-| medium_header_block_count | uint8     | 1               | MUST        | Number of blocks occupied by the Medium Header known at write time.                         |
+| magic                     | char[8]   | 8               | MUST        | Fixed NeoTape identifier: `NeoTape\0`.                                                       |
+| header_version            | uint8     | 1               | MUST        | Version of the Medium Header layout, independent from archive format versions.                |
+| header_type               | uint8     | 1               | MUST        | Must identify Medium Header.                                                                  |
+| medium_header_block_size  | uint32    | 4               | MUST        | Block size of the Medium Header. Must be at least 64 KiB.                                     |
+| medium_header_block_count | uint16    | 2               | MUST        | Number of blocks occupied by the Medium Header known at write time.                         |
 | flags                     | uint16    | 2               | SHOULD      | Reserved feature or compatibility flags.                                                      |
 | medium_uuid               | char[37]  | 37              | MUST        | Stable UUID for this initialized NeoTape physical medium.                                     |
 | initialized_at_utc        | char[20]  | 20              | MUST        | UTC initialization timestamp. Uses the fixed NeoTape timestamp format.                        |
@@ -52,10 +53,10 @@ These fields are immutable descriptive metadata, not an append-time state index.
 | created_by_build_id       | char[64]  | 64              | MAY         | Source revision, build ID, or other diagnostic identifier. May be empty.                      |
 | metadata_bundle_size      | uint32    | 4               | MUST        | Exact size of the ar metadata bundle.                                                         |
 | metadata_bundle_blake3    | byte[32]  | 32              | SHOULD      | Integrity hash for the ar metadata bundle bytes.                                              |
-| reserved                  | byte[15]  | 15              | MUST        | Zero bytes. Reserved for future fixed fields.                                                 |
-| medium_header_crc32c      | uint32    | 4               | MUST        | CRC32C for the 512-byte fixed Medium Header block, excluding this field.                      |
+| reserved                  | byte[525] | 525             | MUST        | Zero bytes. Reserved for future fixed fields.                                                 |
+| medium_header_crc32c      | uint32    | 4               | MUST        | CRC32C for the 1024-byte fixed Medium Header area, excluding this field.                      |
 
-For a total of 512 bytes. Future versions MAY allocate fields from the reserved
+For a total of 1024 bytes. Future versions MAY allocate fields from the reserved
 space, but version 1 writers MUST write it as zero bytes and version 1 readers
 MUST include those zero bytes in the CRC32C calculation.
 
@@ -63,7 +64,7 @@ The total Medium Header byte size is not stored as a separate field. It is
 always derived as:
 
 ```text
-512 + metadata_bundle_size
+1024 + metadata_bundle_size
 ```
 
 ## Metadata Bundle
@@ -99,23 +100,8 @@ Potential member files:
 
 ## ar Subset Format
 
-The Medium Header metadata bundle uses a normal SVR4/GNU ar subset:
-
-- Global magic: `!<arch>\n`.
-- Thin archive magic is not allowed: `!<thin>\n`.
-- No symbol table member: member name `/` is not allowed.
-- No long-name table: member name `//` is not allowed.
-- No path-like member names: member names MUST NOT contain `/`, `\`, NUL, or newline.
-- Member names MUST be ASCII and MUST fit directly in the fixed 16-byte ar name field.
-- Writer SHOULD use the GNU/SVR4 short-name convention: `name/` followed by spaces.
-- With that convention, the portable member name limit is 15 bytes before the trailing `/`.
-- Header fields are ASCII and space padded.
-- `mtime`, `uid`, `gid`, and `size` fields are ASCII decimal.
-- `mode` is ASCII octal.
-- Member size is stored in the standard 10-byte ar size field and counts only member data bytes.
-- Header trailer magic MUST be `` `\n ``.
-- If member data size is odd, the writer MUST append one `\n` padding byte after the member data.
-- The odd-size padding byte is not counted in the member size field.
+The Medium Header metadata bundle uses the restricted ar subset defined in
+[docs/spec/00-header-common.md](00-header-common.md#ar-subset-format).
 
 ## Excluded Mutable State
 

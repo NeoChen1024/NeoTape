@@ -29,8 +29,7 @@ docs/
     01-medium-header.md
     02-volume-header.md
     03-segment-header.md
-    04-slice-trailer.md
-    05-archive-end-header.md
+     04-archive-end-header.md
     06-volume-layout.md
     07-segments-and-slices.md
     08-continuation.md
@@ -68,8 +67,7 @@ docs/spec/00-header-common.md
 docs/spec/01-medium-header.md
 docs/spec/02-volume-header.md
 docs/spec/03-segment-header.md
-docs/spec/04-slice-trailer.md
-docs/spec/05-archive-end-header.md
+docs/spec/04-archive-end-header.md
 ```
 
 ### `implementation/`

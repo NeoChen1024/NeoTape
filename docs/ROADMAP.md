@@ -52,12 +52,12 @@ Deliverables:
 Candidate headers to freeze first:  
 - Volume Header  
 - Segment Header  
-- Slice Trailer fixed header  
+- Segment Header (including SLICE_END fields)  
 - Archive End Header
 
 Deferred:  
 - Full Medium Header byte layout.  
-- Full Slice Trailer metadata item schema.  
+- Full TRAILER_METADATA segment item schema.  
 - Final catalog binary schema.
 
 Spec feedback expected:  
@@ -75,7 +75,7 @@ Deliverables:
 - Deterministic spool directory layout.  
 - Volume directory creation.  
 - Tape-file object creation for volume header, slice files, and archive end header.  
-- Segment header + payload + Slice Trailer sequence inside each slice tape file.  
+- Segment header + payload sequence inside each slice tape file; SLICE_END segment header carries slice verification.  
 - Configurable virtual volume size to simulate EOT/ENOSPC.
 
 MVP payload source:  
@@ -91,7 +91,7 @@ Validation:
 Spec feedback expected:  
 - Whether spool filenames should be normative or advisory.  
 - Whether manifest is purely advisory or partially standardized.  
-- Exact behavior when virtual volume limit is hit before a header, during payload, or before Slice Trailer metadata completion.
+- Exact behavior when virtual volume limit is hit before a header, during payload, or before TRAILER_METADATA segment completion.
 
 # Phase 3: Minimal Reader for Spool Archives
 
@@ -102,7 +102,7 @@ Deliverables:
 - Spool adapter implementing that interface.  
 - Header validation and sequencing.  
 - Segment payload concatenation by segment_payload_size.  
-- Slice Trailer verification by slice_payload_size and slice_payload_blake3.  
+- SLICE_END segment header verification by slice_payload_size and slice_payload_blake3.  
 - Archive End Header validation.  
 - stdout payload emission for raw profile.
 
@@ -112,7 +112,7 @@ Validation:
 - Corrupt header fixture.  
 - Corrupt payload fixture.  
 - Missing Archive End Header fixture.  
-- Missing Slice Trailer fixture.
+- Missing SLICE_END segment header fixture.
 
 Spec feedback expected:  
 - Exact reader state machine transitions.  
@@ -139,15 +139,16 @@ Validation:
 Spec feedback expected:  
 - Profile-specific stdout finalization policy for pax EOA.  
 - Whether PAYLOAD_512_ALIGNED is mandatory, recommended, or advisory for pax.  
-- How to represent source-read warnings and partial-read diagnostics in Slice Trailer metadata.
+- How to represent source-read warnings and partial-read diagnostics in TRAILER_METADATA segments.
 
-# Phase 5: Slice Trailer Metadata and Catalog v0
+# Phase 5: TRAILER_METADATA Segments and Catalog v0
 
 Goal: make partial restore planning and audit possible without making catalog authoritative.
 
 Deliverables:  
-- Metadata Block framing for Slice Trailer metadata areas.  
-- Length-framed metadata item table.  
+- TRAILER_METADATA segment content type.
+- Advisory semantics: reader MUST NOT reject slice or archive on TRAILER_METADATA errors; BLAKE3 verification failures are warnings only.
+- Length-framed metadata item table.
 - Initial catalog item schema.  
 - Per-slice catalog emission for pax profile.  
 - Archive-level catalog emission in Archive End Header metadata or final payload entries.
@@ -259,7 +260,7 @@ Validation:
 Spec feedback expected:  
 - Whether a logical slice may contain multiple filesystem-native sub-streams.  
 - How to model parent snapshot dependencies.  
-- How much receive-order metadata belongs in Slice Trailer vs Archive End Header.  
+- How much receive-order metadata belongs in TRAILER_METADATA segments vs Archive End Header.  
 - Whether stream-level checksums are profile metadata or core metadata.
 
 # Phase 10: Format Stabilization and Compatibility Testing
@@ -319,7 +320,7 @@ Validation:
 
 Near-Term Recommended Next Step
 
-Implement Phase 0 first as a working C++/GNU Make CLI that uses libarchive to pack a directory into a POSIX pax-format tar stream or file, with smoke tests that validate the output. After that, implement Phase 1 through Phase 3: concrete minimal headers, spool writer, and spool reader. This creates a small closed loop where payload generation, header layout, length framing, slice trailer verification, and multi-volume continuation can be tested before real tape hardware or filesystem-native profiles.
+Implement Phase 0 first as a working C++/GNU Make CLI that uses libarchive to pack a directory into a POSIX pax-format tar stream or file, with smoke tests that validate the output. After that, implement Phase 1 through Phase 3: concrete minimal headers, spool writer, and spool reader. This creates a small closed loop where payload generation, header layout, length framing, SLICE_END verification, and multi-volume continuation can be tested before real tape hardware or filesystem-native profiles.
 
 ----  
 End of Roadmap
