@@ -31,18 +31,18 @@ All records in an archive volume use a fixed **volume_block_size** declared in t
 
 ## Project Status
 
-| Phase | Description                         | Status |
-| ----- | ----------------------------------- | ------ |
-| 0     | pax writer CLI                      | Done   |
-| 1     | Binary header layout                | Spec   |
-| 2     | Filesystem spool backend            | Spec   |
-| 3     | Minimal reader                      | Spec   |
-| 4     | NeoTape/PAX integration             | Spec   |
-| 5     | Slice metadata Frames & catalog      | Spec   |
-| 6     | Tape device backend                 | Spec   |
-| 7     | Recovery & salvage                  | Spec   |
-| 8     | Medium Header & self-description    | Spec   |
-| 9     | Filesystem-native payload profiles  | Spec   |
+| Phase | Description                        | Status |
+| ----- | ---------------------------------- | ------ |
+| 0     | pax writer CLI                     | Done   |
+| 1     | Binary header layout               | Freeze |
+| 2     | Filesystem spool backend           | WIP    |
+| 3     | Minimal reader                     | Spec   |
+| 4     | NeoTape/PAX integration            | Spec   |
+| 5     | Slice metadata Frames & catalog    | Spec   |
+| 6     | Tape device backend                | Spec   |
+| 7     | Recovery & salvage                 | Spec   |
+| 8     | Medium Header & self-description   | Spec   |
+| 9     | Filesystem-native payload profiles | Spec   |
 
 See `docs/spec/` for the active format specification, `docs/RFC_Draft.md` for
 background draft material, and `docs/ROADMAP.md` for the implementation plan.
