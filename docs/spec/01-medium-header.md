@@ -21,13 +21,14 @@ and timestamp encoding are defined in
 A physical NeoTape medium MUST begin at BOT with a NeoTape Medium Header in tape
 file 0, followed by a filemark.
 
-Unlike archive-time fixed headers, the Medium Header MAY span multiple tape
+Unlike archive-time fixed headers, the Medium Header MAY span multiple NeoTape
 records. The first record MUST contain enough fixed binary/ASCII information to
 identify NeoTape, identify the Medium Header format, locate the remaining
 Medium Header data, and verify the remaining records.
 
-Volume, Segment (including SLICE_END fields), and Archive End (excluding catalog part) headers are archive-time commit records and must fit within a single tape record. The Medium Header is the only
-v0.1 header type that may span multiple tape records.
+Volume, Frame, and Archive End headers are archive-time commit records and must
+fit within a single NeoTape record. The Medium Header is the only v0.1 header
+type that may span multiple NeoTape records.
 
 ## Fixed Fields
 
@@ -44,7 +45,7 @@ These fields are immutable descriptive metadata, not an append-time state index.
 | header_version            | uint8     | 1               | MUST        | Version of the Medium Header layout, independent from archive format versions.                |
 | header_type               | uint8     | 1               | MUST        | Must identify Medium Header.                                                                  |
 | medium_header_block_size  | uint32    | 4               | MUST        | Block size of the Medium Header. Must be at least 64 KiB.                                     |
-| medium_header_block_count | uint16    | 2               | MUST        | Number of blocks occupied by the Medium Header known at write time.                         |
+| medium_header_block_count | uint16    | 2               | MUST        | Number of blocks occupied by the Medium Header known at write time.                           |
 | flags                     | uint16    | 2               | SHOULD      | Reserved feature or compatibility flags.                                                      |
 | medium_uuid               | nt_uuid   | 37              | MUST        | Stable UUID for this initialized NeoTape physical medium.                                     |
 | initialized_at_utc        | nt_time   | 20              | MUST        | UTC initialization timestamp. Uses the fixed NeoTape timestamp format.                        |
