@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <getopt.h>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -48,11 +49,22 @@ void usage(const char *prog) {
 }
 
 Options parse_args(int argc, char **argv) {
-	if (argc != 2) {
+	static const struct option long_opts[] = {
+		{"help", no_argument, nullptr, 'h'},
+		{nullptr, 0, nullptr, 0}
+	};
+	int c;
+	while ((c = getopt_long(argc, argv, "h", long_opts, nullptr)) != -1) {
+		switch (c) {
+		case 'h': usage(argv[0]); std::exit(0);
+		case '?': std::exit(2);
+		}
+	}
+	if (optind >= argc) {
 		usage(argv[0]);
 		std::exit(2);
 	}
-	return Options{.spool_dir = argv[1]};
+	return Options{.spool_dir = argv[optind]};
 }
 
 vector<fs::path> sorted_dirs(const fs::path &root) {

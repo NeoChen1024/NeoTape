@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdio>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
 #include <filesystem>
 #include <format>
+#include <getopt.h>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -29,13 +31,17 @@ using std::vector;
 
 struct Options {
 	uint64_t slice_size = 64ull * 1024 * 1024 * 1024;
+	uint64_t metadata_buffer_size = 256ull * 1024 * 1024;
 	bool one_file_system = false;
 	bool verbose = false;
+	string output_path = "-";
+	FILE *meta_out = nullptr;
 	vector<fs::path> sources;
 };
 
 struct EntryMeta {
-	fs::path path;
+	fs::path source_path;
+	string archive_path;
 	char kind = '?';
 	uint64_t disk_bytes = 0;
 	uint64_t apparent_bytes = 0;
@@ -43,7 +49,14 @@ struct EntryMeta {
 };
 
 struct SlicePlan {
-	vector<std::size_t> entry_indexes;
+	vector<EntryMeta> entries;
+	uint64_t disk_bytes = 0;
+	uint64_t apparent_bytes = 0;
+	uint64_t allocated_bytes = 0;
+};
+
+struct ScanTotals {
+	uint64_t entries = 0;
 	uint64_t disk_bytes = 0;
 	uint64_t apparent_bytes = 0;
 };
@@ -61,36 +74,43 @@ void warn(const string &message) {
 
 void usage(const char *prog) {
 	std::cerr << format(
-	    "usage: {} [--slice-size <bytes>] [-x] [-v] <path> [path ...]\n", prog);
+	    "usage: {} [--slice-size <bytes>] [--metadata-buffer-size <bytes>]\n"
+	    "       -o <file> [-x] [-v] <path> [path ...]\n",
+	    prog);
 }
 
 Options parse_args(int argc, char **argv) {
-	Options opts;
-	for (int i = 1; i < argc; ++i) {
-		string_view arg(argv[i]);
-		auto need_value = [&](const char *name) -> string {
-			if (++i >= argc)
-				fail(format("{} requires a value", name));
-			return argv[i];
-		};
+	static const struct option long_opts[] = {
+		{"slice-size",           required_argument, nullptr, 's'},
+		{"metadata-buffer-size", required_argument, nullptr, 'm'},
+		{"output",               required_argument, nullptr, 'o'},
+		{"help",                 no_argument,       nullptr, 'h'},
+		{nullptr, 0, nullptr, 0}
+	};
 
-		if (arg == "--slice-size") {
-			opts.slice_size = neotape::parse_size(need_value("--slice-size"), "slice size");
-		} else if (arg == "-x") {
-			opts.one_file_system = true;
-		} else if (arg == "-v") {
-			opts.verbose = true;
-		} else if (arg == "-h" || arg == "--help") {
-			usage(argv[0]);
-			std::exit(0);
-		} else if (!arg.empty() && arg.front() == '-') {
-			fail(format("unknown option: {}", arg));
-		} else {
-			opts.sources.emplace_back(arg);
+	Options opts;
+	int c;
+	while ((c = getopt_long(argc, argv, "o:xvh", long_opts, nullptr)) != -1) {
+		switch (c) {
+		case 's':
+			opts.slice_size = neotape::parse_size(optarg, "slice size");
+			break;
+		case 'm':
+			opts.metadata_buffer_size =
+			    neotape::parse_size(optarg, "metadata buffer size");
+			break;
+		case 'o': opts.output_path = optarg; break;
+		case 'x': opts.one_file_system = true; break;
+		case 'v': opts.verbose = true; break;
+		case 'h': usage(argv[0]); std::exit(0);
+		case '?': std::exit(2);
 		}
 	}
 
-	if (opts.sources.empty()) {
+	while (optind < argc)
+		opts.sources.emplace_back(argv[optind++]);
+
+	if (opts.output_path.empty() || opts.sources.empty()) {
 		usage(argv[0]);
 		std::exit(2);
 	}
@@ -129,24 +149,6 @@ uint64_t apparent_bytes_from_stat(const struct stat &st) {
 	return 0;
 }
 
-fs::path normalized_path(const fs::path &path) {
-	std::error_code ec;
-	fs::path absolute = fs::absolute(path, ec);
-	if (ec)
-		return path;
-	return absolute.lexically_normal();
-}
-
-void add_entry(const fs::path &path, const struct stat &st, vector<EntryMeta> &entries) {
-	entries.push_back(EntryMeta{
-	    .path = path,
-	    .kind = kind_from_mode(st.st_mode),
-	    .disk_bytes = disk_bytes_from_stat(st),
-	    .apparent_bytes = apparent_bytes_from_stat(st),
-	    .device = st.st_dev,
-	});
-}
-
 vector<fs::path> sorted_children(const fs::path &path) {
 	DIR *dir = opendir(path.c_str());
 	if (dir == nullptr) {
@@ -174,8 +176,62 @@ vector<fs::path> sorted_children(const fs::path &path) {
 	return children;
 }
 
+// ====================== Streaming Slice Packing ==================
+
+void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num) {
+	for (size_t i = 0; i < slice.entries.size(); ++i) {
+		const EntryMeta &e = slice.entries[i];
+		string line = format("/{:06}/{:06}/{}/{}/{}", slice_num, i, e.kind,
+		    e.apparent_bytes, e.archive_path);
+		fwrite(line.data(), 1, line.size(), opts.meta_out);
+		fputc('\0', opts.meta_out);
+		fputc('\n', opts.meta_out);
+	}
+	std::cerr << format("slice {:06}: entries={} disk={} apparent={}\n",
+	    slice_num, slice.entries.size(),
+	    neotape::humanize_number(slice.disk_bytes),
+	    neotape::humanize_number(slice.apparent_bytes));
+	if (!opts.verbose)
+		return;
+	for (const EntryMeta &entry : slice.entries) {
+		std::cerr << format("  {} disk={} apparent={} {}\n", entry.kind,
+		    neotape::humanize_number(entry.disk_bytes),
+		    neotape::humanize_number(entry.apparent_bytes),
+		    entry.source_path.generic_string());
+	}
+}
+
+static constexpr uint64_t entry_struct_size = sizeof(EntryMeta);
+
+void add_to_slice(SlicePlan &slice, const EntryMeta &entry,
+    const Options &opts, uint64_t &slice_num, ScanTotals &totals) {
+	slice.entries.push_back(entry);
+	slice.disk_bytes += entry.disk_bytes;
+	slice.apparent_bytes += entry.apparent_bytes;
+
+	auto &s = entry.source_path.native();
+	uint64_t path_heap = s.size();
+	if (path_heap <= 15)
+		path_heap = 0;
+	uint64_t ap_heap = entry.archive_path.size();
+	if (ap_heap <= 15)
+		ap_heap = 0;
+	slice.allocated_bytes += entry_struct_size + path_heap + ap_heap;
+
+	++totals.entries;
+	totals.disk_bytes += entry.disk_bytes;
+	totals.apparent_bytes += entry.apparent_bytes;
+
+	if (slice.allocated_bytes >= opts.metadata_buffer_size ||
+	    slice.disk_bytes >= opts.slice_size) {
+		emit_slice(slice, opts, ++slice_num);
+		slice = SlicePlan{};
+	}
+}
+
 void scan_path(const fs::path &path, const Options &opts,
-    std::optional<dev_t> root_device, vector<EntryMeta> &entries) {
+    const neotape::SourceSpec &spec, std::optional<dev_t> root_device,
+    SlicePlan &current_slice, uint64_t &slice_num, ScanTotals &totals) {
 	struct stat st {};
 	if (lstat(path.c_str(), &st) != 0) {
 		warn(format("lstat {}: {}", path.string(), std::strerror(errno)));
@@ -186,83 +242,22 @@ void scan_path(const fs::path &path, const Options &opts,
 	    st.st_dev != *root_device)
 		return;
 
-	add_entry(path, st, entries);
+	add_to_slice(current_slice,
+	    EntryMeta{
+	        .source_path = path,
+	        .archive_path = neotape::archive_path_for_source(spec, path.generic_string()),
+	        .kind = kind_from_mode(st.st_mode),
+	        .disk_bytes = disk_bytes_from_stat(st),
+	        .apparent_bytes = apparent_bytes_from_stat(st),
+	        .device = st.st_dev,
+	    },
+	    opts, slice_num, totals);
+
 	if (!S_ISDIR(st.st_mode))
 		return;
 
 	for (const fs::path &child : sorted_children(path))
-		scan_path(child, opts, root_device, entries);
-}
-
-vector<EntryMeta> prefetch_metadata(const Options &opts) {
-	vector<EntryMeta> entries;
-	for (const fs::path &source : opts.sources) {
-		fs::path path = normalized_path(source);
-		struct stat st {};
-		if (lstat(path.c_str(), &st) != 0)
-			fail(format("lstat {}: {}", path.string(), std::strerror(errno)));
-		scan_path(path, opts, st.st_dev, entries);
-	}
-	return entries;
-}
-
-// ====================== Slice Packing ============================
-
-void add_to_slice(SlicePlan &slice, std::size_t index, const EntryMeta &entry) {
-	slice.entry_indexes.push_back(index);
-	slice.disk_bytes += entry.disk_bytes;
-	slice.apparent_bytes += entry.apparent_bytes;
-}
-
-vector<SlicePlan> pack_slices(const vector<EntryMeta> &entries, uint64_t slice_size) {
-	vector<SlicePlan> slices;
-	SlicePlan current;
-
-	for (std::size_t i = 0; i < entries.size(); ++i) {
-		const EntryMeta &entry = entries[i];
-		bool would_exceed = current.disk_bytes > 0 &&
-				    current.disk_bytes + entry.disk_bytes > slice_size;
-		if (!current.entry_indexes.empty() && would_exceed) {
-			slices.push_back(std::move(current));
-			current = SlicePlan{};
-		}
-		add_to_slice(current, i, entry);
-	}
-
-	if (!current.entry_indexes.empty())
-		slices.push_back(std::move(current));
-	return slices;
-}
-
-void print_plan(const Options &opts, const vector<EntryMeta> &entries,
-    const vector<SlicePlan> &slices) {
-	uint64_t total_disk = 0;
-	uint64_t total_apparent = 0;
-	for (const EntryMeta &entry : entries) {
-		total_disk += entry.disk_bytes;
-		total_apparent += entry.apparent_bytes;
-	}
-
-	std::cout << format(
-	    "prefetched entries={} total_disk={} total_apparent={} target_slice={}\n",
-	    entries.size(), neotape::humanize_number(total_disk),
-	    neotape::humanize_number(total_apparent), neotape::humanize_number(opts.slice_size));
-
-	for (std::size_t i = 0; i < slices.size(); ++i) {
-		const SlicePlan &slice = slices[i];
-		std::cout << format("slice {:06}: entries={} disk={} apparent={}\n",
-		    i + 1, slice.entry_indexes.size(),
-		    neotape::humanize_number(slice.disk_bytes),
-		    neotape::humanize_number(slice.apparent_bytes));
-		if (!opts.verbose)
-			continue;
-		for (std::size_t entry_index : slice.entry_indexes) {
-			const EntryMeta &entry = entries[entry_index];
-			std::cout << format("  {} disk={} apparent={} {}\n", entry.kind,
-			    neotape::humanize_number(entry.disk_bytes),
-			    neotape::humanize_number(entry.apparent_bytes), entry.path.generic_string());
-		}
-	}
+		scan_path(child, opts, spec, root_device, current_slice, slice_num, totals);
 }
 
 } // namespace
@@ -270,11 +265,51 @@ void print_plan(const Options &opts, const vector<EntryMeta> &entries,
 int main(int argc, char **argv) {
 	try {
 		Options opts = parse_args(argc, argv);
-		vector<EntryMeta> entries = prefetch_metadata(opts);
-		vector<SlicePlan> slices = pack_slices(entries, opts.slice_size);
-		print_plan(opts, entries, slices);
-		return 0;
+
+		if (opts.output_path == "-") {
+			opts.meta_out = stdout;
+		} else {
+			opts.meta_out = fopen(opts.output_path.c_str(), "wb");
+			if (!opts.meta_out)
+				fail(format("open {}: {}", opts.output_path,
+				    std::strerror(errno)));
+		}
+
+		vector<neotape::SourceSpec> sources;
+		for (const fs::path &source : opts.sources)
+			sources.push_back(neotape::make_source_spec(source.generic_string()));
+
+		SlicePlan current_slice;
+		ScanTotals totals;
+		uint64_t slice_num = 0;
+
+		for (const neotape::SourceSpec &spec : sources) {
+			struct stat st {};
+			if (lstat(spec.open_path.c_str(), &st) != 0)
+				fail(format("lstat {}: {}", spec.open_path.string(),
+				    std::strerror(errno)));
+			scan_path(spec.open_path, opts, spec, st.st_dev,
+			    current_slice, slice_num, totals);
+		}
+
+		if (!current_slice.entries.empty())
+			emit_slice(current_slice, opts, ++slice_num);
+
+		if (opts.meta_out && opts.meta_out != stdout)
+			fclose(opts.meta_out);
+
+		std::cerr << format(
+		    "scanned entries={} total_disk={} total_apparent={} "
+		    "target_slice={} buffer_size={}\n",
+		    totals.entries,
+		    neotape::humanize_number(totals.disk_bytes),
+		    neotape::humanize_number(totals.apparent_bytes),
+		    neotape::humanize_number(opts.slice_size),
+		    neotape::humanize_number(opts.metadata_buffer_size));
+
 	} catch (const std::exception &e) {
 		fail(e.what());
 	}
+
+	return 0;
 }

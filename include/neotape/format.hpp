@@ -15,6 +15,47 @@ inline constexpr uint8_t header_version = 1;
 inline constexpr uint32_t min_block_size = 4096;
 inline constexpr uint32_t max_block_size = 16 * 1024 * 1024;
 
+// Common prefix offsets (all header types)
+inline constexpr std::size_t com_header_version = 8;
+inline constexpr std::size_t com_header_type    = 9;
+
+// Shared identity block offsets (volume, frame, archive-end)
+inline constexpr std::size_t hdr_volume_block_size = 10;
+inline constexpr std::size_t hdr_archive_uuid      = 14;
+inline constexpr std::size_t hdr_archive_name      = 51;
+inline constexpr std::size_t hdr_volume_seq_num    = 307;
+inline constexpr std::size_t hdr_payload_profile   = 315;
+inline constexpr std::size_t hdr_crc32c            = 1020;
+
+// Volume header specific
+inline constexpr std::size_t vhdr_write_at_utc     = 316;
+inline constexpr std::size_t vhdr_flags            = 336;
+
+// Frame header specific
+inline constexpr std::size_t fhdr_logical_slice_seq_num     = 316;
+inline constexpr std::size_t fhdr_global_frame_seq_num       = 324;
+inline constexpr std::size_t fhdr_frame_seq_num_within_slice = 332;
+inline constexpr std::size_t fhdr_frame_payload_size         = 340;
+inline constexpr std::size_t fhdr_frame_content_type         = 348;
+inline constexpr std::size_t fhdr_frame_payload_blake3       = 349;
+inline constexpr std::size_t fhdr_flags                      = 381;
+inline constexpr std::size_t fhdr_slice_content_size         = 383;
+inline constexpr std::size_t fhdr_slice_content_blake3       = 391;
+
+// Archive end header specific
+inline constexpr std::size_t ae_last_logical_slice_seq_num = 316;
+inline constexpr std::size_t ae_last_global_frame_seq_num  = 324;
+inline constexpr std::size_t ae_created_by_implementation  = 332;
+inline constexpr std::size_t ae_created_by_build_id        = 396;
+inline constexpr std::size_t ae_archive_end_at_utc         = 460;
+inline constexpr std::size_t ae_flags                      = 480;
+
+// Fixed string field sizes
+inline constexpr std::size_t nt_uuid_size   = 37;
+inline constexpr std::size_t nt_name_size   = 256;
+inline constexpr std::size_t nt_time_size   = 20;
+inline constexpr std::size_t ident64_size   = 64;
+
 enum class HeaderType : uint8_t {
 	medium = 1,
 	volume = 2,

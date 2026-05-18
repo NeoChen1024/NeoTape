@@ -16,7 +16,7 @@ This roadmap is a planning draft. It is not part of the normative NeoTape v0.1 f
 8. Keep the primary external dependencies limited to libarchive for pax/tar handling and BLAKE3 for integrity hashing unless a later milestone justifies more.  
 9. Keep stdout pure payload bytes; diagnostics, prompts, and progress belong on stderr or /dev/tty.
 
-# Phase 0: Repository and Test Harness
+# Phase 0: Repository and Test Harness: DONE
 
 Goal: establish a small C++/GNU Make development skeleton around a useful libarchive-based pax writer before freezing NeoTape binary layout.
 
@@ -37,7 +37,7 @@ Initial scope:
 - No frozen binary header layout yet.  
 - Keep the first CLI intentionally simple, for example source directory plus output path or stdout, so the project gets a working payload producer before adding volume/slice/Frame transport.
 
-# Phase 1: Minimal Binary Header Layout
+# Phase 1: Minimal Binary Header Layout: DONE
 
 Goal: define enough concrete byte layout to create parseable NeoTape records.
 
@@ -66,7 +66,7 @@ Spec feedback expected:
 - Rules for unknown flags and forward-compatible reserved fields.  
 - 1024-byte fixed header area and metadata size constraints.
 
-# Phase 2: Filesystem Spool Backend MVP
+# Phase 2: Filesystem Spool Backend MVP: DONE
 
 Goal: implement NeoTape logical archive creation without tape hardware.
 
@@ -93,7 +93,7 @@ Spec feedback expected:
 - Whether manifest is purely advisory or partially standardized.  
 - Exact behavior when virtual volume limit is hit before a header, during content, or before `SLICE_METADATA` Frame completion.
 
-# Phase 3: Minimal Reader for Spool Archives
+# Phase 3: Minimal Reader for Spool Archives: DONE
 
 Goal: implement neotape-cat-volumes against the virtual tape abstraction.
 

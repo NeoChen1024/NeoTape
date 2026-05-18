@@ -20,7 +20,7 @@ All fixed header field tables in this specification use the following datatypes:
 | `char[N]`    | Fixed N-byte character array. NUL-terminated or NUL-padded per field rules.                                                                                                          |
 | `byte[N]`    | Fixed N-byte raw binary array.                                                                                                                                                       |
 | `byte[*]`    | Auto-calculated zero padding. Expands to the number of zero bytes needed to fill the 1024-byte fixed header area. Writers MUST write zero; readers MUST include all bytes in CRC32C. |
-| `nt_name`    | Fixed 256-byte UTF-8 text field. NUL-terminated when shorter than 256 bytes, NUL-padded after the terminator, and not required to end with NUL when all 256 bytes are used.           |
+| `nt_name`    | Fixed 256-byte UTF-8 text field. NUL-terminated, NUL-padded after the terminator, required to end with NUL. (Max 255 bytes usable)                                                   |
 | `nt_time`    | NUL-terminated UTC timestamp. 20 bytes. Encoding defined in Timestamp Format.                                                                                                        |
 | `nt_uuid`    | NUL-terminated UUID string per RFC 4122. 37 bytes.                                                                                                                                   |
 | `nt_hash`    | BLAKE3 256-bit hash. 32 bytes.                                                                                                                                                       |

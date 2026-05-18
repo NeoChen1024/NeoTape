@@ -44,7 +44,12 @@ bin/pax -f <out-file|-> [-v|-vv] [-x] <path> [path...]
 - C++20, GNU Make, no build system other than Makefile
 - libarchive `xattrheader=ALL` — all xattrs including security.capability are preserved in output
 - Hardlink resolution via `archive_entry_linkresolver`
-- All diagnostics on stderr, never stdout
+- All CLI tools must use `getopt_long` (with `<getopt.h>`) for argument parsing.
+  Hand-rolled `need_value`/`need` lambdas, manual `argv` iteration over positionals
+  with `--` awareness, and option-value splitting are replaced by `getopt_long`'s
+  built-in handling. Short options go in the optstring; long-only options use
+  integer constants (≥256) as `val`. Use `optind` for positional args after the
+  option loop.
 - Comments are welcome when they make structure, format invariants, or non-obvious
   control flow easier to see. Prefer sparse section banners and short intent
   notes; avoid line-by-line

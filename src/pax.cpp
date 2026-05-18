@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <format>
+#include <getopt.h>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -31,7 +32,6 @@ namespace fs = std::filesystem;
 using std::format;
 using std::size_t;
 using std::string;
-using std::string_view;
 using std::vector;
 
 struct Options {
@@ -39,13 +39,6 @@ struct Options {
 	vector<string> sources;
 	int verbose = 0;
 	bool one_file_system = false;
-};
-
-struct SourceSpec {
-	string original;
-	fs::path open_path;
-	fs::path open_parent;
-	fs::path archive_root;
 };
 
 struct HashingOutput {
@@ -70,12 +63,6 @@ void usage(const char *prog) {
 
 [[noreturn]] void fail_errno(const string &context) {
 	std::cerr << format("pax: {}: {}\n", context, std::strerror(errno));
-	std::exit(1);
-}
-
-[[noreturn]] void fail_error_code(const string &context,
-    const std::error_code &ec) {
-	std::cerr << format("pax: {}: {}\n", context, ec.message());
 	std::exit(1);
 }
 
@@ -167,113 +154,31 @@ string blake3_hex(const blake3_hasher &hasher) {
 // ====================== Command-Line Parsing =====================
 
 Options parse_args(int argc, char **argv) {
-	Options opts;
+	static const struct option long_opts[] = {
+		{"help", no_argument, nullptr, 'h'},
+		{nullptr, 0, nullptr, 0}
+	};
 
-	for (int i = 1; i < argc; ++i) {
-		string_view arg(argv[i]);
-		if (arg == "-f") {
-			if (++i >= argc) {
-				usage(argv[0]);
-				std::exit(2);
-			}
-			opts.output = argv[i];
-		} else if (arg == "-v") {
-			opts.verbose = std::max(opts.verbose, 1);
-		} else if (arg == "-vv") {
-			opts.verbose = std::max(opts.verbose, 2);
-		} else if (arg == "-x") {
-			opts.one_file_system = true;
-		} else if (arg == "-h" || arg == "--help") {
-			usage(argv[0]);
-			std::exit(0);
-		} else if (!arg.empty() && arg.front() == '-') {
-			std::cerr << format("pax: unknown option: {}\n", arg);
-			usage(argv[0]);
-			std::exit(2);
-		} else {
-			opts.sources.emplace_back(arg);
+	Options opts;
+	int c;
+	while ((c = getopt_long(argc, argv, "f:vxh", long_opts, nullptr)) != -1) {
+		switch (c) {
+		case 'f': opts.output = optarg; break;
+		case 'v': opts.verbose = std::min(opts.verbose + 1, 2); break;
+		case 'x': opts.one_file_system = true; break;
+		case 'h': usage(argv[0]); std::exit(0);
+		case '?': std::exit(2);
 		}
 	}
+
+	while (optind < argc)
+		opts.sources.emplace_back(argv[optind++]);
 
 	if (opts.output.empty() || opts.sources.empty()) {
 		usage(argv[0]);
 		std::exit(2);
 	}
 	return opts;
-}
-
-bool has_trailing_slash(string_view path) {
-	return path.size() > 1 && path.back() == '/';
-}
-
-string strip_trailing_slashes(string_view path) {
-	while (path.size() > 1 && path.back() == '/')
-		path.remove_suffix(1);
-	return string(path);
-}
-
-// ====================== Source Path Mapping ======================
-
-SourceSpec make_source_spec(const string &arg) {
-	SourceSpec spec;
-	spec.original = arg;
-
-	string stripped = strip_trailing_slashes(arg);
-	bool follow_top_symlink = has_trailing_slash(arg);
-	fs::path display_path = fs::absolute(stripped).lexically_normal();
-
-	std::error_code ec;
-	if (follow_top_symlink) {
-		fs::file_status status = fs::status(display_path, ec);
-		if (ec)
-			fail_error_code(string("stat ") + arg, ec);
-		if (!fs::is_directory(status)) {
-			std::cerr << format("pax: source is not a directory: {}\n", arg);
-			std::exit(1);
-		}
-		spec.open_path = fs::canonical(display_path, ec);
-		if (ec)
-			fail_error_code(string("canonical ") + arg, ec);
-	} else {
-		fs::file_status status = fs::symlink_status(display_path, ec);
-		if (ec)
-			fail_error_code(string("lstat ") + arg, ec);
-		if (!fs::exists(status)) {
-			std::cerr << format("pax: source does not exist: {}\n", arg);
-			std::exit(1);
-		}
-		spec.open_path = display_path;
-	}
-
-	spec.open_parent = spec.open_path.parent_path();
-	spec.archive_root = display_path.filename();
-	if (spec.archive_root.empty())
-		spec.archive_root = ".";
-	return spec;
-}
-
-fs::path drop_first_component(const fs::path &path) {
-	fs::path out;
-	bool first = true;
-	for (const auto &component : path) {
-		if (first) {
-			first = false;
-			continue;
-		}
-		out /= component;
-	}
-	return out;
-}
-
-string archive_path_for_source(const SourceSpec &spec, const char *source_path) {
-	fs::path absolute = fs::absolute(fs::path(source_path)).lexically_normal();
-	fs::path relative = absolute.lexically_relative(spec.open_parent);
-	fs::path path_in_archive = spec.archive_root;
-	fs::path child_path =
-	    spec.archive_root == "." ? relative : drop_first_component(relative);
-	if (!child_path.empty())
-		path_in_archive /= child_path;
-	return path_in_archive.generic_string();
 }
 
 // ====================== Archive Entry Formatting =================
@@ -443,7 +348,7 @@ void flush_hardlink_resolver(archive *writer, const Options &opts,
 	}
 }
 
-void write_source(archive *writer, const Options &opts, const SourceSpec &source,
+void write_source(archive *writer, const Options &opts, const neotape::SourceSpec &source,
     archive_entry_linkresolver *resolver) {
 	archive *disk = archive_read_disk_new();
 	if (disk == nullptr) {
@@ -494,7 +399,7 @@ void write_source(archive *writer, const Options &opts, const SourceSpec &source
 			// libarchive reads from the real filesystem path; the pax path is
 			// rewritten separately so symlink handling and trailing-slash CLI
 			// semantics can stay POSIX-like.
-			string archive_path = archive_path_for_source(source, source_path);
+			string archive_path = neotape::archive_path_for_source(source, source_path);
 			archive_entry_set_pathname_utf8(entry, archive_path.c_str());
 		}
 
@@ -542,8 +447,16 @@ void write_pax_archive(const Options &opts) {
 	}
 	archive_entry_linkresolver_set_strategy(resolver, archive_format(writer));
 
-	for (const string &source_arg : opts.sources)
-		write_source(writer, opts, make_source_spec(source_arg), resolver);
+	for (const string &source_arg : opts.sources) {
+		neotape::SourceSpec spec;
+		try {
+			spec = neotape::make_source_spec(source_arg);
+		} catch (const std::exception &e) {
+			std::cerr << format("pax: {}\n", e.what());
+			std::exit(1);
+		}
+		write_source(writer, opts, spec, resolver);
+	}
 	flush_hardlink_resolver(writer, opts, resolver);
 	archive_entry_linkresolver_free(resolver);
 

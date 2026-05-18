@@ -41,6 +41,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <fstream>
+#include <getopt.h>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -600,56 +601,71 @@ read-only options:
 }
 
 Options parse(int argc, char** argv) {
-    if (argc < 3) {
-        usage();
-        die("missing arguments");
-    }
+	if (argc < 3) {
+		usage();
+		die("missing arguments");
+	}
 
-    Options o;
-    std::string mode = argv[1];
+	Options o;
+	std::string mode = argv[1];
 
-    if (mode == "write") o.mode = Options::Mode::write;
-    else if (mode == "read") o.mode = Options::Mode::read;
-    else {
-        usage();
-        die("bad mode: " + mode);
-    }
+	if (mode == "write") o.mode = Options::Mode::write;
+	else if (mode == "read") o.mode = Options::Mode::read;
+	else {
+		usage();
+		die("bad mode: " + mode);
+	}
 
-    for (int i = 2; i < argc; ++i) {
-        std::string a = argv[i];
+	static const struct option long_opts[] = {
+		{"path",                   required_argument, nullptr, 256},
+		{"log",                    required_argument, nullptr, 257},
+		{"block-size",             required_argument, nullptr, 258},
+		{"max-frames",             required_argument, nullptr, 259},
+		{"seed",                   required_argument, nullptr, 260},
+		{"archive-uuid",           required_argument, nullptr, 261},
+		{"archive-name",           required_argument, nullptr, 262},
+		{"yes-write",              no_argument,       nullptr, 263},
+		{"allow-character-device", no_argument,       nullptr, 264},
+		{"set-fixed-block",        no_argument,       nullptr, 265},
+		{"write-filemark",         no_argument,       nullptr, 266},
+		{"no-mtnop-after-write",   no_argument,       nullptr, 267},
+		{"continue-after-enospc",  required_argument, nullptr, 268},
+		{"stop-after-zero-reads",  required_argument, nullptr, 269},
+		{"status-every",           required_argument, nullptr, 270},
+		{"help",                   no_argument,       nullptr, 'h'},
+		{nullptr, 0, nullptr, 0}
+	};
 
-        auto val = [&](const char* n) {
-            if (i + 1 >= argc) die(std::string("missing value for ") + n);
-            return std::string(argv[++i]);
-        };
+	optind = 2;
+	int c;
+	while ((c = getopt_long(argc, argv, "h", long_opts, nullptr)) != -1) {
+		switch (c) {
+		case 256: o.path = optarg; break;
+		case 257: o.log_path = optarg; break;
+		case 258: o.block_size = static_cast<std::uint32_t>(parse_u64(optarg)); break;
+		case 259: o.max_frames = parse_u64(optarg); break;
+		case 260: o.seed = parse_u64(optarg); break;
+		case 261: o.archive_uuid = optarg; break;
+		case 262: o.archive_name = optarg; break;
+		case 263: o.yes_write = true; break;
+		case 264: o.allow_character_device = true; break;
+		case 265: o.set_fixed_block = true; break;
+		case 266: o.write_filemark = true; break;
+		case 267: o.mt_nop_after_write = false; break;
+		case 268: o.continue_after_enospc = parse_u64(optarg); break;
+		case 269: o.stop_after_zero_reads = parse_u64(optarg); break;
+		case 270: o.status_every = parse_u64(optarg); break;
+		case 'h': usage(); std::exit(0);
+		case '?': std::exit(2);
+		}
+	}
 
-        if (a == "--path") o.path = val("--path");
-        else if (a == "--log") o.log_path = val("--log");
-        else if (a == "--block-size") o.block_size = static_cast<std::uint32_t>(parse_u64(val("--block-size")));
-        else if (a == "--max-frames") o.max_frames = parse_u64(val("--max-frames"));
-        else if (a == "--seed") o.seed = parse_u64(val("--seed"));
-        else if (a == "--archive-uuid") o.archive_uuid = val("--archive-uuid");
-        else if (a == "--archive-name") o.archive_name = val("--archive-name");
-        else if (a == "--yes-write") o.yes_write = true;
-        else if (a == "--allow-character-device") o.allow_character_device = true;
-        else if (a == "--set-fixed-block") o.set_fixed_block = true;
-        else if (a == "--write-filemark") o.write_filemark = true;
-        else if (a == "--no-mtnop-after-write") o.mt_nop_after_write = false;
-        else if (a == "--continue-after-enospc") o.continue_after_enospc = parse_u64(val("--continue-after-enospc"));
-        else if (a == "--stop-after-zero-reads") o.stop_after_zero_reads = parse_u64(val("--stop-after-zero-reads"));
-        else if (a == "--status-every") o.status_every = parse_u64(val("--status-every"));
-        else {
-            usage();
-            die("unknown option: " + a);
-        }
-    }
+	if (o.path.empty()) die("--path is required");
+	if (o.block_size < 65536) die("--block-size must be >= 65536");
+	if (o.archive_uuid.size() > 36) die("archive UUID too long");
+	if (o.archive_name.size() > 255) die("archive name too long");
 
-    if (o.path.empty()) die("--path is required");
-    if (o.block_size < 65536) die("--block-size must be >= 65536");
-    if (o.archive_uuid.size() > 36) die("archive UUID too long");
-    if (o.archive_name.size() > 255) die("archive name too long");
-
-    return o;
+	return o;
 }
 
 } // namespace nt_probe

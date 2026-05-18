@@ -28,8 +28,8 @@ $(BUILDDIR)/%.o : src/%.cpp Makefile | $(BUILDDIR)
 $(BINDIR)/pax : src/pax.cpp $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(COMMON_OBJ) -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-write : src/neotape_write.cpp $(FORMAT_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/neotape-write : src/neotape_write.cpp $(FORMAT_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
 $(BINDIR)/neotape-inspect : src/neotape_inspect.cpp $(FORMAT_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) -o $@ $(LDLIBS)

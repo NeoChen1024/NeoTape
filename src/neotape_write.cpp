@@ -1,3 +1,4 @@
+#include "neotape/common.hpp"
 #include "neotape/format.hpp"
 
 #include <blake3.h>
@@ -9,6 +10,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <getopt.h>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -70,56 +72,44 @@ void usage(const char *prog) {
 	    prog);
 }
 
-uint64_t parse_u64(string_view text, const char *name) {
-	if (text.empty())
-		fail(format("{} is empty", name));
-	string owned(text);
-	char *end = nullptr;
-	errno = 0;
-	unsigned long long value = std::strtoull(owned.c_str(), &end, 10);
-	if (errno != 0 || end == nullptr || *end != '\0')
-		fail(format("invalid {}: {}", name, text));
-	return static_cast<uint64_t>(value);
-}
-
 Options parse_args(int argc, char **argv) {
+	static const struct option long_opts[] = {
+		{"target",              required_argument, nullptr, 't'},
+		{"archive-name",        required_argument, nullptr, 'n'},
+		{"volume-block-size",   required_argument, nullptr, 'b'},
+		{"slice-size",          required_argument, nullptr, 's'},
+		{"virtual-volume-size", required_argument, nullptr, 'z'},
+		{"help",                no_argument,       nullptr, 'h'},
+		{nullptr, 0, nullptr, 0}
+	};
+
 	Options opts;
 	bool saw_target = false;
 
-	for (int i = 1; i < argc; ++i) {
-		string_view arg(argv[i]);
-		auto need_value = [&](const char *name) -> string {
-			if (++i >= argc)
-				fail(format("{} requires a value", name));
-			return argv[i];
-		};
-
-		if (arg == "--target=spool") {
-			saw_target = true;
-		} else if (arg == "--target") {
-			string value = need_value("--target");
-			if (value != "spool")
+	int c;
+	while ((c = getopt_long(argc, argv, "f:o:h", long_opts, nullptr)) != -1) {
+		switch (c) {
+		case 't':
+			if (string_view(optarg) != "spool")
 				fail("only --target=spool is supported");
 			saw_target = true;
-		} else if (arg == "-f") {
-			opts.input = need_value("-f");
-		} else if (arg == "-o") {
-			opts.output_dir = need_value("-o");
-		} else if (arg == "--archive-name") {
-			opts.archive_name = need_value("--archive-name");
-		} else if (arg == "--volume-block-size") {
+			break;
+		case 'f': opts.input = optarg; break;
+		case 'o': opts.output_dir = optarg; break;
+		case 'n': opts.archive_name = optarg; break;
+		case 'b':
 			opts.volume_block_size = static_cast<uint32_t>(
-			    parse_u64(need_value("--volume-block-size"), "volume block size"));
-		} else if (arg == "--slice-size") {
-			opts.slice_size = parse_u64(need_value("--slice-size"), "slice size");
-		} else if (arg == "--virtual-volume-size") {
+			    neotape::parse_size(optarg, "volume block size"));
+			break;
+		case 's':
+			opts.slice_size = neotape::parse_size(optarg, "slice size");
+			break;
+		case 'z':
 			opts.virtual_volume_size =
-			    parse_u64(need_value("--virtual-volume-size"), "virtual volume size");
-		} else if (arg == "-h" || arg == "--help") {
-			usage(argv[0]);
-			std::exit(0);
-		} else {
-			fail(format("unknown option: {}", arg));
+			    neotape::parse_size(optarg, "virtual volume size");
+			break;
+		case 'h': usage(argv[0]); std::exit(0);
+		case '?': std::exit(2);
 		}
 	}
 
@@ -451,7 +441,11 @@ void write_spool_archive(const Options &opts) {
 } // namespace
 
 int main(int argc, char **argv) {
-	Options opts = parse_args(argc, argv);
-	write_spool_archive(opts);
-	return 0;
+	try {
+		Options opts = parse_args(argc, argv);
+		write_spool_archive(opts);
+		return 0;
+	} catch (const std::exception &e) {
+		fail(e.what());
+	}
 }

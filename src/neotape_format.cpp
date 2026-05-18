@@ -63,10 +63,9 @@ Hash get_hash(const uint8_t *bytes, std::size_t offset) {
 
 void put_fixed_string(HeaderBytes &bytes, std::size_t offset, std::size_t size,
     std::string_view value) {
-	std::size_t n = std::min(value.size(), size);
+	std::size_t n = std::min(value.size(), size - 1);
 	std::memcpy(bytes.data() + offset, value.data(), n);
-	if (n < size)
-		bytes[offset + n] = 0;
+	std::memset(bytes.data() + offset + n, 0, size - n);
 }
 
 std::string get_fixed_string(const uint8_t *bytes, std::size_t offset,
@@ -76,20 +75,27 @@ std::string get_fixed_string(const uint8_t *bytes, std::size_t offset,
 	return std::string(begin, end);
 }
 
+std::string get_nt_name(const uint8_t *bytes, std::size_t offset,
+    std::size_t size) {
+	if (bytes[offset + size - 1] != 0)
+		throw std::runtime_error("nt_name field without trailing NUL");
+	return get_fixed_string(bytes, offset, size);
+}
+
 // ====================== Header Common Fields =====================
 
 HeaderBytes make_header(HeaderType type) {
 	HeaderBytes bytes{};
 	for (std::size_t i = 0; i < magic.size(); ++i)
 		bytes[i] = static_cast<uint8_t>(magic[i]);
-	bytes[8] = header_version;
-	bytes[9] = static_cast<uint8_t>(type);
+	bytes[com_header_version] = header_version;
+	bytes[com_header_type] = static_cast<uint8_t>(type);
 	return bytes;
 }
 
 void finish_crc(HeaderBytes &bytes) {
 	uint32_t crc = crc32c::Crc32c(bytes.data(), fixed_header_size - 4);
-	put_u32(bytes, fixed_header_size - 4, crc);
+	put_u32(bytes, hdr_crc32c, crc);
 }
 
 void check_common(const uint8_t *data, std::size_t size) {
@@ -99,7 +105,7 @@ void check_common(const uint8_t *data, std::size_t size) {
 		if (data[i] != static_cast<uint8_t>(magic[i]))
 			throw std::runtime_error("bad magic");
 	}
-	if (data[8] != header_version)
+	if (data[com_header_version] != header_version)
 		throw std::runtime_error(std::format("unsupported header version {}", data[8]));
 }
 
@@ -107,48 +113,48 @@ void check_common(const uint8_t *data, std::size_t size) {
 
 VolumeHeader parse_volume(const uint8_t *data) {
 	VolumeHeader header;
-	header.volume_block_size = get_u32(data, 10);
-	header.archive_uuid = get_fixed_string(data, 14, 37);
-	header.archive_name = get_fixed_string(data, 51, 256);
-	header.volume_seq_num = get_u64(data, 307);
-	header.payload_profile = static_cast<PayloadProfile>(data[315]);
-	header.volume_write_at_utc = get_fixed_string(data, 316, 20);
-	header.flags = get_u16(data, 336);
+	header.volume_block_size = get_u32(data, hdr_volume_block_size);
+	header.archive_uuid = get_fixed_string(data, hdr_archive_uuid, nt_uuid_size);
+	header.archive_name = get_nt_name(data, hdr_archive_name, nt_name_size);
+	header.volume_seq_num = get_u64(data, hdr_volume_seq_num);
+	header.payload_profile = static_cast<PayloadProfile>(data[hdr_payload_profile]);
+	header.volume_write_at_utc = get_fixed_string(data, vhdr_write_at_utc, nt_time_size);
+	header.flags = get_u16(data, vhdr_flags);
 	return header;
 }
 
 FrameHeader parse_frame(const uint8_t *data) {
 	FrameHeader header;
-	header.volume_block_size = get_u32(data, 10);
-	header.archive_uuid = get_fixed_string(data, 14, 37);
-	header.archive_name = get_fixed_string(data, 51, 256);
-	header.volume_seq_num = get_u64(data, 307);
-	header.payload_profile = static_cast<PayloadProfile>(data[315]);
-	header.logical_slice_seq_num = get_u64(data, 316);
-	header.global_frame_seq_num = get_u64(data, 324);
-	header.frame_seq_num_within_slice = get_u64(data, 332);
-	header.frame_payload_size = get_u64(data, 340);
-	header.frame_content_type = static_cast<FrameContentType>(data[348]);
-	header.frame_payload_blake3 = get_hash(data, 349);
-	header.flags = get_u16(data, 381);
-	header.slice_content_size = get_u64(data, 383);
-	header.slice_content_blake3 = get_hash(data, 391);
+	header.volume_block_size = get_u32(data, hdr_volume_block_size);
+	header.archive_uuid = get_fixed_string(data, hdr_archive_uuid, nt_uuid_size);
+	header.archive_name = get_nt_name(data, hdr_archive_name, nt_name_size);
+	header.volume_seq_num = get_u64(data, hdr_volume_seq_num);
+	header.payload_profile = static_cast<PayloadProfile>(data[hdr_payload_profile]);
+	header.logical_slice_seq_num = get_u64(data, fhdr_logical_slice_seq_num);
+	header.global_frame_seq_num = get_u64(data, fhdr_global_frame_seq_num);
+	header.frame_seq_num_within_slice = get_u64(data, fhdr_frame_seq_num_within_slice);
+	header.frame_payload_size = get_u64(data, fhdr_frame_payload_size);
+	header.frame_content_type = static_cast<FrameContentType>(data[fhdr_frame_content_type]);
+	header.frame_payload_blake3 = get_hash(data, fhdr_frame_payload_blake3);
+	header.flags = get_u16(data, fhdr_flags);
+	header.slice_content_size = get_u64(data, fhdr_slice_content_size);
+	header.slice_content_blake3 = get_hash(data, fhdr_slice_content_blake3);
 	return header;
 }
 
 ArchiveEndHeader parse_archive_end(const uint8_t *data) {
 	ArchiveEndHeader header;
-	header.volume_block_size = get_u32(data, 10);
-	header.archive_uuid = get_fixed_string(data, 14, 37);
-	header.archive_name = get_fixed_string(data, 51, 256);
-	header.volume_seq_num = get_u64(data, 307);
-	header.payload_profile = static_cast<PayloadProfile>(data[315]);
-	header.last_logical_slice_seq_num = get_u64(data, 316);
-	header.last_global_frame_seq_num = get_u64(data, 324);
-	header.created_by_implementation = get_fixed_string(data, 332, 64);
-	header.created_by_build_id = get_fixed_string(data, 396, 64);
-	header.archive_end_at_utc = get_fixed_string(data, 460, 20);
-	header.flags = get_u16(data, 480);
+	header.volume_block_size = get_u32(data, hdr_volume_block_size);
+	header.archive_uuid = get_fixed_string(data, hdr_archive_uuid, nt_uuid_size);
+	header.archive_name = get_nt_name(data, hdr_archive_name, nt_name_size);
+	header.volume_seq_num = get_u64(data, hdr_volume_seq_num);
+	header.payload_profile = static_cast<PayloadProfile>(data[hdr_payload_profile]);
+	header.last_logical_slice_seq_num = get_u64(data, ae_last_logical_slice_seq_num);
+	header.last_global_frame_seq_num = get_u64(data, ae_last_global_frame_seq_num);
+	header.created_by_implementation = get_fixed_string(data, ae_created_by_implementation, ident64_size);
+	header.created_by_build_id = get_fixed_string(data, ae_created_by_build_id, ident64_size);
+	header.archive_end_at_utc = get_fixed_string(data, ae_archive_end_at_utc, nt_time_size);
+	header.flags = get_u16(data, ae_flags);
 	return header;
 }
 
@@ -158,50 +164,50 @@ ArchiveEndHeader parse_archive_end(const uint8_t *data) {
 
 HeaderBytes serialize_volume_header(const VolumeHeader &header) {
 	HeaderBytes bytes = make_header(HeaderType::volume);
-	put_u32(bytes, 10, header.volume_block_size);
-	put_fixed_string(bytes, 14, 37, header.archive_uuid);
-	put_fixed_string(bytes, 51, 256, header.archive_name);
-	put_u64(bytes, 307, header.volume_seq_num);
-	bytes[315] = static_cast<uint8_t>(header.payload_profile);
-	put_fixed_string(bytes, 316, 20, header.volume_write_at_utc);
-	put_u16(bytes, 336, header.flags);
+	put_u32(bytes, hdr_volume_block_size, header.volume_block_size);
+	put_fixed_string(bytes, hdr_archive_uuid, nt_uuid_size, header.archive_uuid);
+	put_fixed_string(bytes, hdr_archive_name, nt_name_size, header.archive_name);
+	put_u64(bytes, hdr_volume_seq_num, header.volume_seq_num);
+	bytes[hdr_payload_profile] = static_cast<uint8_t>(header.payload_profile);
+	put_fixed_string(bytes, vhdr_write_at_utc, nt_time_size, header.volume_write_at_utc);
+	put_u16(bytes, vhdr_flags, header.flags);
 	finish_crc(bytes);
 	return bytes;
 }
 
 HeaderBytes serialize_frame_header(const FrameHeader &header) {
 	HeaderBytes bytes = make_header(HeaderType::frame);
-	put_u32(bytes, 10, header.volume_block_size);
-	put_fixed_string(bytes, 14, 37, header.archive_uuid);
-	put_fixed_string(bytes, 51, 256, header.archive_name);
-	put_u64(bytes, 307, header.volume_seq_num);
-	bytes[315] = static_cast<uint8_t>(header.payload_profile);
-	put_u64(bytes, 316, header.logical_slice_seq_num);
-	put_u64(bytes, 324, header.global_frame_seq_num);
-	put_u64(bytes, 332, header.frame_seq_num_within_slice);
-	put_u64(bytes, 340, header.frame_payload_size);
-	bytes[348] = static_cast<uint8_t>(header.frame_content_type);
-	put_bytes(bytes, 349, header.frame_payload_blake3);
-	put_u16(bytes, 381, header.flags);
-	put_u64(bytes, 383, header.slice_content_size);
-	put_bytes(bytes, 391, header.slice_content_blake3);
+	put_u32(bytes, hdr_volume_block_size, header.volume_block_size);
+	put_fixed_string(bytes, hdr_archive_uuid, nt_uuid_size, header.archive_uuid);
+	put_fixed_string(bytes, hdr_archive_name, nt_name_size, header.archive_name);
+	put_u64(bytes, hdr_volume_seq_num, header.volume_seq_num);
+	bytes[hdr_payload_profile] = static_cast<uint8_t>(header.payload_profile);
+	put_u64(bytes, fhdr_logical_slice_seq_num, header.logical_slice_seq_num);
+	put_u64(bytes, fhdr_global_frame_seq_num, header.global_frame_seq_num);
+	put_u64(bytes, fhdr_frame_seq_num_within_slice, header.frame_seq_num_within_slice);
+	put_u64(bytes, fhdr_frame_payload_size, header.frame_payload_size);
+	bytes[fhdr_frame_content_type] = static_cast<uint8_t>(header.frame_content_type);
+	put_bytes(bytes, fhdr_frame_payload_blake3, header.frame_payload_blake3);
+	put_u16(bytes, fhdr_flags, header.flags);
+	put_u64(bytes, fhdr_slice_content_size, header.slice_content_size);
+	put_bytes(bytes, fhdr_slice_content_blake3, header.slice_content_blake3);
 	finish_crc(bytes);
 	return bytes;
 }
 
 HeaderBytes serialize_archive_end_header(const ArchiveEndHeader &header) {
 	HeaderBytes bytes = make_header(HeaderType::archive_end);
-	put_u32(bytes, 10, header.volume_block_size);
-	put_fixed_string(bytes, 14, 37, header.archive_uuid);
-	put_fixed_string(bytes, 51, 256, header.archive_name);
-	put_u64(bytes, 307, header.volume_seq_num);
-	bytes[315] = static_cast<uint8_t>(header.payload_profile);
-	put_u64(bytes, 316, header.last_logical_slice_seq_num);
-	put_u64(bytes, 324, header.last_global_frame_seq_num);
-	put_fixed_string(bytes, 332, 64, header.created_by_implementation);
-	put_fixed_string(bytes, 396, 64, header.created_by_build_id);
-	put_fixed_string(bytes, 460, 20, header.archive_end_at_utc);
-	put_u16(bytes, 480, header.flags);
+	put_u32(bytes, hdr_volume_block_size, header.volume_block_size);
+	put_fixed_string(bytes, hdr_archive_uuid, nt_uuid_size, header.archive_uuid);
+	put_fixed_string(bytes, hdr_archive_name, nt_name_size, header.archive_name);
+	put_u64(bytes, hdr_volume_seq_num, header.volume_seq_num);
+	bytes[hdr_payload_profile] = static_cast<uint8_t>(header.payload_profile);
+	put_u64(bytes, ae_last_logical_slice_seq_num, header.last_logical_slice_seq_num);
+	put_u64(bytes, ae_last_global_frame_seq_num, header.last_global_frame_seq_num);
+	put_fixed_string(bytes, ae_created_by_implementation, ident64_size, header.created_by_implementation);
+	put_fixed_string(bytes, ae_created_by_build_id, ident64_size, header.created_by_build_id);
+	put_fixed_string(bytes, ae_archive_end_at_utc, nt_time_size, header.archive_end_at_utc);
+	put_u16(bytes, ae_flags, header.flags);
 	finish_crc(bytes);
 	return bytes;
 }
@@ -212,10 +218,10 @@ ParsedHeader parse_fixed_header(const uint8_t *data, std::size_t size) {
 	check_common(data, size);
 
 	ParsedHeader parsed;
-	parsed.version = data[8];
-	parsed.type = static_cast<HeaderType>(data[9]);
-	parsed.stored_crc32c = get_u32(data, fixed_header_size - 4);
-	parsed.computed_crc32c = crc32c::Crc32c(data, fixed_header_size - 4);
+	parsed.version = data[com_header_version];
+	parsed.type = static_cast<HeaderType>(data[com_header_type]);
+	parsed.stored_crc32c = get_u32(data, hdr_crc32c);
+	parsed.computed_crc32c = crc32c::Crc32c(data, hdr_crc32c);
 	if (parsed.stored_crc32c != parsed.computed_crc32c)
 		throw std::runtime_error("header CRC32C mismatch");
 

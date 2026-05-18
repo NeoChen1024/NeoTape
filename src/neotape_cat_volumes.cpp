@@ -10,6 +10,7 @@
 #include <cstring>
 #include <filesystem>
 #include <format>
+#include <getopt.h>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -93,33 +94,32 @@ void usage(const char *prog) {
 }
 
 Options parse_args(int argc, char **argv) {
+	static const struct option long_opts[] = {
+		{"output", required_argument, nullptr,       'o'},
+		{"prompt", no_argument,       nullptr,        256},
+		{"list",   no_argument,       nullptr,        257},
+		{"help",   no_argument,       nullptr,        'h'},
+		{nullptr, 0, nullptr, 0}
+	};
+
 	Options opts;
-	for (int i = 1; i < argc; ++i) {
-		string_view arg(argv[i]);
-		auto need = [&](const char *name) -> string {
-			if (++i >= argc)
-				fail(format("{} requires a value", name));
-			return argv[i];
-		};
-		if (arg == "-o" || arg == "--output") {
-			opts.output = need("-o");
-		} else if (arg == "--prompt") {
-			opts.prompt = true;
-		} else if (arg == "--list") {
-			opts.list_mode = true;
-		} else if (arg == "-h" || arg == "--help") {
-			usage(argv[0]);
-			std::exit(0);
-		} else if (!arg.empty() && arg.front() == '-') {
-			fail(format("unknown option: {}", arg));
-		} else {
-			opts.spool_dir = arg;
+	int c;
+	while ((c = getopt_long(argc, argv, "o:h", long_opts, nullptr)) != -1) {
+		switch (c) {
+		case 'o': opts.output = optarg; break;
+		case 256: opts.prompt = true; break;
+		case 257: opts.list_mode = true; break;
+		case 'h': usage(argv[0]); std::exit(0);
+		case '?': std::exit(2);
 		}
 	}
-	if (opts.spool_dir.empty()) {
+
+	if (optind >= argc) {
 		usage(argv[0]);
 		std::exit(2);
 	}
+	opts.spool_dir = argv[optind++];
+
 	if (!fs::is_directory(opts.spool_dir))
 		fail(format("not a directory: {}", opts.spool_dir));
 	return opts;
