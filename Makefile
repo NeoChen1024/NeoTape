@@ -5,7 +5,7 @@ INCS	= -Iinclude -Llib -I/usr/local/include -Lusr/local/lib
 CFLAGS	= -O3 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c17 -march=native -pedantic $(INCS)
 CXXFLAGS= -O3 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c++20 -march=native -pedantic $(INCS)
 LDLIBS	= lib/libb3sum.a lib/libcrc32c.a -larchive
-EXE	= bin/pax bin/neotape-write bin/neotape-inspect bin/neotape-plan
+EXE	= bin/pax bin/neotape-write bin/neotape-inspect bin/neotape-plan bin/neotape-cat-volumes
 BINDIR	= bin
 LIBDIR	= lib
 BUILDDIR= build
@@ -36,6 +36,9 @@ $(BINDIR)/neotape-inspect : src/neotape_inspect.cpp $(FORMAT_OBJ) Makefile $(B3L
 
 $(BINDIR)/neotape-plan : src/neotape_plan.cpp $(COMMON_OBJ) Makefile | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(COMMON_OBJ) -o $@
+
+$(BINDIR)/neotape-cat-volumes : src/neotape_cat_volumes.cpp $(BUILDDIR)/neotape_reader.o $(FORMAT_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(BUILDDIR)/neotape_reader.o $(FORMAT_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
 $(BINDIR)/% : src/%.c Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
