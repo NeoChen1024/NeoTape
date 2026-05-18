@@ -5,12 +5,13 @@ INCS	= -Iinclude -Llib -I/usr/local/include -Lusr/local/lib
 CFLAGS	= -O3 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c17 -march=native -pedantic $(INCS)
 CXXFLAGS= -O3 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c++20 -march=native -pedantic $(INCS)
 LDLIBS	= lib/libb3sum.a lib/libcrc32c.a -larchive
-EXE	= bin/pax bin/neotape-write bin/neotape-inspect bin/neotape-plan bin/neotape-cat-volumes
+EXE	= bin/pax bin/mt-pax bin/neotape-write bin/neotape-inspect bin/neotape-plan bin/neotape-cat-volumes
 BINDIR	= bin
 LIBDIR	= lib
 BUILDDIR= build
 FORMAT_OBJ = $(BUILDDIR)/neotape_format.o
 COMMON_OBJ = $(BUILDDIR)/neotape_common.o
+BOUNDEDBUF_OBJ = $(BUILDDIR)/neotape_bounded_buffer.o
 
 include 3rdparty/blake3.mk
 include 3rdparty/crc32c.mk
@@ -27,6 +28,9 @@ $(BUILDDIR)/%.o : src/%.cpp Makefile | $(BUILDDIR)
 
 $(BINDIR)/pax : src/pax.cpp $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(COMMON_OBJ) -o $@ $(LDLIBS)
+
+$(BINDIR)/mt-pax : src/mt-pax.cpp $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) -o $@ $(LDLIBS)
 
 $(BINDIR)/neotape-write : src/neotape_write.cpp $(FORMAT_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
