@@ -1,6 +1,7 @@
 #include "neotape/common.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cerrno>
 #include <cstdio>
 #include <cstdint>
@@ -36,6 +37,7 @@ struct Options {
 	bool verbose = false;
 	string output_path = "-";
 	FILE *meta_out = nullptr;
+	string chdir_dir;
 	vector<fs::path> sources;
 };
 
@@ -75,7 +77,7 @@ void warn(const string &message) {
 void usage(const char *prog) {
 	std::cerr << format(
 	    "usage: {} [--slice-size <bytes>] [--metadata-buffer-size <bytes>]\n"
-	    "       -o <file> [-x] [-v] <path> [path ...]\n",
+	    "       -o <file> [-C <dir>] [-x] [-v] <path> [path ...]\n",
 	    prog);
 }
 
@@ -84,13 +86,14 @@ Options parse_args(int argc, char **argv) {
 		{"slice-size",           required_argument, nullptr, 's'},
 		{"metadata-buffer-size", required_argument, nullptr, 'm'},
 		{"output",               required_argument, nullptr, 'o'},
+		{"directory",            required_argument, nullptr, 'C'},
 		{"help",                 no_argument,       nullptr, 'h'},
 		{nullptr, 0, nullptr, 0}
 	};
 
 	Options opts;
 	int c;
-	while ((c = getopt_long(argc, argv, "o:xvh", long_opts, nullptr)) != -1) {
+	while ((c = getopt_long(argc, argv, "C:o:xvh", long_opts, nullptr)) != -1) {
 		switch (c) {
 		case 's':
 			opts.slice_size = neotape::parse_size(optarg, "slice size");
@@ -100,6 +103,7 @@ Options parse_args(int argc, char **argv) {
 			    neotape::parse_size(optarg, "metadata buffer size");
 			break;
 		case 'o': opts.output_path = optarg; break;
+		case 'C': opts.chdir_dir = optarg; break;
 		case 'x': opts.one_file_system = true; break;
 		case 'v': opts.verbose = true; break;
 		case 'h': usage(argv[0]); std::exit(0);
@@ -178,7 +182,8 @@ vector<fs::path> sorted_children(const fs::path &path) {
 
 // ====================== Streaming Slice Packing ==================
 
-void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num) {
+void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num,
+    vector<uint64_t> &slice_sizes) {
 	for (size_t i = 0; i < slice.entries.size(); ++i) {
 		const EntryMeta &e = slice.entries[i];
 		string line = format("/{:06}/{:06}/{}/{}/{}", slice_num, i, e.kind,
@@ -191,6 +196,8 @@ void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num)
 	    slice_num, slice.entries.size(),
 	    neotape::humanize_number(slice.disk_bytes),
 	    neotape::humanize_number(slice.apparent_bytes));
+	slice_sizes.push_back(slice.disk_bytes);
+
 	if (!opts.verbose)
 		return;
 	for (const EntryMeta &entry : slice.entries) {
@@ -204,7 +211,8 @@ void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num)
 static constexpr uint64_t entry_struct_size = sizeof(EntryMeta);
 
 void add_to_slice(SlicePlan &slice, const EntryMeta &entry,
-    const Options &opts, uint64_t &slice_num, ScanTotals &totals) {
+    const Options &opts, uint64_t &slice_num, ScanTotals &totals,
+    vector<uint64_t> &slice_sizes) {
 	slice.entries.push_back(entry);
 	slice.disk_bytes += entry.disk_bytes;
 	slice.apparent_bytes += entry.apparent_bytes;
@@ -224,14 +232,15 @@ void add_to_slice(SlicePlan &slice, const EntryMeta &entry,
 
 	if (slice.allocated_bytes >= opts.metadata_buffer_size ||
 	    slice.disk_bytes >= opts.slice_size) {
-		emit_slice(slice, opts, ++slice_num);
+		emit_slice(slice, opts, ++slice_num, slice_sizes);
 		slice = SlicePlan{};
 	}
 }
 
 void scan_path(const fs::path &path, const Options &opts,
     const neotape::SourceSpec &spec, std::optional<dev_t> root_device,
-    SlicePlan &current_slice, uint64_t &slice_num, ScanTotals &totals) {
+    SlicePlan &current_slice, uint64_t &slice_num, ScanTotals &totals,
+    vector<uint64_t> &slice_sizes) {
 	struct stat st {};
 	if (lstat(path.c_str(), &st) != 0) {
 		warn(format("lstat {}: {}", path.string(), std::strerror(errno)));
@@ -251,13 +260,13 @@ void scan_path(const fs::path &path, const Options &opts,
 	        .apparent_bytes = apparent_bytes_from_stat(st),
 	        .device = st.st_dev,
 	    },
-	    opts, slice_num, totals);
+	    opts, slice_num, totals, slice_sizes);
 
 	if (!S_ISDIR(st.st_mode))
 		return;
 
 	for (const fs::path &child : sorted_children(path))
-		scan_path(child, opts, spec, root_device, current_slice, slice_num, totals);
+		scan_path(child, opts, spec, root_device, current_slice, slice_num, totals, slice_sizes);
 }
 
 } // namespace
@@ -275,10 +284,21 @@ int main(int argc, char **argv) {
 				    std::strerror(errno)));
 		}
 
+		if (!opts.chdir_dir.empty()) {
+			if (chdir(opts.chdir_dir.c_str()) != 0)
+				fail(format("chdir {}: {}", opts.chdir_dir,
+				    std::strerror(errno)));
+			string line = format("/chdir/{}", opts.chdir_dir);
+			fwrite(line.data(), 1, line.size(), opts.meta_out);
+			fputc('\0', opts.meta_out);
+			fputc('\n', opts.meta_out);
+		}
+
 		vector<neotape::SourceSpec> sources;
 		for (const fs::path &source : opts.sources)
 			sources.push_back(neotape::make_source_spec(source.generic_string()));
 
+		vector<uint64_t> slice_sizes;
 		SlicePlan current_slice;
 		ScanTotals totals;
 		uint64_t slice_num = 0;
@@ -289,11 +309,11 @@ int main(int argc, char **argv) {
 				fail(format("lstat {}: {}", spec.open_path.string(),
 				    std::strerror(errno)));
 			scan_path(spec.open_path, opts, spec, st.st_dev,
-			    current_slice, slice_num, totals);
+			    current_slice, slice_num, totals, slice_sizes);
 		}
 
 		if (!current_slice.entries.empty())
-			emit_slice(current_slice, opts, ++slice_num);
+			emit_slice(current_slice, opts, ++slice_num, slice_sizes);
 
 		if (opts.meta_out && opts.meta_out != stdout)
 			fclose(opts.meta_out);
@@ -306,6 +326,31 @@ int main(int argc, char **argv) {
 		    neotape::humanize_number(totals.apparent_bytes),
 		    neotape::humanize_number(opts.slice_size),
 		    neotape::humanize_number(opts.metadata_buffer_size));
+
+		if (!slice_sizes.empty()) {
+			uint64_t min_sz = slice_sizes[0], max_sz = slice_sizes[0];
+			uint64_t sum_sz = 0;
+			for (uint64_t sz : slice_sizes) {
+				if (sz < min_sz) min_sz = sz;
+				if (sz > max_sz) max_sz = sz;
+				sum_sz += sz;
+			}
+			double avg = static_cast<double>(sum_sz) / slice_sizes.size();
+			double var_sum = 0;
+			for (uint64_t sz : slice_sizes) {
+				double d = static_cast<double>(sz) - avg;
+				var_sum += d * d;
+			}
+			double stddev = std::sqrt(var_sum / slice_sizes.size());
+			std::cerr << format(
+			    "slice_sizes: slices={} min={} avg={} max={} "
+			    "stddev={}\n",
+			    slice_sizes.size(),
+			    neotape::humanize_number(min_sz),
+			    neotape::humanize_number(static_cast<uint64_t>(avg)),
+			    neotape::humanize_number(max_sz),
+			    neotape::humanize_number(static_cast<uint64_t>(stddev)));
+		}
 
 	} catch (const std::exception &e) {
 		fail(e.what());

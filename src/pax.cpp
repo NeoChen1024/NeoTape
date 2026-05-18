@@ -18,6 +18,7 @@
 #include <format>
 #include <getopt.h>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -39,6 +40,7 @@ struct Options {
 	vector<string> sources;
 	int verbose = 0;
 	bool one_file_system = false;
+	std::optional<string> chdir_dir;
 };
 
 struct HashingOutput {
@@ -51,7 +53,7 @@ struct HashingOutput {
 
 void usage(const char *prog) {
 	std::cerr << format(
-	    "usage: {} -f <out-file|-> [-v|-vv] [-x] <path> [path ...]\n", prog);
+	    "usage: {} -f <out-file|-> [-v|-vv] [-x] [-C <dir>] <path> [path ...]\n", prog);
 }
 
 [[noreturn]] void fail_archive(const char *context, archive *a) {
@@ -155,14 +157,16 @@ string blake3_hex(const blake3_hasher &hasher) {
 
 Options parse_args(int argc, char **argv) {
 	static const struct option long_opts[] = {
-		{"help", no_argument, nullptr, 'h'},
+		{"directory", required_argument, nullptr, 'C'},
+		{"help",      no_argument,       nullptr, 'h'},
 		{nullptr, 0, nullptr, 0}
 	};
 
 	Options opts;
 	int c;
-	while ((c = getopt_long(argc, argv, "f:vxh", long_opts, nullptr)) != -1) {
+	while ((c = getopt_long(argc, argv, "C:f:vxh", long_opts, nullptr)) != -1) {
 		switch (c) {
+		case 'C': opts.chdir_dir = optarg; break;
 		case 'f': opts.output = optarg; break;
 		case 'v': opts.verbose = std::min(opts.verbose + 1, 2); break;
 		case 'x': opts.one_file_system = true; break;
@@ -446,6 +450,9 @@ void write_pax_archive(const Options &opts) {
 		std::exit(1);
 	}
 	archive_entry_linkresolver_set_strategy(resolver, archive_format(writer));
+
+	if (opts.chdir_dir.has_value() && chdir(opts.chdir_dir->c_str()) != 0)
+		fail_errno(string("chdir ") + *opts.chdir_dir);
 
 	for (const string &source_arg : opts.sources) {
 		neotape::SourceSpec spec;
