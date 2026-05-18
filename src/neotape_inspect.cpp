@@ -12,6 +12,8 @@
 
 namespace {
 
+// ====================== Inspector State ==========================
+
 namespace fs = std::filesystem;
 using std::format;
 using std::size_t;
@@ -33,6 +35,8 @@ struct InspectState {
 	uint64_t slice_size = 0;
 	bool slice_open = false;
 };
+
+// ====================== Diagnostics & File IO ====================
 
 [[noreturn]] void fail(const string &message) {
 	std::cerr << format("neotape-inspect: {}\n", message);
@@ -83,6 +87,8 @@ void require(bool condition, const string &message) {
 	if (!condition)
 		fail(message);
 }
+
+// ====================== Record Validation ========================
 
 void inspect_volume(const fs::path &path, InspectState &state,
     const neotape::VolumeHeader &header, size_t file_size) {
@@ -142,6 +148,8 @@ void inspect_frame(const fs::path &path, InspectState &state,
 	bool start = (header.flags & neotape::frame_flag_start) != 0;
 	bool end = (header.flags & neotape::frame_flag_end) != 0;
 	if (header.frame_content_type == neotape::FrameContentType::slice_content) {
+		// Slice digests are accumulated across content frames and verified only
+		// when the END flag appears.
 		if (start) {
 			require(!state.slice_open,
 			    format("{}: new slice starts before previous slice ended",
@@ -200,6 +208,8 @@ void inspect_archive_end(const fs::path &path, InspectState &state,
 	    header.last_global_frame_seq_num);
 	state.saw_archive_end = true;
 }
+
+// ====================== Spool Traversal ==========================
 
 void inspect_file(const fs::path &path, InspectState &state) {
 	vector<uint8_t> bytes = read_file(path);

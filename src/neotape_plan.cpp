@@ -19,6 +19,8 @@
 
 namespace {
 
+// ====================== Planner State ============================
+
 namespace fs = std::filesystem;
 using std::format;
 using std::string;
@@ -45,6 +47,8 @@ struct SlicePlan {
 	uint64_t disk_bytes = 0;
 	uint64_t apparent_bytes = 0;
 };
+
+// ====================== Diagnostics & CLI ========================
 
 [[noreturn]] void fail(const string &message) {
 	std::cerr << format("neotape-plan: {}\n", message);
@@ -92,6 +96,8 @@ Options parse_args(int argc, char **argv) {
 	}
 	return opts;
 }
+
+// ====================== Filesystem Metadata ======================
 
 char kind_from_mode(mode_t mode) {
 	if (S_ISREG(mode))
@@ -199,6 +205,8 @@ vector<EntryMeta> prefetch_metadata(const Options &opts) {
 	}
 	return entries;
 }
+
+// ====================== Slice Packing ============================
 
 void add_to_slice(SlicePlan &slice, std::size_t index, const EntryMeta &entry) {
 	slice.entry_indexes.push_back(index);

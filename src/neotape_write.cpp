@@ -16,6 +16,8 @@
 
 namespace {
 
+// ====================== Writer State =============================
+
 namespace fs = std::filesystem;
 using std::format;
 using std::size_t;
@@ -48,6 +50,8 @@ struct WriterState {
 	fs::path current_slice_path;
 	vector<string> manifest_files;
 };
+
+// ====================== Diagnostics & CLI ========================
 
 [[noreturn]] void fail(const string &message) {
 	std::cerr << format("neotape-write: {}\n", message);
@@ -137,6 +141,8 @@ string six(uint64_t value) {
 	return format("{:06}", value);
 }
 
+// ====================== Manifest Helpers =========================
+
 string json_escape(string_view text) {
 	string out;
 	for (char c : text) {
@@ -169,6 +175,8 @@ fs::path tape_file_path(WriterState &state, string_view suffix) {
 	return state.current_volume_dir /
 	       format("tape-file-{}.{}.ntf", six(state.tape_file_num), suffix);
 }
+
+// ====================== Record Files =============================
 
 void write_record(const fs::path &path,
     const neotape::HeaderBytes &header, const vector<uint8_t> *payload,
@@ -208,6 +216,8 @@ void append_manifest_file(WriterState &state, const fs::path &path,
 }
 
 neotape::Hash hash_file(const fs::path &path);
+
+// ====================== Volume Management ========================
 
 void finalize_current_slice_file(WriterState &state) {
 	if (state.current_slice_path.empty())
@@ -258,6 +268,8 @@ void ensure_room_for_record(WriterState &state) {
 	write_volume_header(state);
 }
 
+// ====================== Content Framing ==========================
+
 void write_content_frame(WriterState &state, const vector<uint8_t> &payload,
     bool end) {
 	ensure_room_for_record(state);
@@ -283,6 +295,8 @@ void write_content_frame(WriterState &state, const vector<uint8_t> &payload,
 	if (end)
 		blake3_hasher_finalize(&state.slice_hasher, slice_hash.data(), slice_hash.size());
 
+	// Only the terminal frame of a logical slice carries the whole-slice
+	// digest. Earlier frames stay independently verifiable by payload hash.
 	neotape::FrameHeader header;
 	header.volume_block_size = state.opts.volume_block_size;
 	header.archive_uuid = state.archive_uuid;
@@ -333,6 +347,8 @@ void write_archive_end(WriterState &state) {
 	append_manifest_file(state, path, state.opts.volume_block_size, hash_file(path));
 }
 
+// ====================== Spool Writer Pipeline ====================
+
 void write_manifest(const WriterState &state) {
 	fs::path path = state.opts.output_dir / "manifest.json";
 	std::ofstream out(path);
@@ -382,6 +398,8 @@ void write_spool_archive(const Options &opts) {
 	vector<uint8_t> pending;
 	bool have_pending = false;
 	for (;;) {
+		// Keep one frame pending so an exact slice boundary can be marked END
+		// without emitting an empty sentinel frame.
 		if (have_pending &&
 		    state.current_slice_size + pending.size() >= opts.slice_size) {
 			write_content_frame(state, pending, true);

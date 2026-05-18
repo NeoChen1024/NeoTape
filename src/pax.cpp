@@ -25,6 +25,8 @@
 
 namespace {
 
+// ========================== Local Types ==========================
+
 namespace fs = std::filesystem;
 using std::format;
 using std::size_t;
@@ -51,6 +53,8 @@ struct HashingOutput {
 	bool close_file = false;
 	blake3_hasher hasher;
 };
+
+// ====================== Diagnostics & Setup ======================
 
 void usage(const char *prog) {
 	std::cerr << format(
@@ -116,6 +120,8 @@ void ensure_utf8_ctype_locale() {
 	}
 }
 
+// ====================== Hashing Output Sink ======================
+
 int output_open_callback(archive *, void *) {
 	return ARCHIVE_OK;
 }
@@ -157,6 +163,8 @@ string blake3_hex(const blake3_hasher &hasher) {
 		hex += format("{:02x}", static_cast<unsigned>(byte));
 	return hex;
 }
+
+// ====================== Command-Line Parsing =====================
 
 Options parse_args(int argc, char **argv) {
 	Options opts;
@@ -203,6 +211,8 @@ string strip_trailing_slashes(string_view path) {
 		path.remove_suffix(1);
 	return string(path);
 }
+
+// ====================== Source Path Mapping ======================
 
 SourceSpec make_source_spec(const string &arg) {
 	SourceSpec spec;
@@ -265,6 +275,8 @@ string archive_path_for_source(const SourceSpec &spec, const char *source_path) 
 		path_in_archive /= child_path;
 	return path_in_archive.generic_string();
 }
+
+// ====================== Archive Entry Formatting =================
 
 void mark_link_target_as_utf8(archive_entry *entry) {
 	if (const char *symlink = archive_entry_symlink(entry); symlink != nullptr)
@@ -339,6 +351,8 @@ int open_entry_file(archive_entry *entry) {
 	}
 	return fd;
 }
+
+// ====================== Archive Emission =========================
 
 void copy_file_data(archive *writer, archive_entry *entry, int fd) {
 	const char *source_path = archive_entry_sourcepath(entry);
@@ -477,6 +491,9 @@ void write_source(archive *writer, const Options &opts, const SourceSpec &source
 
 		const char *source_path = archive_entry_sourcepath(entry);
 		if (source_path != nullptr) {
+			// libarchive reads from the real filesystem path; the pax path is
+			// rewritten separately so symlink handling and trailing-slash CLI
+			// semantics can stay POSIX-like.
 			string archive_path = archive_path_for_source(source, source_path);
 			archive_entry_set_pathname_utf8(entry, archive_path.c_str());
 		}

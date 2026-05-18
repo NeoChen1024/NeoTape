@@ -15,6 +15,8 @@
 namespace neotape {
 namespace {
 
+// ====================== Fixed Header Encoding ====================
+
 void put_u16(HeaderBytes &bytes, std::size_t offset, uint16_t value) {
 	bytes[offset] = static_cast<uint8_t>(value & 0xffu);
 	bytes[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffu);
@@ -74,6 +76,8 @@ std::string get_fixed_string(const uint8_t *bytes, std::size_t offset,
 	return std::string(begin, end);
 }
 
+// ====================== Header Common Fields =====================
+
 HeaderBytes make_header(HeaderType type) {
 	HeaderBytes bytes{};
 	for (std::size_t i = 0; i < magic.size(); ++i)
@@ -98,6 +102,8 @@ void check_common(const uint8_t *data, std::size_t size) {
 	if (data[8] != header_version)
 		throw std::runtime_error(std::format("unsupported header version {}", data[8]));
 }
+
+// ====================== Header Parsers ===========================
 
 VolumeHeader parse_volume(const uint8_t *data) {
 	VolumeHeader header;
@@ -147,6 +153,8 @@ ArchiveEndHeader parse_archive_end(const uint8_t *data) {
 }
 
 } // namespace
+
+// ====================== Header Serializers =======================
 
 HeaderBytes serialize_volume_header(const VolumeHeader &header) {
 	HeaderBytes bytes = make_header(HeaderType::volume);
@@ -198,6 +206,8 @@ HeaderBytes serialize_archive_end_header(const ArchiveEndHeader &header) {
 	return bytes;
 }
 
+// ====================== Public Parse Helpers =====================
+
 ParsedHeader parse_fixed_header(const uint8_t *data, std::size_t size) {
 	check_common(data, size);
 
@@ -224,6 +234,8 @@ ParsedHeader parse_fixed_header(const uint8_t *data, std::size_t size) {
 	}
 	return parsed;
 }
+
+// ====================== Display & Utility Helpers ================
 
 std::string header_type_name(HeaderType type) {
 	switch (type) {
