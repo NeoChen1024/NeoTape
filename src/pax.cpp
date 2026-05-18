@@ -1,3 +1,5 @@
+#include "neotape/common.hpp"
+
 #include <archive.h>
 #include <archive_entry.h>
 #include <blake3.h>
@@ -23,18 +25,25 @@
 
 namespace {
 
+namespace fs = std::filesystem;
+using std::format;
+using std::size_t;
+using std::string;
+using std::string_view;
+using std::vector;
+
 struct Options {
-	std::string output;
-	std::vector<std::string> sources;
+	string output;
+	vector<string> sources;
 	int verbose = 0;
 	bool one_file_system = false;
 };
 
 struct SourceSpec {
-	std::string original;
-	std::filesystem::path open_path;
-	std::filesystem::path open_parent;
-	std::filesystem::path archive_root;
+	string original;
+	fs::path open_path;
+	fs::path open_parent;
+	fs::path archive_root;
 };
 
 struct HashingOutput {
@@ -44,25 +53,25 @@ struct HashingOutput {
 };
 
 void usage(const char *prog) {
-	std::cerr << std::format(
+	std::cerr << format(
 	    "usage: {} -f <out-file|-> [-v|-vv] [-x] <path> [path ...]\n", prog);
 }
 
 [[noreturn]] void fail_archive(const char *context, archive *a) {
 	const char *msg = archive_error_string(a);
-	std::cerr << std::format("pax: {}{}\n", context,
-	    msg != nullptr ? std::format(": {}", msg) : std::string());
+	std::cerr << format("pax: {}{}\n", context,
+	    msg != nullptr ? format(": {}", msg) : string());
 	std::exit(1);
 }
 
-[[noreturn]] void fail_errno(const std::string &context) {
-	std::cerr << std::format("pax: {}: {}\n", context, std::strerror(errno));
+[[noreturn]] void fail_errno(const string &context) {
+	std::cerr << format("pax: {}: {}\n", context, std::strerror(errno));
 	std::exit(1);
 }
 
-[[noreturn]] void fail_error_code(const std::string &context,
+[[noreturn]] void fail_error_code(const string &context,
     const std::error_code &ec) {
-	std::cerr << std::format("pax: {}: {}\n", context, ec.message());
+	std::cerr << format("pax: {}: {}\n", context, ec.message());
 	std::exit(1);
 }
 
@@ -71,8 +80,8 @@ void check_archive(int r, archive *a, const char *context) {
 		return;
 	if (r == ARCHIVE_WARN) {
 		const char *msg = archive_error_string(a);
-		std::cerr << std::format("pax: warning: {}{}\n", context,
-		    msg != nullptr ? std::format(": {}", msg) : std::string());
+		std::cerr << format("pax: warning: {}{}\n", context,
+		    msg != nullptr ? format(": {}", msg) : string());
 		return;
 	}
 	fail_archive(context, a);
@@ -80,19 +89,19 @@ void check_archive(int r, archive *a, const char *context) {
 
 void warn_archive(const char *context, archive *a) {
 	const char *msg = archive_error_string(a);
-	std::cerr << std::format("pax: warning: {}{}\n", context,
-	    msg != nullptr ? std::format(": {}", msg) : std::string());
+	std::cerr << format("pax: warning: {}{}\n", context,
+	    msg != nullptr ? format(": {}", msg) : string());
 }
 
 bool locale_name_is_utf8(const char *name) {
 	if (name == nullptr)
 		return false;
 
-	std::string locale_name(name);
+	string locale_name(name);
 	std::ranges::transform(locale_name, locale_name.begin(),
 	    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-	return locale_name.find("utf-8") != std::string::npos ||
-	       locale_name.find("utf8") != std::string::npos;
+	return locale_name.find("utf-8") != string::npos ||
+	       locale_name.find("utf8") != string::npos;
 }
 
 void ensure_utf8_ctype_locale() {
@@ -139,13 +148,13 @@ int output_close_callback(archive *a, void *client_data) {
 	return ARCHIVE_OK;
 }
 
-std::string blake3_hex(const blake3_hasher &hasher) {
+string blake3_hex(const blake3_hasher &hasher) {
 	std::array<uint8_t, BLAKE3_OUT_LEN> output{};
 	blake3_hasher_finalize(&hasher, output.data(), output.size());
 
-	std::string hex;
+	string hex;
 	for (uint8_t byte : output)
-		hex += std::format("{:02x}", static_cast<unsigned>(byte));
+		hex += format("{:02x}", static_cast<unsigned>(byte));
 	return hex;
 }
 
@@ -153,7 +162,7 @@ Options parse_args(int argc, char **argv) {
 	Options opts;
 
 	for (int i = 1; i < argc; ++i) {
-		std::string_view arg(argv[i]);
+		string_view arg(argv[i]);
 		if (arg == "-f") {
 			if (++i >= argc) {
 				usage(argv[0]);
@@ -170,7 +179,7 @@ Options parse_args(int argc, char **argv) {
 			usage(argv[0]);
 			std::exit(0);
 		} else if (!arg.empty() && arg.front() == '-') {
-			std::cerr << std::format("pax: unknown option: {}\n", arg);
+			std::cerr << format("pax: unknown option: {}\n", arg);
 			usage(argv[0]);
 			std::exit(2);
 		} else {
@@ -185,23 +194,21 @@ Options parse_args(int argc, char **argv) {
 	return opts;
 }
 
-bool has_trailing_slash(std::string_view path) {
+bool has_trailing_slash(string_view path) {
 	return path.size() > 1 && path.back() == '/';
 }
 
-std::string strip_trailing_slashes(std::string_view path) {
+string strip_trailing_slashes(string_view path) {
 	while (path.size() > 1 && path.back() == '/')
 		path.remove_suffix(1);
-	return std::string(path);
+	return string(path);
 }
 
-SourceSpec make_source_spec(const std::string &arg) {
-	namespace fs = std::filesystem;
-
+SourceSpec make_source_spec(const string &arg) {
 	SourceSpec spec;
 	spec.original = arg;
 
-	std::string stripped = strip_trailing_slashes(arg);
+	string stripped = strip_trailing_slashes(arg);
 	bool follow_top_symlink = has_trailing_slash(arg);
 	fs::path display_path = fs::absolute(stripped).lexically_normal();
 
@@ -209,20 +216,20 @@ SourceSpec make_source_spec(const std::string &arg) {
 	if (follow_top_symlink) {
 		fs::file_status status = fs::status(display_path, ec);
 		if (ec)
-			fail_error_code(std::string("stat ") + arg, ec);
+			fail_error_code(string("stat ") + arg, ec);
 		if (!fs::is_directory(status)) {
-			std::cerr << std::format("pax: source is not a directory: {}\n", arg);
+			std::cerr << format("pax: source is not a directory: {}\n", arg);
 			std::exit(1);
 		}
 		spec.open_path = fs::canonical(display_path, ec);
 		if (ec)
-			fail_error_code(std::string("canonical ") + arg, ec);
+			fail_error_code(string("canonical ") + arg, ec);
 	} else {
 		fs::file_status status = fs::symlink_status(display_path, ec);
 		if (ec)
-			fail_error_code(std::string("lstat ") + arg, ec);
+			fail_error_code(string("lstat ") + arg, ec);
 		if (!fs::exists(status)) {
-			std::cerr << std::format("pax: source does not exist: {}\n", arg);
+			std::cerr << format("pax: source does not exist: {}\n", arg);
 			std::exit(1);
 		}
 		spec.open_path = display_path;
@@ -235,8 +242,8 @@ SourceSpec make_source_spec(const std::string &arg) {
 	return spec;
 }
 
-std::filesystem::path drop_first_component(const std::filesystem::path &path) {
-	std::filesystem::path out;
+fs::path drop_first_component(const fs::path &path) {
+	fs::path out;
 	bool first = true;
 	for (const auto &component : path) {
 		if (first) {
@@ -248,9 +255,7 @@ std::filesystem::path drop_first_component(const std::filesystem::path &path) {
 	return out;
 }
 
-std::string archive_path_for_source(const SourceSpec &spec, const char *source_path) {
-	namespace fs = std::filesystem;
-
+string archive_path_for_source(const SourceSpec &spec, const char *source_path) {
 	fs::path absolute = fs::absolute(fs::path(source_path)).lexically_normal();
 	fs::path relative = absolute.lexically_relative(spec.open_parent);
 	fs::path path_in_archive = spec.archive_root;
@@ -268,19 +273,19 @@ void mark_link_target_as_utf8(archive_entry *entry) {
 		archive_entry_update_hardlink_utf8(entry, hardlink);
 }
 
-std::string entry_owner_name(archive_entry *entry) {
+string entry_owner_name(archive_entry *entry) {
 	if (const char *name = archive_entry_uname(entry); name != nullptr)
 		return name;
 	return std::to_string(archive_entry_uid(entry));
 }
 
-std::string entry_group_name(archive_entry *entry) {
+string entry_group_name(archive_entry *entry) {
 	if (const char *name = archive_entry_gname(entry); name != nullptr)
 		return name;
 	return std::to_string(archive_entry_gid(entry));
 }
 
-std::string entry_timestamp(archive_entry *entry) {
+string entry_timestamp(archive_entry *entry) {
 	std::time_t mtime = archive_entry_mtime(entry);
 	std::tm local_time{};
 	if (localtime_r(&mtime, &local_time) == nullptr)
@@ -292,8 +297,8 @@ std::string entry_timestamp(archive_entry *entry) {
 	return buffer;
 }
 
-std::string entry_display_path(archive_entry *entry) {
-	std::string path = archive_entry_pathname(entry) != nullptr
+string entry_display_path(archive_entry *entry) {
+	string path = archive_entry_pathname(entry) != nullptr
 	    ? archive_entry_pathname(entry)
 	    : "";
 	if (archive_entry_filetype(entry) == AE_IFDIR && !path.empty() && path.back() != '/')
@@ -301,15 +306,22 @@ std::string entry_display_path(archive_entry *entry) {
 	return path;
 }
 
-std::string verbose_line(archive_entry *entry) {
-	std::string mode = archive_entry_strmode(entry);
+string entry_size_display(archive_entry *entry) {
+	la_int64_t size = archive_entry_size(entry);
+	if (size < 0)
+		return "?";
+	return neotape::humanize_number(static_cast<size_t>(size));
+}
+
+string verbose_line(archive_entry *entry) {
+	string mode = archive_entry_strmode(entry);
 	if (mode.size() > 10)
 		mode.resize(10);
 	if (archive_entry_hardlink(entry) != nullptr && !mode.empty())
 		mode[0] = 'h';
-	return std::format("{} {:3} {:>10} {:>10} {:6} [{}] {}", mode,
+	return format("{} {:3} {:>10} {:>10} {:>6} [{}] {}", mode,
 	    archive_entry_nlink(entry), entry_owner_name(entry), entry_group_name(entry),
-	    archive_entry_size(entry), entry_timestamp(entry), entry_display_path(entry));
+	    entry_size_display(entry), entry_timestamp(entry), entry_display_path(entry));
 }
 
 int open_entry_file(archive_entry *entry) {
@@ -321,7 +333,7 @@ int open_entry_file(archive_entry *entry) {
 
 	int fd = open(source_path, O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
-		std::cerr << std::format("pax: warning: open {}: {}\n", source_path,
+		std::cerr << format("pax: warning: open {}: {}\n", source_path,
 		    std::strerror(errno));
 		return -1;
 	}
@@ -335,14 +347,14 @@ void copy_file_data(archive *writer, archive_entry *entry, int fd) {
 	if (source_path == nullptr)
 		fail_archive("entry has no source path", writer);
 
-	std::vector<char> buffer(1024 * 1024);
+	vector<char> buffer(1024 * 1024);
 	for (;;) {
 		ssize_t n = read(fd, buffer.data(), buffer.size());
 		if (n < 0) {
 			int saved_errno = errno;
 			close(fd);
 			errno = saved_errno;
-			fail_errno(std::string("read ") + source_path);
+			fail_errno(string("read ") + source_path);
 		}
 		if (n == 0)
 			break;
@@ -353,13 +365,13 @@ void copy_file_data(archive *writer, archive_entry *entry, int fd) {
 		}
 		if (written != n) {
 			close(fd);
-			std::cerr << std::format("pax: short archive write for {}\n", source_path);
+			std::cerr << format("pax: short archive write for {}\n", source_path);
 			std::exit(1);
 		}
 	}
 
 	if (close(fd) != 0) {
-		std::cerr << std::format("pax: warning: close {}: {}\n", source_path,
+		std::cerr << format("pax: warning: close {}: {}\n", source_path,
 		    std::strerror(errno));
 	}
 }
@@ -368,9 +380,9 @@ bool write_archive_entry(archive *writer, const Options &opts, archive_entry *en
 	mark_link_target_as_utf8(entry);
 
 	if (opts.verbose > 1)
-		std::cerr << std::format("{}\n", verbose_line(entry));
+		std::cerr << format("{}\n", verbose_line(entry));
 	else if (opts.verbose > 0)
-		std::cerr << std::format("a {}\n", entry_display_path(entry));
+		std::cerr << format("a {}\n", entry_display_path(entry));
 
 	int fd = -1;
 	if (archive_entry_filetype(entry) == AE_IFREG && archive_entry_size(entry) > 0) {
@@ -421,7 +433,7 @@ void write_source(archive *writer, const Options &opts, const SourceSpec &source
     archive_entry_linkresolver *resolver) {
 	archive *disk = archive_read_disk_new();
 	if (disk == nullptr) {
-		std::cerr << std::format("pax: cannot allocate disk reader\n");
+		std::cerr << format("pax: cannot allocate disk reader\n");
 		std::exit(1);
 	}
 	check_archive(archive_read_disk_set_symlink_physical(disk), disk,
@@ -439,7 +451,7 @@ void write_source(archive *writer, const Options &opts, const SourceSpec &source
 	for (;;) {
 		archive_entry *entry = archive_entry_new();
 		if (entry == nullptr) {
-			std::cerr << std::format("pax: cannot allocate archive entry\n");
+			std::cerr << format("pax: cannot allocate archive entry\n");
 			std::exit(1);
 		}
 
@@ -465,7 +477,7 @@ void write_source(archive *writer, const Options &opts, const SourceSpec &source
 
 		const char *source_path = archive_entry_sourcepath(entry);
 		if (source_path != nullptr) {
-			std::string archive_path = archive_path_for_source(source, source_path);
+			string archive_path = archive_path_for_source(source, source_path);
 			archive_entry_set_pathname_utf8(entry, archive_path.c_str());
 		}
 
@@ -482,7 +494,7 @@ void write_source(archive *writer, const Options &opts, const SourceSpec &source
 void write_pax_archive(const Options &opts) {
 	archive *writer = archive_write_new();
 	if (writer == nullptr) {
-		std::cerr << std::format("pax: cannot allocate archive writer\n");
+		std::cerr << format("pax: cannot allocate archive writer\n");
 		std::exit(1);
 	}
 
@@ -499,7 +511,7 @@ void write_pax_archive(const Options &opts) {
 	} else {
 		output.file = fopen(opts.output.c_str(), "wb");
 		if (output.file == nullptr)
-			fail_errno(std::string("open ") + opts.output);
+			fail_errno(string("open ") + opts.output);
 		output.close_file = true;
 	}
 	check_archive(archive_write_open(writer, &output, output_open_callback,
@@ -508,12 +520,12 @@ void write_pax_archive(const Options &opts) {
 
 	archive_entry_linkresolver *resolver = archive_entry_linkresolver_new();
 	if (resolver == nullptr) {
-		std::cerr << std::format("pax: cannot allocate hardlink resolver\n");
+		std::cerr << format("pax: cannot allocate hardlink resolver\n");
 		std::exit(1);
 	}
 	archive_entry_linkresolver_set_strategy(resolver, archive_format(writer));
 
-	for (const std::string &source_arg : opts.sources)
+	for (const string &source_arg : opts.sources)
 		write_source(writer, opts, make_source_spec(source_arg), resolver);
 	flush_hardlink_resolver(writer, opts, resolver);
 	archive_entry_linkresolver_free(resolver);
@@ -521,7 +533,7 @@ void write_pax_archive(const Options &opts) {
 	check_archive(archive_write_close(writer), writer, "close output");
 	check_archive(archive_write_free(writer), writer, "free writer");
 
-	std::cerr << std::format("{}  {}\n", blake3_hex(output.hasher),
+	std::cerr << format("{}  {}\n", blake3_hex(output.hasher),
 	    opts.output == "-" ? "-" : opts.output);
 }
 

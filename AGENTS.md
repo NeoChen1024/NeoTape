@@ -39,4 +39,8 @@ bin/pax -f <out-file|-> [-v|-vv] [-x] <path> [path...]
 - libarchive `xattrheader=ALL` — all xattrs including security.capability are preserved in output
 - Hardlink resolution via `archive_entry_linkresolver`
 - All diagnostics on stderr, never stdout
+- In implementation files, prefer local `using` declarations or namespace aliases
+  for frequently used standard-library types, for example `using std::string`
+  and `using std::format`, or `namespace fs = std::filesystem`, instead of
+  repeating long qualified names.
 - **No formatted comments in code** unless asked

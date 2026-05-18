@@ -1,3 +1,5 @@
+#include "neotape/common.hpp"
+
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
@@ -17,15 +19,21 @@
 
 namespace {
 
+namespace fs = std::filesystem;
+using std::format;
+using std::string;
+using std::string_view;
+using std::vector;
+
 struct Options {
 	uint64_t slice_size = 64ull * 1024 * 1024 * 1024;
 	bool one_file_system = false;
 	bool verbose = false;
-	std::vector<std::filesystem::path> sources;
+	vector<fs::path> sources;
 };
 
 struct EntryMeta {
-	std::filesystem::path path;
+	fs::path path;
 	char kind = '?';
 	uint64_t disk_bytes = 0;
 	uint64_t apparent_bytes = 0;
@@ -33,79 +41,37 @@ struct EntryMeta {
 };
 
 struct SlicePlan {
-	std::vector<std::size_t> entry_indexes;
+	vector<std::size_t> entry_indexes;
 	uint64_t disk_bytes = 0;
 	uint64_t apparent_bytes = 0;
 };
 
-[[noreturn]] void fail(const std::string &message) {
-	std::cerr << std::format("neotape-plan: {}\n", message);
+[[noreturn]] void fail(const string &message) {
+	std::cerr << format("neotape-plan: {}\n", message);
 	std::exit(1);
 }
 
-void warn(const std::string &message) {
-	std::cerr << std::format("neotape-plan: warning: {}\n", message);
+void warn(const string &message) {
+	std::cerr << format("neotape-plan: warning: {}\n", message);
 }
 
 void usage(const char *prog) {
-	std::cerr << std::format(
+	std::cerr << format(
 	    "usage: {} [--slice-size <bytes>] [-x] [-v] <path> [path ...]\n", prog);
-}
-
-uint64_t parse_size(std::string_view text, const char *name) {
-	if (text.empty())
-		fail(std::format("{} is empty", name));
-
-	uint64_t multiplier = 1;
-	char suffix = text.back();
-	if (suffix == 'k' || suffix == 'K' || suffix == 'm' || suffix == 'M' ||
-	    suffix == 'g' || suffix == 'G' || suffix == 't' || suffix == 'T') {
-		text.remove_suffix(1);
-		switch (suffix) {
-		case 'k':
-		case 'K':
-			multiplier = 1024ull;
-			break;
-		case 'm':
-		case 'M':
-			multiplier = 1024ull * 1024;
-			break;
-		case 'g':
-		case 'G':
-			multiplier = 1024ull * 1024 * 1024;
-			break;
-		case 't':
-		case 'T':
-			multiplier = 1024ull * 1024 * 1024 * 1024;
-			break;
-		}
-	}
-
-	std::string owned(text);
-	char *end = nullptr;
-	errno = 0;
-	unsigned long long value = std::strtoull(owned.c_str(), &end, 10);
-	if (errno != 0 || end == nullptr || *end != '\0')
-		fail(std::format("invalid {}: {}", name, text));
-	if (value == 0)
-		fail(std::format("{} must be greater than zero", name));
-	if (value > UINT64_MAX / multiplier)
-		fail(std::format("{} is too large", name));
-	return static_cast<uint64_t>(value) * multiplier;
 }
 
 Options parse_args(int argc, char **argv) {
 	Options opts;
 	for (int i = 1; i < argc; ++i) {
-		std::string_view arg(argv[i]);
-		auto need_value = [&](const char *name) -> std::string {
+		string_view arg(argv[i]);
+		auto need_value = [&](const char *name) -> string {
 			if (++i >= argc)
-				fail(std::format("{} requires a value", name));
+				fail(format("{} requires a value", name));
 			return argv[i];
 		};
 
 		if (arg == "--slice-size") {
-			opts.slice_size = parse_size(need_value("--slice-size"), "slice size");
+			opts.slice_size = neotape::parse_size(need_value("--slice-size"), "slice size");
 		} else if (arg == "-x") {
 			opts.one_file_system = true;
 		} else if (arg == "-v") {
@@ -114,7 +80,7 @@ Options parse_args(int argc, char **argv) {
 			usage(argv[0]);
 			std::exit(0);
 		} else if (!arg.empty() && arg.front() == '-') {
-			fail(std::format("unknown option: {}", arg));
+			fail(format("unknown option: {}", arg));
 		} else {
 			opts.sources.emplace_back(arg);
 		}
@@ -157,16 +123,15 @@ uint64_t apparent_bytes_from_stat(const struct stat &st) {
 	return 0;
 }
 
-std::filesystem::path normalized_path(const std::filesystem::path &path) {
+fs::path normalized_path(const fs::path &path) {
 	std::error_code ec;
-	std::filesystem::path absolute = std::filesystem::absolute(path, ec);
+	fs::path absolute = fs::absolute(path, ec);
 	if (ec)
 		return path;
 	return absolute.lexically_normal();
 }
 
-void add_entry(const std::filesystem::path &path, const struct stat &st,
-    std::vector<EntryMeta> &entries) {
+void add_entry(const fs::path &path, const struct stat &st, vector<EntryMeta> &entries) {
 	entries.push_back(EntryMeta{
 	    .path = path,
 	    .kind = kind_from_mode(st.st_mode),
@@ -176,38 +141,38 @@ void add_entry(const std::filesystem::path &path, const struct stat &st,
 	});
 }
 
-std::vector<std::filesystem::path> sorted_children(const std::filesystem::path &path) {
+vector<fs::path> sorted_children(const fs::path &path) {
 	DIR *dir = opendir(path.c_str());
 	if (dir == nullptr) {
-		warn(std::format("opendir {}: {}", path.string(), std::strerror(errno)));
+		warn(format("opendir {}: {}", path.string(), std::strerror(errno)));
 		return {};
 	}
 
-	std::vector<std::filesystem::path> children;
+	vector<fs::path> children;
 	for (;;) {
 		errno = 0;
 		dirent *entry = readdir(dir);
 		if (entry == nullptr)
 			break;
-		std::string_view name(entry->d_name);
+		string_view name(entry->d_name);
 		if (name == "." || name == "..")
 			continue;
-		children.push_back(path / std::string(name));
+		children.push_back(path / string(name));
 	}
 	if (errno != 0)
-		warn(std::format("readdir {}: {}", path.string(), std::strerror(errno)));
+		warn(format("readdir {}: {}", path.string(), std::strerror(errno)));
 	if (closedir(dir) != 0)
-		warn(std::format("closedir {}: {}", path.string(), std::strerror(errno)));
+		warn(format("closedir {}: {}", path.string(), std::strerror(errno)));
 
 	std::ranges::sort(children);
 	return children;
 }
 
-void scan_path(const std::filesystem::path &path, const Options &opts,
-    std::optional<dev_t> root_device, std::vector<EntryMeta> &entries) {
+void scan_path(const fs::path &path, const Options &opts,
+    std::optional<dev_t> root_device, vector<EntryMeta> &entries) {
 	struct stat st {};
 	if (lstat(path.c_str(), &st) != 0) {
-		warn(std::format("lstat {}: {}", path.string(), std::strerror(errno)));
+		warn(format("lstat {}: {}", path.string(), std::strerror(errno)));
 		return;
 	}
 
@@ -219,17 +184,17 @@ void scan_path(const std::filesystem::path &path, const Options &opts,
 	if (!S_ISDIR(st.st_mode))
 		return;
 
-	for (const std::filesystem::path &child : sorted_children(path))
+	for (const fs::path &child : sorted_children(path))
 		scan_path(child, opts, root_device, entries);
 }
 
-std::vector<EntryMeta> prefetch_metadata(const Options &opts) {
-	std::vector<EntryMeta> entries;
-	for (const std::filesystem::path &source : opts.sources) {
-		std::filesystem::path path = normalized_path(source);
+vector<EntryMeta> prefetch_metadata(const Options &opts) {
+	vector<EntryMeta> entries;
+	for (const fs::path &source : opts.sources) {
+		fs::path path = normalized_path(source);
 		struct stat st {};
 		if (lstat(path.c_str(), &st) != 0)
-			fail(std::format("lstat {}: {}", path.string(), std::strerror(errno)));
+			fail(format("lstat {}: {}", path.string(), std::strerror(errno)));
 		scan_path(path, opts, st.st_dev, entries);
 	}
 	return entries;
@@ -241,9 +206,8 @@ void add_to_slice(SlicePlan &slice, std::size_t index, const EntryMeta &entry) {
 	slice.apparent_bytes += entry.apparent_bytes;
 }
 
-std::vector<SlicePlan> pack_slices(const std::vector<EntryMeta> &entries,
-    uint64_t slice_size) {
-	std::vector<SlicePlan> slices;
+vector<SlicePlan> pack_slices(const vector<EntryMeta> &entries, uint64_t slice_size) {
+	vector<SlicePlan> slices;
 	SlicePlan current;
 
 	for (std::size_t i = 0; i < entries.size(); ++i) {
@@ -262,21 +226,8 @@ std::vector<SlicePlan> pack_slices(const std::vector<EntryMeta> &entries,
 	return slices;
 }
 
-std::string human_bytes(uint64_t bytes) {
-	const char *units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
-	double value = static_cast<double>(bytes);
-	std::size_t unit = 0;
-	while (value >= 1024.0 && unit + 1 < std::size(units)) {
-		value /= 1024.0;
-		++unit;
-	}
-	if (unit == 0)
-		return std::format("{} B", bytes);
-	return std::format("{:.2f} {}", value, units[unit]);
-}
-
-void print_plan(const Options &opts, const std::vector<EntryMeta> &entries,
-    const std::vector<SlicePlan> &slices) {
+void print_plan(const Options &opts, const vector<EntryMeta> &entries,
+    const vector<SlicePlan> &slices) {
 	uint64_t total_disk = 0;
 	uint64_t total_apparent = 0;
 	for (const EntryMeta &entry : entries) {
@@ -284,23 +235,24 @@ void print_plan(const Options &opts, const std::vector<EntryMeta> &entries,
 		total_apparent += entry.apparent_bytes;
 	}
 
-	std::cout << std::format(
+	std::cout << format(
 	    "prefetched entries={} total_disk={} total_apparent={} target_slice={}\n",
-	    entries.size(), human_bytes(total_disk), human_bytes(total_apparent),
-	    human_bytes(opts.slice_size));
+	    entries.size(), neotape::humanize_number(total_disk),
+	    neotape::humanize_number(total_apparent), neotape::humanize_number(opts.slice_size));
 
 	for (std::size_t i = 0; i < slices.size(); ++i) {
 		const SlicePlan &slice = slices[i];
-		std::cout << std::format("slice {:06}: entries={} disk={} apparent={}\n",
-		    i + 1, slice.entry_indexes.size(), human_bytes(slice.disk_bytes),
-		    human_bytes(slice.apparent_bytes));
+		std::cout << format("slice {:06}: entries={} disk={} apparent={}\n",
+		    i + 1, slice.entry_indexes.size(),
+		    neotape::humanize_number(slice.disk_bytes),
+		    neotape::humanize_number(slice.apparent_bytes));
 		if (!opts.verbose)
 			continue;
 		for (std::size_t entry_index : slice.entry_indexes) {
 			const EntryMeta &entry = entries[entry_index];
-			std::cout << std::format("  {} disk={} apparent={} {}\n", entry.kind,
-			    human_bytes(entry.disk_bytes), human_bytes(entry.apparent_bytes),
-			    entry.path.generic_string());
+			std::cout << format("  {} disk={} apparent={} {}\n", entry.kind,
+			    neotape::humanize_number(entry.disk_bytes),
+			    neotape::humanize_number(entry.apparent_bytes), entry.path.generic_string());
 		}
 	}
 }
@@ -308,9 +260,13 @@ void print_plan(const Options &opts, const std::vector<EntryMeta> &entries,
 } // namespace
 
 int main(int argc, char **argv) {
-	Options opts = parse_args(argc, argv);
-	std::vector<EntryMeta> entries = prefetch_metadata(opts);
-	std::vector<SlicePlan> slices = pack_slices(entries, opts.slice_size);
-	print_plan(opts, entries, slices);
-	return 0;
+	try {
+		Options opts = parse_args(argc, argv);
+		vector<EntryMeta> entries = prefetch_metadata(opts);
+		vector<SlicePlan> slices = pack_slices(entries, opts.slice_size);
+		print_plan(opts, entries, slices);
+		return 0;
+	} catch (const std::exception &e) {
+		fail(e.what());
+	}
 }

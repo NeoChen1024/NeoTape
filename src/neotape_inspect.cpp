@@ -12,12 +12,18 @@
 
 namespace {
 
+namespace fs = std::filesystem;
+using std::format;
+using std::size_t;
+using std::string;
+using std::vector;
+
 struct Options {
-	std::filesystem::path spool_dir;
+	fs::path spool_dir;
 };
 
 struct InspectState {
-	std::string archive_uuid;
+	string archive_uuid;
 	uint32_t volume_block_size = 0;
 	uint64_t expected_volume_seq_num = 1;
 	uint64_t expected_slice_seq_num = 1;
@@ -28,13 +34,13 @@ struct InspectState {
 	bool slice_open = false;
 };
 
-[[noreturn]] void fail(const std::string &message) {
-	std::cerr << std::format("neotape-inspect: {}\n", message);
+[[noreturn]] void fail(const string &message) {
+	std::cerr << format("neotape-inspect: {}\n", message);
 	std::exit(1);
 }
 
 void usage(const char *prog) {
-	std::cerr << std::format("usage: {} <spool-dir>\n", prog);
+	std::cerr << format("usage: {} <spool-dir>\n", prog);
 }
 
 Options parse_args(int argc, char **argv) {
@@ -45,9 +51,9 @@ Options parse_args(int argc, char **argv) {
 	return Options{.spool_dir = argv[1]};
 }
 
-std::vector<std::filesystem::path> sorted_dirs(const std::filesystem::path &root) {
-	std::vector<std::filesystem::path> dirs;
-	for (const auto &entry : std::filesystem::directory_iterator(root)) {
+vector<fs::path> sorted_dirs(const fs::path &root) {
+	vector<fs::path> dirs;
+	for (const auto &entry : fs::directory_iterator(root)) {
 		if (entry.is_directory())
 			dirs.push_back(entry.path());
 	}
@@ -55,9 +61,9 @@ std::vector<std::filesystem::path> sorted_dirs(const std::filesystem::path &root
 	return dirs;
 }
 
-std::vector<std::filesystem::path> sorted_files(const std::filesystem::path &root) {
-	std::vector<std::filesystem::path> files;
-	for (const auto &entry : std::filesystem::directory_iterator(root)) {
+vector<fs::path> sorted_files(const fs::path &root) {
+	vector<fs::path> files;
+	for (const auto &entry : fs::directory_iterator(root)) {
 		if (entry.is_regular_file())
 			files.push_back(entry.path());
 	}
@@ -65,73 +71,72 @@ std::vector<std::filesystem::path> sorted_files(const std::filesystem::path &roo
 	return files;
 }
 
-std::vector<uint8_t> read_file(const std::filesystem::path &path) {
+vector<uint8_t> read_file(const fs::path &path) {
 	std::ifstream in(path, std::ios::binary);
 	if (!in)
-		fail(std::format("open {}", path.string()));
-	return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)),
+		fail(format("open {}", path.string()));
+	return vector<uint8_t>((std::istreambuf_iterator<char>(in)),
 	    std::istreambuf_iterator<char>());
 }
 
-void require(bool condition, const std::string &message) {
+void require(bool condition, const string &message) {
 	if (!condition)
 		fail(message);
 }
 
-void inspect_volume(const std::filesystem::path &path, InspectState &state,
-    const neotape::VolumeHeader &header, std::size_t file_size) {
+void inspect_volume(const fs::path &path, InspectState &state,
+    const neotape::VolumeHeader &header, size_t file_size) {
 	require(header.volume_seq_num == state.expected_volume_seq_num,
-	    std::format("{}: expected volume {}, got {}", path.string(),
+	    format("{}: expected volume {}, got {}", path.string(),
 		state.expected_volume_seq_num, header.volume_seq_num));
 	require(neotape::valid_block_size(header.volume_block_size),
-	    std::format("{}: invalid volume block size", path.string()));
+	    format("{}: invalid volume block size", path.string()));
 	require(file_size == header.volume_block_size,
-	    std::format("{}: volume header file size does not match block size",
+	    format("{}: volume header file size does not match block size",
 		path.string()));
 	if (state.archive_uuid.empty()) {
 		state.archive_uuid = header.archive_uuid;
 		state.volume_block_size = header.volume_block_size;
 	} else {
 		require(header.archive_uuid == state.archive_uuid,
-		    std::format("{}: archive uuid mismatch", path.string()));
+		    format("{}: archive uuid mismatch", path.string()));
 		require(header.volume_block_size == state.volume_block_size,
-		    std::format("{}: volume block size changed", path.string()));
+		    format("{}: volume block size changed", path.string()));
 	}
-	std::cout << std::format("{}: volume seq={} block={} archive={}\n",
+	std::cout << format("{}: volume seq={} block={} archive={}\n",
 	    path.string(), header.volume_seq_num, header.volume_block_size,
 	    header.archive_uuid);
 	++state.expected_volume_seq_num;
 }
 
-void verify_zero_padding(const std::filesystem::path &path,
-    const std::vector<uint8_t> &bytes, std::size_t begin) {
-	for (std::size_t i = begin; i < bytes.size(); ++i) {
+void verify_zero_padding(const fs::path &path, const vector<uint8_t> &bytes,
+    size_t begin) {
+	for (size_t i = begin; i < bytes.size(); ++i) {
 		if (bytes[i] != 0)
-			fail(std::format("{}: non-zero padding at byte {}", path.string(), i));
+			fail(format("{}: non-zero padding at byte {}", path.string(), i));
 	}
 }
 
-void inspect_frame(const std::filesystem::path &path, InspectState &state,
-    const neotape::FrameHeader &header, const std::vector<uint8_t> &bytes) {
+void inspect_frame(const fs::path &path, InspectState &state,
+    const neotape::FrameHeader &header, const vector<uint8_t> &bytes) {
 	require(header.archive_uuid == state.archive_uuid,
-	    std::format("{}: archive uuid mismatch", path.string()));
+	    format("{}: archive uuid mismatch", path.string()));
 	require(header.volume_block_size == state.volume_block_size,
-	    std::format("{}: block size mismatch", path.string()));
+	    format("{}: block size mismatch", path.string()));
 	require(bytes.size() == header.volume_block_size,
-	    std::format("{}: frame record size does not match block size", path.string()));
+	    format("{}: frame record size does not match block size", path.string()));
 	require(header.frame_payload_size <= header.volume_block_size - neotape::fixed_header_size,
-	    std::format("{}: frame payload too large", path.string()));
+	    format("{}: frame payload too large", path.string()));
 	require(header.global_frame_seq_num == state.expected_global_frame_seq_num,
-	    std::format("{}: expected global frame {}, got {}", path.string(),
+	    format("{}: expected global frame {}, got {}", path.string(),
 		state.expected_global_frame_seq_num, header.global_frame_seq_num));
 
-	std::size_t payload_begin = neotape::fixed_header_size;
-	std::size_t payload_end =
-	    payload_begin + static_cast<std::size_t>(header.frame_payload_size);
+	size_t payload_begin = neotape::fixed_header_size;
+	size_t payload_end = payload_begin + static_cast<size_t>(header.frame_payload_size);
 	neotape::Hash payload_hash =
 	    neotape::blake3_hash(bytes.data() + payload_begin, header.frame_payload_size);
 	require(payload_hash == header.frame_payload_blake3,
-	    std::format("{}: frame payload BLAKE3 mismatch", path.string()));
+	    format("{}: frame payload BLAKE3 mismatch", path.string()));
 	verify_zero_padding(path, bytes, payload_end);
 
 	bool start = (header.flags & neotape::frame_flag_start) != 0;
@@ -139,17 +144,17 @@ void inspect_frame(const std::filesystem::path &path, InspectState &state,
 	if (header.frame_content_type == neotape::FrameContentType::slice_content) {
 		if (start) {
 			require(!state.slice_open,
-			    std::format("{}: new slice starts before previous slice ended",
+			    format("{}: new slice starts before previous slice ended",
 				path.string()));
 			require(header.logical_slice_seq_num == state.expected_slice_seq_num,
-			    std::format("{}: expected slice {}, got {}", path.string(),
+			    format("{}: expected slice {}, got {}", path.string(),
 				state.expected_slice_seq_num, header.logical_slice_seq_num));
 			blake3_hasher_init(&state.slice_hasher);
 			state.slice_size = 0;
 			state.slice_open = true;
 		}
 		require(state.slice_open,
-		    std::format("{}: content frame without open slice", path.string()));
+		    format("{}: content frame without open slice", path.string()));
 		blake3_hasher_update(&state.slice_hasher, bytes.data() + payload_begin,
 		    header.frame_payload_size);
 		state.slice_size += header.frame_payload_size;
@@ -158,15 +163,15 @@ void inspect_frame(const std::filesystem::path &path, InspectState &state,
 			blake3_hasher_finalize(&state.slice_hasher, slice_hash.data(),
 			    slice_hash.size());
 			require(header.slice_content_size == state.slice_size,
-			    std::format("{}: slice size mismatch", path.string()));
+			    format("{}: slice size mismatch", path.string()));
 			require(slice_hash == header.slice_content_blake3,
-			    std::format("{}: slice BLAKE3 mismatch", path.string()));
+			    format("{}: slice BLAKE3 mismatch", path.string()));
 			state.slice_open = false;
 			++state.expected_slice_seq_num;
 		}
 	}
 
-	std::cout << std::format(
+	std::cout << format(
 	    "{}: frame global={} slice={} within={} payload={} type={} flags=0x{:04x}\n",
 	    path.string(), header.global_frame_seq_num, header.logical_slice_seq_num,
 	    header.frame_seq_num_within_slice, header.frame_payload_size,
@@ -174,50 +179,50 @@ void inspect_frame(const std::filesystem::path &path, InspectState &state,
 	++state.expected_global_frame_seq_num;
 }
 
-void inspect_archive_end(const std::filesystem::path &path, InspectState &state,
-    const neotape::ArchiveEndHeader &header, std::size_t file_size) {
+void inspect_archive_end(const fs::path &path, InspectState &state,
+    const neotape::ArchiveEndHeader &header, size_t file_size) {
 	require(header.archive_uuid == state.archive_uuid,
-	    std::format("{}: archive uuid mismatch", path.string()));
+	    format("{}: archive uuid mismatch", path.string()));
 	require(header.volume_block_size == state.volume_block_size,
-	    std::format("{}: block size mismatch", path.string()));
+	    format("{}: block size mismatch", path.string()));
 	require(file_size == header.volume_block_size,
-	    std::format("{}: archive end file size does not match block size",
+	    format("{}: archive end file size does not match block size",
 		path.string()));
-	require(!state.slice_open, std::format("{}: archive ended with open slice", path.string()));
+	require(!state.slice_open, format("{}: archive ended with open slice", path.string()));
 	require((header.flags & neotape::archive_end_flag_clean_end) != 0,
-	    std::format("{}: CLEAN_END flag is not set", path.string()));
+	    format("{}: CLEAN_END flag is not set", path.string()));
 	require(header.last_logical_slice_seq_num + 1 == state.expected_slice_seq_num,
-	    std::format("{}: last slice sequence mismatch", path.string()));
+	    format("{}: last slice sequence mismatch", path.string()));
 	require(header.last_global_frame_seq_num + 1 == state.expected_global_frame_seq_num,
-	    std::format("{}: last frame sequence mismatch", path.string()));
-	std::cout << std::format("{}: archive_end last_slice={} last_frame={}\n",
+	    format("{}: last frame sequence mismatch", path.string()));
+	std::cout << format("{}: archive_end last_slice={} last_frame={}\n",
 	    path.string(), header.last_logical_slice_seq_num,
 	    header.last_global_frame_seq_num);
 	state.saw_archive_end = true;
 }
 
-void inspect_file(const std::filesystem::path &path, InspectState &state) {
-	std::vector<uint8_t> bytes = read_file(path);
+void inspect_file(const fs::path &path, InspectState &state) {
+	vector<uint8_t> bytes = read_file(path);
 	require(bytes.size() >= neotape::fixed_header_size,
-	    std::format("{}: shorter than fixed header", path.string()));
+	    format("{}: shorter than fixed header", path.string()));
 	neotape::ParsedHeader parsed =
 	    neotape::parse_fixed_header(bytes.data(), bytes.size());
 	if (parsed.volume)
 		inspect_volume(path, state, *parsed.volume, bytes.size());
 	else if (parsed.frame) {
 		require(state.volume_block_size != 0,
-		    std::format("{}: frame appears before volume header", path.string()));
+		    format("{}: frame appears before volume header", path.string()));
 		require(bytes.size() % state.volume_block_size == 0,
-		    std::format("{}: slice file size is not a multiple of block size",
+		    format("{}: slice file size is not a multiple of block size",
 			path.string()));
-		for (std::size_t offset = 0; offset < bytes.size();
+		for (size_t offset = 0; offset < bytes.size();
 		     offset += state.volume_block_size) {
-			std::vector<uint8_t> record(bytes.begin() + static_cast<std::ptrdiff_t>(offset),
+			vector<uint8_t> record(bytes.begin() + static_cast<std::ptrdiff_t>(offset),
 			    bytes.begin() + static_cast<std::ptrdiff_t>(offset + state.volume_block_size));
 			neotape::ParsedHeader frame =
 			    neotape::parse_fixed_header(record.data(), record.size());
 			require(frame.frame.has_value(),
-			    std::format("{}: non-frame record inside slice file", path.string()));
+			    format("{}: non-frame record inside slice file", path.string()));
 			inspect_frame(path, state, *frame.frame, record);
 		}
 	} else if (parsed.archive_end)
@@ -225,12 +230,12 @@ void inspect_file(const std::filesystem::path &path, InspectState &state) {
 }
 
 void inspect_spool(const Options &opts) {
-	require(std::filesystem::is_directory(opts.spool_dir),
-	    std::format("{} is not a directory", opts.spool_dir.string()));
+	require(fs::is_directory(opts.spool_dir),
+	    format("{} is not a directory", opts.spool_dir.string()));
 
 	InspectState state;
-	for (const std::filesystem::path &volume_dir : sorted_dirs(opts.spool_dir)) {
-		for (const std::filesystem::path &file : sorted_files(volume_dir)) {
+	for (const fs::path &volume_dir : sorted_dirs(opts.spool_dir)) {
+		for (const fs::path &file : sorted_files(volume_dir)) {
 			inspect_file(file, state);
 			if (state.saw_archive_end)
 				break;
@@ -239,7 +244,7 @@ void inspect_spool(const Options &opts) {
 			break;
 	}
 	require(state.saw_archive_end, "missing Archive End Header");
-	std::cout << std::format("ok: archive {} volumes={} slices={} frames={}\n",
+	std::cout << format("ok: archive {} volumes={} slices={} frames={}\n",
 	    state.archive_uuid, state.expected_volume_seq_num - 1,
 	    state.expected_slice_seq_num - 1, state.expected_global_frame_seq_num - 1);
 }
