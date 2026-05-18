@@ -37,6 +37,15 @@ NeoTape\0
 Header type is distinguished by each header's type field, not by a different
 magic value.
 
+## Field Packing
+
+All fields in every NeoTape fixed header MUST be packed contiguously — no
+padding, alignment, or gap bytes between fields. This is equivalent to a C or
+C++ packed struct (`__attribute__((packed))`).
+
+Field sizes in the tables are exact and cumulative: the byte offset of a field
+equals the sum of all preceding field sizes in that header's table.
+
 ## Common Header Prefix
 
 Every NeoTape fixed header MUST begin with the same three fields in this exact
