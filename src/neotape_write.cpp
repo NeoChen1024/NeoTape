@@ -40,6 +40,8 @@ struct Options {
 	bool init_mode = false;
 	bool init_if_blank = false;
 	bool force_append = false;
+	string payload_profile = "raw";
+	vector<string> pax_sources;
 };
 
 struct WriterState {
@@ -87,10 +89,13 @@ void usage(const char *prog) {
 	    "\n"
 	    "Common options:\n"
 	    "  -i <input>        Payload input file (default: stdin)\n"
+	    "  --payload-profile <profile>  raw (default) or pax\n"
 	    "  --archive-name <name>\n"
 	    "  --volume-block-size <bytes>\n"
 	    "  --slice-size <bytes>\n"
-	    "  --virtual-tape-size <bytes>\n",
+	    "  --virtual-tape-size <bytes>\n"
+	    "\n"
+	    "For --payload-profile=pax, provide source paths as positional args.\n",
 	    prog, prog);
 }
 
@@ -101,6 +106,7 @@ Options parse_args(int argc, char **argv) {
 		{"volume-block-size",   required_argument, nullptr, 'b'},
 		{"slice-size",          required_argument, nullptr, 's'},
 		{"virtual-tape-size", required_argument, nullptr, 'z'},
+		{"payload-profile",     required_argument, nullptr, 259},
 		{"init",                no_argument,       nullptr, 256},
 		{"init-if-blank",       no_argument,       nullptr, 257},
 		{"force-append",        no_argument,       nullptr, 258},
@@ -138,8 +144,18 @@ Options parse_args(int argc, char **argv) {
 		case 256: opts.init_mode = true; break;
 		case 257: opts.init_if_blank = true; break;
 		case 258: opts.force_append = true; break;
+		case 259: opts.payload_profile = optarg; break;
 		case '?': std::exit(2);
 		}
+	}
+
+	if (opts.payload_profile == "pax") {
+		while (optind < argc)
+			opts.pax_sources.emplace_back(argv[optind++]);
+		if (opts.pax_sources.empty())
+			fail("--payload-profile=pax requires source paths as positional args");
+	} else if (opts.payload_profile != "raw") {
+		fail("unsupported payload profile (use raw or pax)");
 	}
 
 	if (!saw_target && opts.output_dir.empty() && opts.tape_device.empty())
@@ -418,11 +434,24 @@ TapeDirInfo scan_tape_dir(const fs::path &dir) {
 }
 
 void write_spool_archive(const Options &opts) {
-	FILE *input = stdin;
-	if (opts.input != "-") {
+	FILE *input = nullptr;
+	bool use_pclose = false;
+
+	if (opts.payload_profile == "pax") {
+		fs::path pax_bin = fs::read_symlink("/proc/self/exe").parent_path() / "pax";
+		string cmd = pax_bin.generic_string() + " -f -";
+		for (auto &src : opts.pax_sources)
+			cmd += " " + src;
+		input = popen(cmd.c_str(), "r");
+		if (input == nullptr)
+			fail_errno(string("popen pax"));
+		use_pclose = true;
+	} else if (opts.input != "-") {
 		input = std::fopen(opts.input.c_str(), "rb");
 		if (input == nullptr)
 			fail_errno(string("open ") + opts.input);
+	} else {
+		input = stdin;
 	}
 
 	WriterState state;
@@ -496,8 +525,10 @@ void write_spool_archive(const Options &opts) {
 		}
 	}
 
-	if (input != stdin && std::fclose(input) != 0)
-		fail_errno(string("close ") + opts.input);
+	if (input && use_pclose)
+		pclose(input);
+	else if (input && input != stdin)
+		std::fclose(input);
 
 	if (have_pending)
 		write_content_frame(state, pending, true);
@@ -522,6 +553,8 @@ int main(int argc, char **argv) {
 			tape_opts.init_mode = opts.init_mode;
 			tape_opts.init_if_blank = opts.init_if_blank;
 			tape_opts.force_append = opts.force_append;
+			tape_opts.payload_profile = opts.payload_profile;
+			tape_opts.pax_sources = std::move(opts.pax_sources);
 			mt::write_tape_archive(tape_opts);
 		} else {
 			write_spool_archive(opts);

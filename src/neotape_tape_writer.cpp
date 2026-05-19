@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <iostream>
 #include <string>
@@ -25,6 +26,8 @@ using std::string_view;
 using std::vector;
 
 namespace {
+
+namespace fs = std::filesystem;
 
 struct WriterState {
     TapeWriterOptions opts;
@@ -202,10 +205,22 @@ void write_tape_archive(const TapeWriterOptions &opts) {
     write_volume_header(state);
 
     // Main framing loop
-    FILE *input = stdin;
-    if (opts.input != "-") {
+    FILE *input = nullptr;
+    bool use_pclose = false;
+
+    if (opts.payload_profile == "pax") {
+        fs::path pax_bin = fs::read_symlink("/proc/self/exe").parent_path() / "pax";
+        string cmd = pax_bin.generic_string() + " -f -";
+        for (auto &src : opts.pax_sources)
+            cmd += " " + src;
+        input = ::popen(cmd.c_str(), "r");
+        if (!input) fail(format("popen pax: {}", std::strerror(errno)));
+        use_pclose = true;
+    } else if (opts.input != "-") {
         input = std::fopen(opts.input.c_str(), "rb");
         if (!input) fail(format("open {}: {}", opts.input, std::strerror(errno)));
+    } else {
+        input = stdin;
     }
 
     size_t frame_payload_capacity = opts.volume_block_size - neotape::fixed_header_size;
@@ -252,8 +267,10 @@ void write_tape_archive(const TapeWriterOptions &opts) {
         }
     }
 
-    if (input != stdin && std::fclose(input) != 0)
-        fail(format("close input: {}", std::strerror(errno)));
+    if (input && use_pclose)
+        ::pclose(input);
+    else if (input && input != stdin)
+        std::fclose(input);
 
     if (have_pending)
         write_content_frame(state, pending, true);
