@@ -30,6 +30,42 @@ Open questions:
 * the spool directory structure can be used for making ISO images or even direct burning to optical media
 
 
+## Multi-Channel Frame Content Types
+
+Idea: allow arbitrary `frame_content_type` values beyond the current
+`SLICE_CONTENT` and `SLICE_METADATA`, interleaved within the same logical
+slice tape file.  Since each Frame already carries a global
+`frame_seq_num_within_slice`, different content type streams can share the
+same filemark boundary while remaining independently identifiable.
+
+This could support use cases such as:
+
+- Interleaving per-Frame payload hashes or Merkle tree nodes alongside
+  SLICE_CONTENT data, enabling real-time integrity verification without a
+  separate metadata pass.
+- Multiplexing multiple logical payload channels (e.g. separate streams for
+  data, parity, inline catalog) within a single slice, with each channel
+  identified by its own `frame_content_type` value.
+- Embedding diagnostics, progress snapshots, or writer heartbeats at
+  predictable Frame positions without consuming SLICE_CONTENT payload bytes.
+- A dedicated FEC (Forward Error Correction) channel: parity or Reed-Solomon
+  recovery data interleaved as a separate `frame_content_type`, enabling the
+  reader to repair bitrot within a slice without relying on an external
+  recovery tool or a second archive pass.
+
+Resolution (May 2026):
+
+1. New `frame_content_type` values are allocated by future versions of this
+   specification. No runtime registration or namespace scheme is needed.
+2. Fully arbitrary mixing is allowed. The existing
+   `frame_seq_num_within_slice` already provides unambiguous ordering, so
+   content-type groups need not be contiguous.
+3. A reader that does not recognize a new `frame_content_type` will fail
+   before reaching it: the Volume Header declares `payload_profile` and
+   `header_version`, and an unrecognized content type implies a format
+   version the reader was not built for. Rejection at volume-open time is
+   the correct behavior.
+
 ## Strict Data Validation
 
 Idea: on read, buffer the entire Frame payload in memory and verify
