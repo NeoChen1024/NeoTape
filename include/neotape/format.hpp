@@ -42,6 +42,19 @@ inline constexpr std::size_t fhdr_flags                      = 381;
 inline constexpr std::size_t fhdr_slice_content_size         = 383;
 inline constexpr std::size_t fhdr_slice_content_blake3       = 391;
 
+// Medium header specific
+inline constexpr std::size_t mhdr_medium_header_block_size  = 10;
+inline constexpr std::size_t mhdr_medium_uuid               = 14;
+inline constexpr std::size_t mhdr_medium_label              = 51;
+inline constexpr std::size_t mhdr_initialized_at_utc        = 307;
+inline constexpr std::size_t mhdr_medium_header_block_count = 327;
+inline constexpr std::size_t mhdr_flags                     = 329;
+inline constexpr std::size_t mhdr_created_by_implementation  = 331;
+inline constexpr std::size_t mhdr_created_by_build_id       = 395;
+inline constexpr std::size_t mhdr_metadata_bundle_size      = 459;
+inline constexpr std::size_t mhdr_metadata_bundle_blake3    = 463;
+inline constexpr std::size_t mhdr_reserved                  = 495;
+
 // Archive end header specific
 inline constexpr std::size_t ae_last_logical_slice_seq_num = 316;
 inline constexpr std::size_t ae_last_global_frame_seq_num  = 324;
@@ -89,6 +102,19 @@ struct VolumeHeader {
 	uint16_t flags = 0;
 };
 
+struct MediumHeader {
+	std::string medium_uuid;
+	std::string medium_label;
+	std::string initialized_at_utc;
+	uint32_t medium_header_block_size = 65536;
+	uint16_t medium_header_block_count = 1;
+	uint16_t flags = 0;
+	std::string created_by_implementation;
+	std::string created_by_build_id;
+	uint32_t metadata_bundle_size = 0;
+	Hash metadata_bundle_blake3{};
+};
+
 struct FrameHeader {
 	uint32_t volume_block_size = 0;
 	std::string archive_uuid;
@@ -128,9 +154,11 @@ struct ParsedHeader {
 	std::optional<VolumeHeader> volume;
 	std::optional<FrameHeader> frame;
 	std::optional<ArchiveEndHeader> archive_end;
+	std::optional<MediumHeader> medium;
 };
 
 HeaderBytes serialize_volume_header(const VolumeHeader &header);
+HeaderBytes serialize_medium_header(const MediumHeader &header);
 HeaderBytes serialize_frame_header(const FrameHeader &header);
 HeaderBytes serialize_archive_end_header(const ArchiveEndHeader &header);
 ParsedHeader parse_fixed_header(const uint8_t *data, std::size_t size);

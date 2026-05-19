@@ -158,6 +158,21 @@ ArchiveEndHeader parse_archive_end(const uint8_t *data) {
 	return header;
 }
 
+MediumHeader parse_medium(const uint8_t *data) {
+	MediumHeader header;
+	header.medium_uuid = get_fixed_string(data, mhdr_medium_uuid, nt_uuid_size);
+	header.medium_label = get_fixed_string(data, mhdr_medium_label, nt_name_size);
+	header.initialized_at_utc = get_fixed_string(data, mhdr_initialized_at_utc, nt_time_size);
+	header.medium_header_block_size = get_u32(data, mhdr_medium_header_block_size);
+	header.medium_header_block_count = get_u16(data, mhdr_medium_header_block_count);
+	header.flags = get_u16(data, mhdr_flags);
+	header.created_by_implementation = get_fixed_string(data, mhdr_created_by_implementation, ident64_size);
+	header.created_by_build_id = get_fixed_string(data, mhdr_created_by_build_id, ident64_size);
+	header.metadata_bundle_size = get_u32(data, mhdr_metadata_bundle_size);
+	header.metadata_bundle_blake3 = get_hash(data, mhdr_metadata_bundle_blake3);
+	return header;
+}
+
 } // namespace
 
 // ====================== Header Serializers =======================
@@ -171,6 +186,22 @@ HeaderBytes serialize_volume_header(const VolumeHeader &header) {
 	bytes[hdr_payload_profile] = static_cast<uint8_t>(header.payload_profile);
 	put_fixed_string(bytes, vhdr_write_at_utc, nt_time_size, header.volume_write_at_utc);
 	put_u16(bytes, vhdr_flags, header.flags);
+	finish_crc(bytes);
+	return bytes;
+}
+
+HeaderBytes serialize_medium_header(const MediumHeader &header) {
+	HeaderBytes bytes = make_header(HeaderType::medium);
+	put_u32(bytes, mhdr_medium_header_block_size, header.medium_header_block_size);
+	put_fixed_string(bytes, mhdr_medium_uuid, nt_uuid_size, header.medium_uuid);
+	put_fixed_string(bytes, mhdr_medium_label, nt_name_size, header.medium_label);
+	put_fixed_string(bytes, mhdr_initialized_at_utc, nt_time_size, header.initialized_at_utc);
+	put_u16(bytes, mhdr_medium_header_block_count, header.medium_header_block_count);
+	put_u16(bytes, mhdr_flags, header.flags);
+	put_fixed_string(bytes, mhdr_created_by_implementation, ident64_size, header.created_by_implementation);
+	put_fixed_string(bytes, mhdr_created_by_build_id, ident64_size, header.created_by_build_id);
+	put_u32(bytes, mhdr_metadata_bundle_size, header.metadata_bundle_size);
+	put_bytes(bytes, mhdr_metadata_bundle_blake3, header.metadata_bundle_blake3);
 	finish_crc(bytes);
 	return bytes;
 }
@@ -227,6 +258,7 @@ ParsedHeader parse_fixed_header(const uint8_t *data, std::size_t size) {
 
 	switch (parsed.type) {
 	case HeaderType::medium:
+		parsed.medium = parse_medium(data);
 		break;
 	case HeaderType::volume:
 		parsed.volume = parse_volume(data);
