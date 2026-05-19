@@ -6,6 +6,8 @@ The `neotape-plan` tool emits a machine-readable metadata stream describing
 how source filesystem trees should be packed into slices. Downstream tools
 consume this stream to produce pax slices that match the plan.
 
+**Required for resumable archive creation.**
+
 ## Record Format
 
 Every record is a single line terminated by `\0\n` (NUL byte followed by
@@ -19,8 +21,8 @@ decimal digit are **entry records**; all other records are **directives**.
 
 ### `/chdir/<path>\0\n`
 
-Change working directory before processing subsequent sources. The `<path>` is
-an absolute filesystem path.
+Changes the working directory before processing subsequent sources. The `<path>` is
+a filesystem path to a directory or symlink to a directory (resolved when there's trailing `/`).
 
 This directive is emitted whenever the user specified `-C <dir>` on the command
 line.
@@ -32,18 +34,18 @@ effect for all subsequent entry records.
 
 An entry record. Fields:
 
-| Field                 | Description                                                             |
-|-----------------------|-------------------------------------------------------------------------|
-| `<slice>`             | Slice number, zero-padded to 6 digits, 1-based.                        |
-| `<file_num>`          | Index within the slice, zero-padded to 6 digits, 0-based.              |
-| `<kind>`              | File type: `f` regular, `d` directory, `l` symlink, `c` char, `b` block, `p` fifo, `s` socket. |
-| `<size>`              | Apparent file size in bytes (decimal).                                  |
-| `<filepath>`          | Archive path (relative, may include the srcdir prefix, no leading `/`). |
+| Field          | Description                                                                                                 |
+| -------------- | ----------------------------------------------------------------------------------------------------------- |
+| `<slice>`    | Slice number, not zero-padded, 0-based.                                                                     |
+| `<file_num>` | Index within the slice, not zero-padded, 0-based.                                                           |
+| `<kind>`     | File type:`f` regular, `d` directory, `l` symlink, `c` char, `b` block, `p` fifo, `s` socket. |
+| `<size>`     | Apparent file size in bytes (decimal).                                                                      |
+| `<filepath>` | Archive path (relative, may include the source-directory prefix, no leading `/`).                         |
 
 ## Example
 
 ```
 /chdir//home/user\0\n
-/000001/000000/f/1234/src/main.c\0\n
-/000001/000001/f/5678/docs/readme.txt\0\n
+/0/0/f/1234/src/main.c\0\n
+/0/1/f/5678/docs/readme.txt\0\n
 ```
