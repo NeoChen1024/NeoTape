@@ -4,17 +4,22 @@ A seekable multi-volume length-framed payload transport container designed for L
 
 NeoTape wraps a payload byte stream (typically a POSIX pax/tar archive) in a lightweight framing layer that provides per-slice and per-Frame structure, integrity verification via BLAKE3, and multi-volume continuation. The on-tape format uses LTO filemarks at logical-slice boundaries, enabling native tape seek to independently verifiable checkpoint units without requiring per-Frame filemarks.
 
-This is a design-stage project. The current implementation is a **Phase 0 pax writer** — a libarchive-based CLI that produces a plain POSIX pax-format tar stream. The NeoTape framing layer (volume headers, Frame Headers, slice metadata Frames, catalog, tape backend) exists only as a specification.
+This is a design-stage project. The current implementation includes a
+**Phase 0 pax writer** (`bin/pax`, `src/pax.cpp`) and a **Phase 3.5
+multi-threaded pax writer** (`bin/mt-pax`, `src/mt-pax.cpp`) — both produce
+plain POSIX pax-format tar streams. The NeoTape framing layer (volume headers,
+Frame Headers, slice metadata Frames, catalog, tape backend) exists only as a
+specification.
 
 ## Specification Status
 
-The active format specification lives under `docs/spec/`. When a topic is
-defined in `docs/spec/`, that definition supersedes any older or conflicting
-text in `docs/RFC_Draft.md`.
+The active format specification lives under [`docs/spec/`](docs/spec/). When a topic is
+defined in [`docs/spec/`](docs/spec/), that definition supersedes any older or conflicting
+text in [`docs/RFC_Draft.md`](docs/RFC_Draft.md).
 
-`docs/RFC_Draft.md` remains useful as background design material and historical
+[`docs/RFC_Draft.md`](docs/RFC_Draft.md) remains useful as background design material and historical
 draft text, but it is no longer the authoritative source for sections that have
-been split into `docs/spec/`.
+been split into [`docs/spec/`](docs/spec/).
 
 ## Hierarchy
 
@@ -45,8 +50,10 @@ All records in an archive volume use a fixed **volume_block_size** declared in t
 | 8     | Medium Header & self-description   | Spec   |
 | 9     | Filesystem-native payload profiles | Spec   |
 
-See `docs/spec/` for the active format specification, `docs/RFC_Draft.md` for
-background draft material, and `docs/ROADMAP.md` for the implementation plan.
+See [`docs/spec/`](docs/spec/) for the active format specification, [`docs/RFC_Draft.md`](docs/RFC_Draft.md) for
+background draft material, [`docs/ROADMAP.md`](docs/ROADMAP.md) for the implementation plan, and
+[`docs/implementation/`](docs/implementation/) for implementation-specific notes (mt-pax architecture,
+EOA suppression, build notes).
 
 ## Dependencies
 
@@ -67,29 +74,55 @@ git submodule update --init --recursive
 make
 ```
 
-Produces `bin/pax`.
+Produces `bin/pax` (Phase 0) and `bin/mt-pax` (Phase 3.5).
 
 ## Usage
 
+### bin/pax (Phase 0, single-threaded)
+
 ```sh
-bin/pax -f <output-file|-> [-v|-vv] [-x] <path> [path ...]
+bin/pax -f <output-file|-> [-v|-vv] [-x] [-C <dir>] <path> [path ...]
 ```
 
 - `-f`  Output file path, or `-` for stdout
 - `-v`  Verbose output (file listing)
 - `-vv` Very verbose output (detailed metadata per entry)
 - `-x`  Stay within one file system (do not cross mount points)
+- `-C`  Change directory before walking
 
 All diagnostics are written to stderr. Stdout contains pure archive payload bytes. On completion, a BLAKE3 digest of the output is printed to stderr.
+
+### bin/mt-pax (Phase 3.5, multi-threaded)
+
+```sh
+bin/mt-pax -f <output-file|-> [-v|-vv] [-x] [-C <dir>]
+           [-P <buffer-percent>] [--io-thread <N>]
+           [--output-buffer-size <bytes>] <path> [path ...]
+```
+
+All `bin/pax` options plus:
+
+- `--io-thread <N>`  Total I/O threads (default 1). N=1 uses no worker threads;
+  N>1 spawns N-1 workers for small files.
+- `--output-buffer-size <bytes>`  Internal output buffer size (default 64 MB).
+- `-P <percent>`  Waterline write restart threshold (0-100). When non-zero the
+  output thread waits until the buffer reaches at least this full before
+  draining, useful for sequential writes on HDD/tape.
 
 ### Examples
 
 ```sh
-# Pack a directory into a tar file
+# Pack a directory (single-threaded)
 bin/pax -f backup.tar src/
 
 # Stream to stdout and pipe to bsdtar
 bin/pax -f - src/ | bsdtar -tvf -
+
+# Multi-threaded with 4 I/O threads
+bin/mt-pax -f backup.tar --io-thread 4 src/
+
+# Multi-threaded with output buffer tuning for tape
+bin/mt-pax -f /dev/nst0 --io-thread 4 --output-buffer-size 256M -P 50 src/
 ```
 
 ## Payload Profiles
@@ -100,4 +133,4 @@ Other profile types are possible without changing the NeoTape framing layer. Pla
 
 ## License
 
-GNU General Public License v3.0 or later. See `LICENSE`.
+GNU General Public License v3.0 or later. See [`LICENSE`](LICENSE).

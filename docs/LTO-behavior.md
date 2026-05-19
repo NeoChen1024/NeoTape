@@ -38,10 +38,10 @@ For all tested record sizes:
 Observed test sizes:
 
 | `volume_block_size` | Successful complete writes | Failed writes | Positive short writes | Valid Frames read back | Invalid or partial reads |
-| ------------------- | --------------------------: | ------------: | --------------------: | ---------------------: | -----------------------: |
-| 64 KiB              | 486149                      | 33            | 0                     | 486149                 | 0                        |
-| 1 MiB               | 33164                       | 33            | 0                     | 33164                  | 0                        |
-| 4 MiB               | 8713                        | 33            | 0                     | 8713                   | 0                        |
+| --------------------- | -------------------------: | ------------: | --------------------: | ---------------------: | -----------------------: |
+| 64 KiB                |                     486149 |            33 |                     0 |                 486149 |                        0 |
+| 1 MiB                 |                      33164 |            33 |                     0 |                  33164 |                        0 |
+| 4 MiB                 |                       8713 |            33 |                     0 |                   8713 |                        0 |
 
 These results support using a complete NeoTape Frame record as the smallest
 writer commit unit. However, NeoTape MUST NOT rely on an unconditional hardware
@@ -126,3 +126,9 @@ continue writing ordinary content Frames to the current volume. It MUST enter
 volume-change handling and resume with the first uncommitted Frame on the next
 volume.
 ```
+
+
+## Additional Notes:
+
+Tested native capacity of non-partitioned LTO-5 tapes:
+`partition number: 0, partition record data counter [MB]: 1541438`

@@ -31,20 +31,20 @@ docs/
     02-volume-header.md
     03-frame-header.md
     04-archive-end-header.md
+    05-spool-dir.md
     06-volume-layout.md
     07-frames-and-slices.md
-    08-continuation.md
-    09-payload-profiles.md
-    10-reader-state-machine.md
-    11-error-handling.md
-    12-security.md
-    13-future-extensions.md
+    08-payload-profiles.md
+    09-reader-state-machine.md
+    10-error-handling.md
+    11-security.md
+    12-future-extensions.md
     appendix-layout-examples.md
     appendix-cli.md
     open-questions.md
 
   implementation/
-    phase-0-pax-writer.md
+    phase-3.5-mt-pax-writer.md
     phase-1-header-layout.md
     build-and-dependencies.md
     libarchive-pax-notes.md
