@@ -295,6 +295,8 @@ std::string payload_profile_name(PayloadProfile profile) {
 	switch (profile) {
 	case PayloadProfile::raw:
 		return "raw";
+	case PayloadProfile::pax:
+		return "pax";
 	}
 	return "unknown";
 }

@@ -41,7 +41,6 @@ struct Options {
 	bool init_if_blank = false;
 	bool force_append = false;
 	string payload_profile = "raw";
-	vector<string> pax_sources;
 };
 
 struct WriterState {
@@ -149,14 +148,8 @@ Options parse_args(int argc, char **argv) {
 		}
 	}
 
-	if (opts.payload_profile == "pax") {
-		while (optind < argc)
-			opts.pax_sources.emplace_back(argv[optind++]);
-		if (opts.pax_sources.empty())
-			fail("--payload-profile=pax requires source paths as positional args");
-	} else if (opts.payload_profile != "raw") {
+	if (opts.payload_profile != "raw" && opts.payload_profile != "pax")
 		fail("unsupported payload profile (use raw or pax)");
-	}
 
 	if (!saw_target && opts.output_dir.empty() && opts.tape_device.empty())
 		fail("specify -f <device> (tape) or --target=spool -o <dir>");
@@ -287,6 +280,8 @@ void write_volume_header(WriterState &state, bool reuse_dir = false) {
 	header.archive_uuid = state.archive_uuid;
 	header.archive_name = state.opts.archive_name;
 	header.volume_seq_num = state.volume_seq_num;
+	header.payload_profile = state.opts.payload_profile == "pax"
+	    ? neotape::PayloadProfile::pax : neotape::PayloadProfile::raw;
 	header.volume_write_at_utc = neotape::utc_timestamp_now();
 
 	fs::path path = tape_file_path(state, "volume-header");
@@ -434,24 +429,11 @@ TapeDirInfo scan_tape_dir(const fs::path &dir) {
 }
 
 void write_spool_archive(const Options &opts) {
-	FILE *input = nullptr;
-	bool use_pclose = false;
-
-	if (opts.payload_profile == "pax") {
-		fs::path pax_bin = fs::read_symlink("/proc/self/exe").parent_path() / "pax";
-		string cmd = pax_bin.generic_string() + " -f -";
-		for (auto &src : opts.pax_sources)
-			cmd += " " + src;
-		input = popen(cmd.c_str(), "r");
-		if (input == nullptr)
-			fail_errno(string("popen pax"));
-		use_pclose = true;
-	} else if (opts.input != "-") {
+	FILE *input = stdin;
+	if (opts.input != "-") {
 		input = std::fopen(opts.input.c_str(), "rb");
 		if (input == nullptr)
 			fail_errno(string("open ") + opts.input);
-	} else {
-		input = stdin;
 	}
 
 	WriterState state;
@@ -481,57 +463,124 @@ void write_spool_archive(const Options &opts) {
 	bool reuse_dir = is_append && !state.current_volume_dir.empty();
 	write_volume_header(state, reuse_dir);
 
-	size_t frame_payload_capacity = opts.volume_block_size - neotape::fixed_header_size;
-	vector<uint8_t> buffer(frame_payload_capacity);
-	vector<uint8_t> pending;
-	bool have_pending = false;
-	for (;;) {
-		// Keep one frame pending so an exact slice boundary can be marked END
-		// without emitting an empty sentinel frame.
-		if (have_pending &&
-		    state.current_slice_size + pending.size() >= opts.slice_size) {
-			write_content_frame(state, pending, true);
-			pending.clear();
-			have_pending = false;
-			continue;
+	if (opts.payload_profile == "pax") {
+		// Pax profile: read all stdin into memory, scan raw tar headers
+		// to find entry boundaries, feed raw bytes to framer cutting at
+		// entry boundaries (no file split across slices).
+		vector<uint8_t> input;
+		uint8_t tmp[65536];
+		size_t got;
+		while ((got = std::fread(tmp, 1, sizeof(tmp), stdin)) > 0)
+			input.insert(input.end(), tmp, tmp + got);
+		if (std::ferror(stdin))
+			fail_errno("read stdin");
+
+		// Scan raw tar headers for entry boundaries
+		vector<uint64_t> boundaries;
+		boundaries.push_back(0);
+		uint64_t scan = 0;
+		while (scan + 512 <= input.size()) {
+			const uint8_t *hdr = input.data() + scan;
+			if (memcmp(hdr + 257, "ustar", 5) == 0) {
+				uint64_t entry_size = 0;
+				for (int i = 0; i < 11 && hdr[124+i] >= '0' && hdr[124+i] <= '7'; i++)
+					entry_size = (entry_size << 3) | (hdr[124+i] - '0');
+				uint64_t padded = ((entry_size + 511) / 512) * 512;
+				scan += 512 + padded;
+				if (scan <= input.size())
+					boundaries.push_back(scan);
+			} else {
+				bool found = false;
+				for (uint64_t c = scan + 512; c + 512 <= input.size(); c += 512) {
+					if (memcmp(input.data() + c + 257, "ustar", 5) == 0) {
+						scan = c;
+						boundaries.push_back(scan);
+						found = true;
+						break;
+					}
+				}
+				if (!found) break;
+			}
 		}
 
-		uint64_t pending_size = have_pending ? pending.size() : 0;
-		uint64_t remaining_in_slice =
-		    state.slice_open ? opts.slice_size - state.current_slice_size - pending_size
-				     : opts.slice_size - pending_size;
-		size_t want = static_cast<size_t>(
-		    std::min<uint64_t>(buffer.size(), remaining_in_slice));
-		size_t n = std::fread(buffer.data(), 1, want, input);
-		if (n > 0) {
-			if (have_pending) {
-				write_content_frame(state, pending, false);
+		size_t frame_cap = opts.volume_block_size - neotape::fixed_header_size;
+		size_t bi = 0;
+		size_t pos = 0;
+		size_t next_b = (bi + 1 < boundaries.size()) ? boundaries[bi + 1] : input.size();
+
+		while (pos < input.size()) {
+			size_t chunk_end = std::min(pos + frame_cap, next_b);
+			bool at_boundary = (chunk_end >= next_b);
+
+			size_t n = chunk_end - pos;
+			bool hit_target = (state.current_slice_size + n >= opts.slice_size);
+			bool end_slice = at_boundary && hit_target;
+
+			vector<uint8_t> payload(input.begin() + pos, input.begin() + pos + n);
+			write_content_frame(state, payload, end_slice);
+			pos += n;
+
+			if (at_boundary) {
+				bi++;
+				next_b = (bi + 1 < boundaries.size()) ? boundaries[bi + 1] : input.size();
+			}
+		}
+
+		if (state.slice_open) {
+			vector<uint8_t> empty;
+			write_content_frame(state, empty, true);
+		}
+
+	} else {
+		// Raw byte stream loop
+		size_t frame_payload_capacity = opts.volume_block_size - neotape::fixed_header_size;
+		vector<uint8_t> buffer(frame_payload_capacity);
+		vector<uint8_t> pending;
+		bool have_pending = false;
+		for (;;) {
+			if (have_pending &&
+			    state.current_slice_size + pending.size() >= opts.slice_size) {
+				write_content_frame(state, pending, true);
 				pending.clear();
 				have_pending = false;
+				continue;
 			}
-			vector<uint8_t> payload(buffer.begin(),
-			    buffer.begin() + static_cast<std::ptrdiff_t>(n));
+
+			uint64_t pending_size = have_pending ? pending.size() : 0;
+			uint64_t remaining_in_slice =
+			    state.slice_open ? opts.slice_size - state.current_slice_size - pending_size
+					     : opts.slice_size - pending_size;
+			size_t want = static_cast<size_t>(
+			    std::min<uint64_t>(buffer.size(), remaining_in_slice));
+			size_t n = std::fread(buffer.data(), 1, want, input);
+			if (n > 0) {
+				if (have_pending) {
+					write_content_frame(state, pending, false);
+					pending.clear();
+					have_pending = false;
+				}
+				vector<uint8_t> payload(buffer.begin(),
+				    buffer.begin() + static_cast<std::ptrdiff_t>(n));
+				if (n != want) {
+					write_content_frame(state, payload, true);
+				} else {
+					pending = std::move(payload);
+					have_pending = true;
+				}
+			}
 			if (n != want) {
-				write_content_frame(state, payload, true);
-			} else {
-				pending = std::move(payload);
-				have_pending = true;
+				if (std::ferror(input))
+					fail_errno("read input");
+				break;
 			}
 		}
-		if (n != want) {
-			if (std::ferror(input))
-				fail_errno("read input");
-			break;
-		}
+
+		if (input != stdin && std::fclose(input) != 0)
+			fail_errno(string("close") + (opts.input.empty() ? "input" : opts.input));
+
+		if (have_pending)
+			write_content_frame(state, pending, true);
 	}
-
-	if (input && use_pclose)
-		pclose(input);
-	else if (input && input != stdin)
-		std::fclose(input);
-
-	if (have_pending)
-		write_content_frame(state, pending, true);
 	write_archive_end(state);
 	write_tape_manifest(state);
 	std::cerr << format("archive {} written to {}\n", state.archive_uuid,
@@ -554,7 +603,6 @@ int main(int argc, char **argv) {
 			tape_opts.init_if_blank = opts.init_if_blank;
 			tape_opts.force_append = opts.force_append;
 			tape_opts.payload_profile = opts.payload_profile;
-			tape_opts.pax_sources = std::move(opts.pax_sources);
 			mt::write_tape_archive(tape_opts);
 		} else {
 			write_spool_archive(opts);

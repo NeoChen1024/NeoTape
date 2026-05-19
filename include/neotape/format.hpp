@@ -78,6 +78,7 @@ enum class HeaderType : uint8_t {
 
 enum class PayloadProfile : uint8_t {
 	raw = 1,
+	pax = 2,
 };
 
 enum class FrameContentType : uint8_t {

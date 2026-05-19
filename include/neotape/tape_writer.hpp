@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <string>
-#include <vector>
 
 namespace mt {
 
@@ -16,7 +15,6 @@ struct TapeWriterOptions {
     bool init_if_blank = false;
     bool force_append = false;
     std::string payload_profile = "raw";
-    std::vector<std::string> pax_sources;
 };
 
 void write_tape_archive(const TapeWriterOptions &opts);
