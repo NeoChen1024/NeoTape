@@ -209,16 +209,22 @@ void write_tape_archive(const TapeWriterOptions &opts) {
 
     // ----- framing loop -----
     if (opts.payload_profile == "pax") {
+        FILE *input = stdin;
+        if (opts.input != "-") {
+            input = std::fopen(opts.input.c_str(), "rb");
+            if (!input) fail(format("open {}: {}", opts.input, std::strerror(errno)));
+        }
+
         // Pax profile: read all stdin into memory, scan raw tar headers
         // to find entry boundaries, feed raw bytes to framer cutting at
         // entry boundaries (no file split across slices).
-        vector<uint8_t> input;
+        vector<uint8_t> pax_stream;
         uint8_t tmp[65536];
         size_t got;
-        while ((got = std::fread(tmp, 1, sizeof(tmp), stdin)) > 0)
-            input.insert(input.end(), tmp, tmp + got);
-        if (std::ferror(stdin))
-            fail("read stdin");
+        while ((got = std::fread(tmp, 1, sizeof(tmp), input)) > 0)
+            pax_stream.insert(pax_stream.end(), tmp, tmp + got);
+        if (std::ferror(input))
+            fail(format("read input: {}", std::strerror(errno)));
 
         // Scan for tar entry boundaries. Tar format: each entry starts
         // with a 512-byte header; size at offset 124 as 12-byte octal.
@@ -226,8 +232,8 @@ void write_tape_archive(const TapeWriterOptions &opts) {
         vector<uint64_t> boundaries;
         boundaries.push_back(0);
         uint64_t scan = 0;
-        while (scan + 512 <= input.size()) {
-            const uint8_t *hdr = input.data() + scan;
+        while (scan + 512 <= pax_stream.size()) {
+            const uint8_t *hdr = pax_stream.data() + scan;
             // Check for tar magic "ustar\0" at offset 257
             if (memcmp(hdr + 257, "ustar", 5) == 0) {
                 uint64_t entry_size = 0;
@@ -235,14 +241,14 @@ void write_tape_archive(const TapeWriterOptions &opts) {
                     entry_size = (entry_size << 3) | (hdr[124+i] - '0');
                 uint64_t padded = ((entry_size + 511) / 512) * 512;
                 scan += 512 + padded;
-                if (scan <= input.size())
+                if (scan <= pax_stream.size())
                     boundaries.push_back(scan);
             } else {
                 // Not a tar header at this position — scan forward
                 // to find the next valid header.
                 bool found = false;
-                for (uint64_t c = scan + 512; c + 512 <= input.size(); c += 512) {
-                    if (memcmp(input.data() + c + 257, "ustar", 5) == 0) {
+                for (uint64_t c = scan + 512; c + 512 <= pax_stream.size(); c += 512) {
+                    if (memcmp(pax_stream.data() + c + 257, "ustar", 5) == 0) {
                         scan = c;
                         boundaries.push_back(scan);
                         found = true;
@@ -257,9 +263,9 @@ void write_tape_archive(const TapeWriterOptions &opts) {
         size_t frame_cap = opts.volume_block_size - neotape::fixed_header_size;
         size_t bi = 0;
         size_t pos = 0;
-        size_t next_b = (bi + 1 < boundaries.size()) ? boundaries[bi + 1] : input.size();
+        size_t next_b = (bi + 1 < boundaries.size()) ? boundaries[bi + 1] : pax_stream.size();
 
-        while (pos < input.size()) {
+        while (pos < pax_stream.size()) {
             size_t chunk_end = std::min(pos + frame_cap, next_b);
             bool at_boundary = (chunk_end >= next_b);
 
@@ -267,13 +273,13 @@ void write_tape_archive(const TapeWriterOptions &opts) {
             bool hit_target = (state.current_slice_size + n >= opts.slice_size);
             bool end_slice = at_boundary && hit_target;
 
-            vector<uint8_t> payload(input.begin() + pos, input.begin() + pos + n);
+            vector<uint8_t> payload(pax_stream.begin() + pos, pax_stream.begin() + pos + n);
             write_content_frame(state, payload, end_slice);
             pos += n;
 
             if (at_boundary) {
                 bi++;
-                next_b = (bi + 1 < boundaries.size()) ? boundaries[bi + 1] : input.size();
+                next_b = (bi + 1 < boundaries.size()) ? boundaries[bi + 1] : pax_stream.size();
             }
         }
 
@@ -281,6 +287,9 @@ void write_tape_archive(const TapeWriterOptions &opts) {
             vector<uint8_t> empty;
             write_content_frame(state, empty, true);
         }
+
+        if (input != stdin && std::fclose(input) != 0)
+            fail(format("close input: {}", std::strerror(errno)));
 
     } else {
         // Raw byte stream loop: read stdin in fixed chunks,

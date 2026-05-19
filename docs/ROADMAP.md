@@ -4,6 +4,29 @@
 
 This roadmap is a planning draft. It is not part of the normative NeoTape v0.1 format definition. Its purpose is to guide incremental implementation, validation, and specification refinement. During implementation, concrete byte-level header layouts, catalog schemas, CLI behavior, and backend behavior SHOULD be fed back into the main specification.
 
+Current implementation snapshot:
+
+- Phase 0-3 have working MVP code paths: `bin/pax`, `bin/mt-pax`,
+  minimal fixed headers, spool writer, and spool reader can build and raw
+  payloads can round-trip through spool archives.
+- Phase 0-3 validation is incomplete: there is no CI configuration in the
+  repository, and the current `make test` target only runs the tape
+  abstraction/navigator test binary. The roadmap validation fixtures for pax
+  smoke tests, corrupt spool objects, and missing/end-frame cases still need to
+  become automated tests.
+- Phase 4 has an experimental PAX-byte-stream framing path for
+  `--payload-profile=pax`, but it is not yet the planned tree-walking PAX
+  profile. It currently expects an already-generated pax/tar stream, keeps the
+  stream in memory, and still needs automated regression coverage for both
+  stdin and `-i <file>` inputs.
+- Phase 5 is not implemented beyond enum/header support for
+  `SLICE_METADATA`.
+- Phase 6 has a prototype tape writer, tape device wrapper, navigator, and test
+  file-backed device, but real tape read/write validation and recovery behavior
+  are not complete.
+- Phase 8 has a minimal Medium Header serializer/parser and `neotape-init`
+  prototype. The self-description metadata bundle is not implemented.
+
 # Roadmap Principles
 
 1. Build the smallest end-to-end system first.  
@@ -16,9 +39,12 @@ This roadmap is a planning draft. It is not part of the normative NeoTape v0.1 f
 8. Keep the primary external dependencies limited to libarchive for pax/tar handling and BLAKE3 for integrity hashing unless a later milestone justifies more.  
 9. Keep stdout pure payload bytes; diagnostics, prompts, and progress belong on stderr or /dev/tty.
 
-# Phase 0: Repository and Test Harness: DONE
+# Phase 0: Repository and Test Harness: MVP DONE
 
 Goal: establish a small C++/GNU Make development skeleton around a useful libarchive-based pax writer before freezing NeoTape binary layout.
+
+Implementation status: build skeleton and pax writer CLIs exist. Smoke-test and
+CI deliverables remain open.
 
 Deliverables:  
 - Standard GNU Makefile that builds the initial CLI tools and keeps compiler/linker flags visible.  
@@ -37,9 +63,14 @@ Initial scope:
 - No frozen binary header layout yet.  
 - Keep the first CLI intentionally simple, for example source directory plus output path or stdout, so the project gets a working payload producer before adding volume/slice/Frame transport.
 
-# Phase 1: Minimal Binary Header Layout: DONE
+# Phase 1: Minimal Binary Header Layout: MVP DONE
 
 Goal: define enough concrete byte layout to create parseable NeoTape records.
+
+Implementation status: Volume, Frame, Archive End, and Medium Header
+serializer/parser support exists with fixed 1024-byte headers and CRC32C.
+`SLICE_METADATA` frame type is defined but metadata item schema/catalog behavior
+is deferred to Phase 5.
 
 Deliverables:  
 - Shared constants for magic values, header type ids, version ids, and payload profile ids.  
@@ -66,9 +97,14 @@ Spec feedback expected:
 - Rules for unknown flags and forward-compatible reserved fields.  
 - 1024-byte fixed header area and metadata size constraints.
 
-# Phase 2: Filesystem Spool Backend MVP: DONE
+# Phase 2: Filesystem Spool Backend MVP: MVP DONE
 
 Goal: implement NeoTape logical archive creation without tape hardware.
+
+Implementation status: `neotape-write --target=spool` can write raw payloads,
+create volume directories, slice tape files, archive-end files, and simulate
+volume rollover with `--virtual-tape-size`. Manifest contents are currently
+minimal and do not yet include every validation field listed below.
 
 Deliverables:  
 - neotape-write --target=spool.  
@@ -93,9 +129,14 @@ Spec feedback expected:
 - Whether manifest is purely advisory or partially standardized.  
 - Exact behavior when virtual volume limit is hit before a header, during content, or before `SLICE_METADATA` Frame completion.
 
-# Phase 3: Minimal Reader for Spool Archives: DONE
+# Phase 3: Minimal Reader for Spool Archives: MVP DONE
 
 Goal: implement neotape-cat-volumes against the virtual tape abstraction.
+
+Implementation status: `neotape-cat-volumes` can read spool volumes in sequence,
+emit raw payload bytes, validate final slice size/hash, and validate Archive End
+Header sequencing. The corruption and missing-object fixtures listed below are
+not yet automated.
 
 Deliverables:  
 - Virtual tape reader interface: read-record, next-file, next-volume, EOT/volume-limit event.  
@@ -120,9 +161,15 @@ Spec feedback expected:
 - Error classes.  
 - Which errors are retryable, salvageable, or fatal.
 
-# Phase 4: NeoTape/PAX Payload Profile MVP
+# Phase 4: NeoTape/PAX Payload Profile MVP: PROTOTYPE
 
 Goal: connect the Phase 0 libarchive pax producer to NeoTape framing so useful POSIX-style backups can move through the spool writer and reader.
+
+Implementation status: `--payload-profile=pax` currently frames an existing
+pax/tar byte stream and can round-trip when the stream is supplied on stdin or
+with `-i <file>`. It does not yet generate pax directly from positional source
+paths, does not reuse the Phase 0 tree walker as the source profile, keeps the
+whole pax stream in memory, and still needs automated regression coverage.
 
 Deliverables:  
 - neotape-write --payload-profile=pax for file trees, reusing the Phase 0 pax writer path.  
@@ -141,9 +188,13 @@ Spec feedback expected:
 - Whether 512-byte tar record alignment needs a payload-profile rule for pax.
 - How to represent source-read warnings and partial-read diagnostics in `SLICE_METADATA` Frames.
 
-# Phase 5: Slice Metadata Frames and Catalog v0
+# Phase 5: Slice Metadata Frames and Catalog v0: NOT STARTED
 
 Goal: make partial restore planning and audit possible without making catalog authoritative.
+
+Implementation status: only the `SLICE_METADATA` content type constant exists.
+No metadata frames, catalog records, advisory verification behavior, or catalog
+listing path is implemented yet.
 
 Deliverables:  
 - `SLICE_METADATA` Frame content type.
@@ -165,9 +216,14 @@ Spec feedback expected:
 - Path encoding and safety rules.  
 - Compression attribute model for catalog payloads.
 
-# Phase 6: Tape Device Backend Prototype
+# Phase 6: Tape Device Backend Prototype: PROTOTYPE
 
 Goal: replay the same logical format onto a real sequential tape device.
+
+Implementation status: Linux tape ioctl wrappers, a navigator, a tape writer
+prototype, and a file-backed test device exist. The implementation still needs
+real tape/emulated-tape end-to-end validation, tape read path integration for
+`neotape-cat-volumes`, and the recovery/control policies planned in Phase 7.
 
 Deliverables:  
 - Tape backend adapter using standard OS tape device operations.  
@@ -217,11 +273,16 @@ Spec feedback expected:
 - stdout contamination prevention rules.  
 - Salvage output marking requirements.
 
-# Phase 8: Medium Header and Long-Term Self-Description
+# Phase 8: Medium Header and Long-Term Self-Description: PARTIAL
 
 Goal: define the immutable BOT Medium Header and recovery bundle.
 
 Spec draft: [docs/spec/01-medium-header.md](spec/01-medium-header.md)
+
+Implementation status: a minimal Medium Header layout is implemented in the
+format layer and `neotape-init` can write one to a tape device. The metadata
+bundle, embedded docs/source package, and virtual-medium validation are not
+implemented.
 
 Deliverables:  
 - Medium Header binary/ASCII prefix.  
@@ -320,7 +381,17 @@ Validation:
 
 Near-Term Recommended Next Step
 
-Implement Phase 0 first as a working C++/GNU Make CLI that uses libarchive to pack a directory into a POSIX pax-format tar stream or file, with smoke tests that validate the output. After that, implement Phase 1 through Phase 3: concrete minimal headers, spool writer, and spool reader. This creates a small closed loop where payload generation, header layout, length framing, final `SLICE_CONTENT` Frame verification, and multi-volume continuation can be tested before real tape hardware or filesystem-native profiles.
+Stabilize the Phase 4 PAX profile and the test harness before expanding the
+catalog or tape recovery surface:
+
+1. Add a regression test for the fixed PAX `-i <file>` path.
+2. Replace the current in-memory PAX-byte-stream framing path with a streaming
+   implementation that either reuses the Phase 0 pax writer path or clearly
+   documents stdin pax-stream mode as a separate source profile.
+3. Add automated raw and pax spool round-trip tests, plus corrupt/missing
+   header fixtures for Phase 3.
+4. After Phase 4 is reliable, implement Phase 5 `SLICE_METADATA`/catalog v0 or
+   continue hardening the Phase 6 tape backend with end-to-end tape tests.
 
 ----  
 End of Roadmap
