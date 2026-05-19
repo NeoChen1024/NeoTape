@@ -308,13 +308,13 @@ NeoTape catalog is an advisory byte index, not the authoritative filesystem meta
 
 NeoTape v0.1 defines a compact binary-safe catalog entry format. A path catalog record is a NUL-terminated byte string:
 
-/`<uid>`/`<gid>`/[source_dev_maj:min](source_dev_maj:min)/<source_inode>/<file_type>/<mode_octal>/`<size>`/`<mtime>`/<logical_slice_seq_num>/<frame_seq_num_within_slice>/<payload_offset>/<payload_size>/`<filepath>`\0
+/`<uid>`/`<gid>`/[source_dev_maj:min](source_dev_maj:min)/<source_inode>/<file_type>/<mode_octal>/`<size>`/`<mtime>`/<logical_slice_seq_num>/<frame_seq_num_within_slice>/<payload_offset>/<payload_size>/`<filepath>`\0\n
 
 The number of slash-delimited fields before filepath is fixed by the catalog schema version. Parsers MUST split only the fixed number of leading fields; the remainder up to the terminating NUL is the filepath byte string. This works because POSIX-style path components cannot contain slash, and path strings cannot contain NUL. Therefore, filepath may contain ordinary directory separators without escaping. Also the forward slash right before the filepath is not part of the filepath itself.
 
 For example:
 
-/1000/1000/8:1/1234567/reg/0100644/4096/1710000000/12/3/987654321/4096/home/neo/file.txt\0
+/1000/1000/8:1/1234567/reg/0100644/4096/1710000000/12/3/987654321/4096/home/neo/file.txt\0\n
 
 All numeric fields are ASCII decimal unless explicitly specified otherwise. mode_octal is ASCII octal. device fields use ASCII major:minor. file_type SHOULD use a small fixed token set such as reg, dir, symlink, hardlink, block, char, fifo, sock, or other. Unknown or unavailable values MUST be encoded as empty fields, not omitted, so the field count remains stable.
 
