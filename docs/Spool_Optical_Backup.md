@@ -23,16 +23,16 @@ A spool archive may look like this:
 ```text
 archive.spool/
   tape-000001/
+    manifest.json
     tape-file-000000.medium-header.ntf
     tape-file-000001.volume-header.ntf
     tape-file-000002.slice-000001.ntf
     tape-file-000003.slice-000002.ntf
-    manifest.json
   tape-000002/
+    manifest.json
     tape-file-000001.volume-header.ntf
     tape-file-000002.slice-000003.ntf
     tape-file-000003.archive-end.ntf
-    manifest.json
 ```
 
 Each `tape-*` directory is a self-contained filesystem representation of one NeoTape virtual volume. For optical media, each directory can be used as the source tree for a disc image or a direct burn operation.

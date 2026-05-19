@@ -34,13 +34,14 @@ struct Options {
 	string archive_name = "raw";
 	uint32_t volume_block_size = 1024 * 1024;
 	uint64_t slice_size = 64ull * 1024 * 1024;
-	uint64_t virtual_volume_size = 0;
+	uint64_t virtual_tape_size = 0;
 };
 
 struct WriterState {
 	Options opts;
 	string archive_uuid;
 	uint64_t volume_seq_num = 0;
+	uint64_t tape_seq = 0;
 	uint64_t tape_file_num = 0;
 	uint64_t volume_used = 0;
 	uint64_t logical_slice_seq_num = 0;
@@ -69,7 +70,7 @@ void usage(const char *prog) {
 	std::cerr << format(
 	    "usage: {} --target=spool -o <spool-dir> [-f <input|->] "
 	    "[--archive-name <name>] [--volume-block-size <bytes>] "
-	    "[--slice-size <bytes>] [--virtual-volume-size <bytes>]\n",
+	    "[--slice-size <bytes>] [--virtual-tape-size <bytes>]\n",
 	    prog);
 }
 
@@ -79,7 +80,7 @@ Options parse_args(int argc, char **argv) {
 		{"archive-name",        required_argument, nullptr, 'n'},
 		{"volume-block-size",   required_argument, nullptr, 'b'},
 		{"slice-size",          required_argument, nullptr, 's'},
-		{"virtual-volume-size", required_argument, nullptr, 'z'},
+		{"virtual-tape-size", required_argument, nullptr, 'z'},
 		{"help",                no_argument,       nullptr, 'h'},
 		{nullptr, 0, nullptr, 0}
 	};
@@ -106,7 +107,7 @@ Options parse_args(int argc, char **argv) {
 			opts.slice_size = neotape::parse_size(optarg, "slice size");
 			break;
 		case 'z':
-			opts.virtual_volume_size =
+			opts.virtual_tape_size =
 			    neotape::parse_size(optarg, "virtual volume size");
 			break;
 		case 'h': usage(argv[0]); std::exit(0);
@@ -122,8 +123,8 @@ Options parse_args(int argc, char **argv) {
 		fail("volume block size must be between 4096 and 16777216 bytes");
 	if (opts.slice_size == 0)
 		fail("slice size must be greater than zero");
-	if (opts.virtual_volume_size != 0 &&
-	    opts.virtual_volume_size < static_cast<uint64_t>(opts.volume_block_size) * 2)
+	if (opts.virtual_tape_size != 0 &&
+	    opts.virtual_tape_size < static_cast<uint64_t>(opts.volume_block_size) * 2)
 		fail("virtual volume size must fit at least a volume header and one record");
 	return opts;
 }
@@ -167,46 +168,72 @@ void write_record(const fs::path &path,
 	}
 }
 
-void append_manifest_file(WriterState &state, const fs::path &path,
-    uint64_t size, const neotape::Hash &hash) {
+void append_manifest_file(WriterState &state, const fs::path &path) {
 	state.manifest_files.push_back(nlohmann::json{
-	    {"volume_seq_num", state.volume_seq_num},
 	    {"tape_file_num", state.tape_file_num},
-	    {"path", path.lexically_relative(state.opts.output_dir).generic_string()},
-	    {"size", size},
-	    {"blake3", neotape::hash_hex(hash)},
+	    {"path", path.lexically_relative(state.current_volume_dir).generic_string()},
 	});
 }
 
-neotape::Hash hash_file(const fs::path &path);
+// ====================== Volume Management ========================
+
+void write_tape_manifest(WriterState &state) {
+	fs::path path = state.current_volume_dir / "manifest.json";
+
+	nlohmann::json archives = nlohmann::json::array();
+	if (fs::exists(path)) {
+		std::ifstream in(path);
+		if (in) {
+			try {
+				nlohmann::json j;
+				in >> j;
+				if (j.contains("archives") && j["archives"].is_array())
+					archives = j["archives"].get<nlohmann::json::array_t>();
+			} catch (...) {}
+		}
+	}
+
+	nlohmann::json entry;
+	entry["archive_uuid"] = state.archive_uuid;
+	entry["archive_name"] = state.opts.archive_name;
+	entry["volume_seq_num"] = state.volume_seq_num;
+	entry["files"] = state.manifest_files;
+	archives.push_back(std::move(entry));
+
+	nlohmann::json j;
+	j["archives"] = std::move(archives);
+
+	std::ofstream out(path);
+	if (!out)
+		fail(format("open {}", path.string()));
+	out << j.dump(2) << "\n";
+}
 
 // ====================== Volume Management ========================
 
 void finalize_current_slice_file(WriterState &state) {
 	if (state.current_slice_path.empty())
 		return;
-	uint64_t size = fs::file_size(state.current_slice_path);
-	append_manifest_file(state, state.current_slice_path, size,
-	    hash_file(state.current_slice_path));
+	append_manifest_file(state, state.current_slice_path);
 	state.current_slice_path.clear();
 }
 
-neotape::Hash hash_file(const fs::path &path) {
-	std::ifstream in(path, std::ios::binary);
-	if (!in)
-		fail(format("open {}", path.string()));
-	vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)),
-	    std::istreambuf_iterator<char>());
-	return neotape::blake3_hash(bytes.data(), bytes.size());
-}
+void write_volume_header(WriterState &state, bool reuse_dir = false) {
+	// Finalize previous tape on rollover (skip for first call or reuse)
+	if (state.tape_seq > 0 && !reuse_dir) {
+		write_tape_manifest(state);
+		state.manifest_files = nlohmann::json::array();
+	}
 
-void write_volume_header(WriterState &state) {
 	++state.volume_seq_num;
-	state.tape_file_num = 0;
-	state.volume_used = 0;
-	state.current_volume_dir =
-	    state.opts.output_dir / format("tape-{}", six(state.volume_seq_num));
-	fs::create_directories(state.current_volume_dir);
+	if (!reuse_dir) {
+		++state.tape_seq;
+		state.tape_file_num = 0;
+		state.volume_used = 0;
+		state.current_volume_dir =
+		    state.opts.output_dir / format("tape-{}", six(state.tape_seq));
+		fs::create_directories(state.current_volume_dir);
+	}
 
 	neotape::VolumeHeader header;
 	header.volume_block_size = state.opts.volume_block_size;
@@ -219,13 +246,13 @@ void write_volume_header(WriterState &state) {
 	write_record(path, neotape::serialize_volume_header(header), nullptr,
 	    state.opts.volume_block_size, false);
 	state.volume_used += state.opts.volume_block_size;
-	append_manifest_file(state, path, state.opts.volume_block_size, hash_file(path));
+	append_manifest_file(state, path);
 }
 
 void ensure_room_for_record(WriterState &state) {
-	if (state.opts.virtual_volume_size == 0)
+	if (state.opts.virtual_tape_size == 0)
 		return;
-	if (state.volume_used + state.opts.volume_block_size <= state.opts.virtual_volume_size)
+	if (state.volume_used + state.opts.volume_block_size <= state.opts.virtual_tape_size)
 		return;
 	finalize_current_slice_file(state);
 	write_volume_header(state);
@@ -307,36 +334,59 @@ void write_archive_end(WriterState &state) {
 	write_record(path, neotape::serialize_archive_end_header(header), nullptr,
 	    state.opts.volume_block_size, false);
 	state.volume_used += state.opts.volume_block_size;
-	append_manifest_file(state, path, state.opts.volume_block_size, hash_file(path));
+	append_manifest_file(state, path);
 }
 
 // ====================== Spool Writer Pipeline ====================
 
-void write_manifest(const WriterState &state) {
-	nlohmann::json j;
-	j["archive_uuid"] = state.archive_uuid;
-	j["archive_name"] = state.opts.archive_name;
-	j["writer"] = "NeoTape reference writer phase2-mvp";
-	j["target_backend"] = "spool";
-	j["payload_profile"] = "raw";
-	j["volume_block_size"] = state.opts.volume_block_size;
-	j["slice_size"] = state.opts.slice_size;
-	j["virtual_volume_size"] = state.opts.virtual_volume_size;
-	j["volume_count"] = state.volume_seq_num;
-	j["files"] = state.manifest_files;
+uint64_t find_last_tape_seq(const fs::path &root) {
+	uint64_t last = 0;
+	if (!fs::exists(root))
+		return 0;
+	for (const auto &entry : fs::directory_iterator(root)) {
+		if (!entry.is_directory())
+			continue;
+		auto name = entry.path().filename().string();
+		if (name.rfind("tape-", 0) != 0)
+			continue;
+		char *end = nullptr;
+		uint64_t num = std::strtoull(name.c_str() + 5, &end, 10);
+		if (end != nullptr && *end == '\0' && num > last)
+			last = num;
+	}
+	return last;
+}
 
-	fs::path path = state.opts.output_dir / "manifest.json";
-	std::ofstream out(path);
-	if (!out)
-		fail(format("open {}", path.string()));
-	out << j.dump(2) << "\n";
+struct TapeDirInfo {
+	uint64_t last_file_num = 0;
+	uint64_t used_bytes = 0;
+};
+
+TapeDirInfo scan_tape_dir(const fs::path &dir) {
+	TapeDirInfo info;
+	if (!fs::exists(dir))
+		return info;
+	for (const auto &entry : fs::directory_iterator(dir)) {
+		if (!entry.is_regular_file())
+			continue;
+		auto name = entry.path().filename().string();
+		if (name.rfind("tape-file-", 0) != 0)
+			continue;
+		auto dot = name.find('.', 10);
+		if (dot == string::npos)
+			continue;
+		char *end = nullptr;
+		uint64_t num = std::strtoull(name.c_str() + 10, &end, 10);
+		if (end == nullptr || *end != '.')
+			continue;
+		if (num > info.last_file_num)
+			info.last_file_num = num;
+		info.used_bytes += entry.file_size();
+	}
+	return info;
 }
 
 void write_spool_archive(const Options &opts) {
-	if (fs::exists(opts.output_dir))
-		fail(format("output directory already exists: {}", opts.output_dir.string()));
-	fs::create_directories(opts.output_dir);
-
 	FILE *input = stdin;
 	if (opts.input != "-") {
 		input = std::fopen(opts.input.c_str(), "rb");
@@ -346,8 +396,30 @@ void write_spool_archive(const Options &opts) {
 
 	WriterState state;
 	state.opts = opts;
+
+	bool is_append = fs::exists(opts.output_dir);
+	if (is_append) {
+		uint64_t last_seq = find_last_tape_seq(opts.output_dir);
+		state.tape_seq = last_seq;
+
+		if (last_seq > 0 && opts.virtual_tape_size > 0) {
+			TapeDirInfo last_info =
+			    scan_tape_dir(opts.output_dir / format("tape-{}", six(last_seq)));
+			if (last_info.used_bytes + static_cast<uint64_t>(opts.volume_block_size) * 2
+			    <= opts.virtual_tape_size) {
+				state.tape_file_num = last_info.last_file_num;
+				state.volume_used = last_info.used_bytes;
+				state.current_volume_dir =
+				    opts.output_dir / format("tape-{}", six(last_seq));
+			}
+		}
+	} else {
+		fs::create_directories(opts.output_dir);
+	}
+
 	state.archive_uuid = neotape::make_uuid_v4();
-	write_volume_header(state);
+	bool reuse_dir = is_append && !state.current_volume_dir.empty();
+	write_volume_header(state, reuse_dir);
 
 	size_t frame_payload_capacity = opts.volume_block_size - neotape::fixed_header_size;
 	vector<uint8_t> buffer(frame_payload_capacity);
@@ -399,7 +471,7 @@ void write_spool_archive(const Options &opts) {
 	if (have_pending)
 		write_content_frame(state, pending, true);
 	write_archive_end(state);
-	write_manifest(state);
+	write_tape_manifest(state);
 	std::cerr << format("archive {} written to {}\n", state.archive_uuid,
 	    opts.output_dir.string());
 }

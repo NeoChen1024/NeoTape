@@ -82,6 +82,9 @@ responsibilities of each thread role:
 ## Key conventions
 
 - C++20, GNU Make, no build system other than Makefile
+- Order functions top-down: define a function before its first caller.
+  Avoid forward declarations for file-internal functions within the same
+  translation unit; move the definition above the call site instead.
 - libarchive `xattrheader=ALL` — all xattrs including security.capability are preserved in output
 - Hardlink resolution via `archive_entry_linkresolver`
 - All CLI tools must use `getopt_long` (with `<getopt.h>`) for argument parsing.

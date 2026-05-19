@@ -176,7 +176,13 @@ Because ordinary filesystems do not provide physical EOT, a spool writer MAY acc
 
 This manual capacity limit is a simulation of media capacity, not an archive semantic. It is useful for preparing archive volumes before the physical tape drive is available, testing multi-volume continuation, and staging several archives while another process is using the tape drive. A later copy-to-tape tool MAY replay the spool directory to a real tape backend, preserving filemark boundaries and tape directory ordering.
 
-A spool archive SHOULD include a machine-readable manifest with at least archive_uuid, writer version, target backend, logical volume order, per-file sizes, BLAKE3 digests, declared volume_block_size values, whether drive hardware compression is expected during replay, and the configured virtual volume size. The manifest is advisory; restore correctness still comes from NeoTape headers, lengths, and checksums inside the spool files. A spool writer SHOULD track virtual volume limits in native input bytes unless an implementation explicitly models expected compressed occupancy as an advisory estimate.
+A spool archive SHOULD include a machine-readable manifest in each tape
+directory (see [docs/spec/05-spool-dir.md](spec/05-spool-dir.md) for the
+manifest schema). The manifest is advisory; restore correctness still comes
+from NeoTape headers, lengths, and checksums inside the spool files.
+A spool writer SHOULD track virtual volume limits in native input bytes
+unless an implementation explicitly models expected compressed occupancy as
+an advisory estimate.
 
 # 6\. Archive Model
 

@@ -163,22 +163,37 @@ NeoTape header fields inside the files.
 
 ## Manifest
 
-Status: draft / schema not yet specified.
+Each tape directory MAY contain a machine-readable manifest (`manifest.json`)
+describing the files in that directory:
 
-A spool directory MAY include a machine-readable manifest (e.g.
-`manifest.json`) in each tape directory with at least:
+```json
+{
+  "archives": [
+    {
+      "archive_uuid": "<uuid>",
+      "archive_name": "<NAME>",
+      "volume_seq_num": 1,
+      "files": [
+        {"tape_file_num": 0, "path": "tape-file-000000.medium-header.ntf"},
+        ...
+      ]
+    }
+  ]
+}
+```
 
-- `archive_uuid`
-- writer version
-- target backend
-- logical volume order
-- per-file sizes
-- BLAKE3 digests per file
-- declared `volume_block_size` values
-- configured virtual volume size
+The `archives[]` array supports multiple archive instances when a tape
+directory is reused via append. Each entry contains:
 
-For provision for multiple archives. The manifest is advisory, restore correctness comes from NeoTape headers,
-lengths, and checksums inside the spool files.
+- `archive_uuid` — UUID of the archive instance
+- `volume_seq_num` — archive-scoped volume sequence number
+- `files[]` — per-file entries with `tape_file_num` and `path` (relative to tape directory)
+
+The manifest is advisory. Restore correctness comes from NeoTape headers,
+lengths, and checksums inside the spool files. A tool MAY use the manifest
+as auxiliary recovery information without opening every `.ntf` file. If no
+manifest is found, the tool MUST fall back to opening each `.ntf` file and
+validating its NeoTape headers.
 
 ## Block Size and Record Framing
 
