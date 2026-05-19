@@ -35,8 +35,9 @@ All records in an archive volume use a fixed **volume_block_size** declared in t
 | ----- | ---------------------------------- | ------ |
 | 0     | pax writer CLI                     | Done   |
 | 1     | Binary header layout               | Freeze |
-| 2     | Filesystem spool backend           | WIP    |
-| 3     | Minimal reader                     | Spec   |
+| 2     | Filesystem spool backend           | Review |
+| 3     | Minimal reader                     | Review |
+| 3.5   | mt-pax writer CLI                  | Done   |
 | 4     | NeoTape/PAX integration            | Spec   |
 | 5     | Slice metadata Frames & catalog    | Spec   |
 | 6     | Tape device backend                | Spec   |

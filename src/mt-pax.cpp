@@ -11,6 +11,7 @@
 #include <cerrno>
 #include <cctype>
 #include <clocale>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -20,6 +21,7 @@
 #include <format>
 #include <getopt.h>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <queue>
@@ -41,7 +43,9 @@ using std::vector;
 
 constexpr size_t SMALL_FILE_THRESHOLD = 4UL * 1024 * 1024;
 constexpr size_t DEFAULT_OUTPUT_BUFFER_SIZE = 64UL * 1024 * 1024;
-constexpr size_t BB0_CAPACITY = 64UL * 1024;  // 64 KB for non-file entries
+constexpr size_t BB0_CAPACITY_ENTRIES = 64UL * 1024;
+constexpr size_t COMPLETED_QUEUE_MULTIPLIER = 2;
+constexpr size_t PAX_ENTRY_OVERHEAD_RESERVE = 16UL * 1024;
 constexpr size_t STREAM_FLUSH_THRESH = 4UL * 1024 * 1024;
 
 // ========================== Types ==========================
@@ -58,7 +62,7 @@ struct Options {
 
 struct Result {
 	uint64_t seq;
-	std::vector<std::byte> bytes;  // empty = sentinel
+	std::vector<std::byte> bytes;  // empty is a valid skipped/warned entry
 };
 
 struct WorkItem {
@@ -67,7 +71,7 @@ struct WorkItem {
 	int fd;  // -1 = no data
 };
 
-enum class SlotState : uint8_t { IDLE, BUSY, DONE };
+enum class SlotState : uint8_t { IDLE, BUSY };
 
 // ── BBSink: streaming accumulator to BoundedBuffer ──
 
@@ -220,7 +224,9 @@ void copy_file_data(archive *writer, archive_entry *entry, int fd) {
 	if (src == nullptr) src = archive_entry_pathname(entry);
 	if (src == nullptr) fail_archive("entry has no source path", writer);
 
-	vector<char> buf(1024 * 1024);
+	thread_local vector<char> buf;
+	if (buf.empty())
+		buf.resize(SMALL_FILE_THRESHOLD);
 	for (;;) {
 		ssize_t n = read(fd, buf.data(), buf.size());
 		if (n < 0) fail_errno(string("read ") + src);
@@ -264,6 +270,14 @@ vector<std::byte> serialize_entry(archive_entry *entry, int fd) {
 	check_archive(archive_write_set_bytes_in_last_block(a, 1), a, "set last block");
 
 	BufCtx ctx;
+	la_int64_t entry_size = archive_entry_size(entry);
+	if (fd >= 0 && entry_size > 0) {
+		size_t reserve_size = static_cast<size_t>(entry_size) +
+		    PAX_ENTRY_OVERHEAD_RESERVE;
+		ctx.buf.reserve(reserve_size);
+	} else {
+		ctx.buf.reserve(PAX_ENTRY_OVERHEAD_RESERVE);
+	}
 	check_archive(archive_write_open(a, &ctx, drop_open, drop_write, drop_close),
 	    a, "open per-entry writer");
 
@@ -371,179 +385,157 @@ struct WorkerSlot {
 	std::condition_variable cv;
 	SlotState state = SlotState::IDLE;
 	WorkItem work;
-	Result result;
 };
 
 // ====================== Worker Main ==========================
 
-void worker_main(WorkerSlot &slot,
+void worker_main(size_t slot_idx, WorkerSlot &slot,
+    BlockingQueue<Result> &completed_queue, BlockingQueue<size_t> &idle_queue,
     std::mutex &notify_mtx, std::condition_variable &notify_cv,
-    bool &work_queued, std::atomic<bool> &done) {
+    uint64_t &notify_generation, std::atomic<bool> &done) {
 	for (;;) {
 		WorkItem w;
 		{
 			std::unique_lock l(slot.mtx);
-				slot.cv.wait(l, [&] {
+			slot.cv.wait(l, [&] {
 				return slot.state == SlotState::BUSY || done.load();
 			});
 			if (done.load() && slot.state != SlotState::BUSY)
 				return;
 			w = std::move(slot.work);
-			l.unlock();
 		}
 
 		auto bytes = serialize_entry(w.entry, w.fd);
 		archive_entry_free(w.entry);
 		if (w.fd >= 0) close(w.fd);
 
+		completed_queue.push(Result{w.seq, std::move(bytes)});
 		{
 			std::lock_guard l(slot.mtx);
-			slot.result = Result{w.seq, std::move(bytes)};
-			slot.state = SlotState::DONE;
+			slot.state = SlotState::IDLE;
 		}
+		idle_queue.push(slot_idx);
 		{
 			std::lock_guard l(notify_mtx);
-			work_queued = true;
-			notify_cv.notify_one();
+			++notify_generation;
 		}
+		notify_cv.notify_one();
 	}
 }
 
 // ====================== Serializer Main ======================
 
 void serializer_main(vector<WorkerSlot> &slots, BBSink &bb1_sink,
-    BlockingQueue<Result> &bb0, BlockingQueue<size_t> &idle_queue,
+    BlockingQueue<Result> &bb0, BlockingQueue<Result> &completed_queue,
     std::mutex &notify_mtx, std::condition_variable &notify_cv,
-    bool &work_queued, std::atomic<bool> &done) {
+    uint64_t &notify_generation, std::atomic<bool> &done) {
 	uint64_t expected = 0;
 	size_t nworkers = slots.size() - 1;
-	std::optional<Result> bb0_stash;
+	std::map<uint64_t, Result> pending;
 
-	for (;;) {
+	auto notify_large_slot_idle = [&] {
+		slots[nworkers].cv.notify_all();
+		{
+			std::lock_guard l(notify_mtx);
+			++notify_generation;
+		}
+		notify_cv.notify_one();
+	};
 
-		// 1. BB0 — stash-based peek to avoid blocking
-		if (!bb0_stash.has_value())
-			bb0_stash = bb0.try_pop();
-		if (bb0_stash.has_value() && bb0_stash->seq == expected) {
-			auto r = std::move(*bb0_stash);
-			bb0_stash.reset();
+	auto collect_ready_results = [&] {
+		bool progress = false;
+		while (auto r = bb0.try_pop()) {
+			pending.emplace(r->seq, std::move(*r));
+			progress = true;
+		}
+		while (auto r = completed_queue.try_pop()) {
+			pending.emplace(r->seq, std::move(*r));
+			progress = true;
+		}
+		return progress;
+	};
+
+	auto emit_pending = [&] {
+		bool progress = false;
+		for (;;) {
+			auto it = pending.find(expected);
+			if (it == pending.end())
+				break;
+			Result r = std::move(it->second);
+			pending.erase(it);
 			if (!r.bytes.empty())
 				bb1_sink.dest->push(std::move(r.bytes));
 			expected++;
-			continue;
+			progress = true;
 		}
+		return progress;
+	};
 
-		// 2. Check worker DONE slots
-		for (size_t i = 0; i < nworkers; i++) {
-			Result r;
-			{
-				std::lock_guard l(slots[i].mtx);
-				if (slots[i].state != SlotState::DONE)
-					continue;
-				if (slots[i].result.seq != expected)
-					continue;
-				r = std::move(slots[i].result);
-				slots[i].state = SlotState::IDLE;
-				idle_queue.push(i);
-			}
-			if (!r.bytes.empty())
-				bb1_sink.dest->push(std::move(r.bytes));
-			expected++;
-			goto found;
-		}
-
-		// 3. Check large slot
+	auto stream_expected_large = [&] {
+		WorkItem w{};
+		bool have_large = false;
 		{
 			std::lock_guard l(slots[nworkers].mtx);
 			if (slots[nworkers].state == SlotState::BUSY &&
 			    slots[nworkers].work.seq == expected) {
-				auto &w = slots[nworkers].work;
-				stream_large_entry(bb1_sink, w.entry, w.fd);
-				archive_entry_free(w.entry);
-				if (w.fd >= 0) close(w.fd);
-				slots[nworkers].state = SlotState::IDLE;
-				slots[nworkers].cv.notify_all();
-				expected++;
-				goto found;
+				w = slots[nworkers].work;
+				have_large = true;
 			}
 		}
+		if (!have_large)
+			return false;
 
-		// 4. Nothing ready — wait
+		stream_large_entry(bb1_sink, w.entry, w.fd);
+		archive_entry_free(w.entry);
+		if (w.fd >= 0) close(w.fd);
 		{
-			std::unique_lock l(notify_mtx);
-			notify_cv.wait(l, [&] { return work_queued || done.load(); });
-			work_queued = false;
+			std::lock_guard l(slots[nworkers].mtx);
+			slots[nworkers].state = SlotState::IDLE;
+		}
+		notify_large_slot_idle();
+		expected++;
+		return true;
+	};
+
+	auto any_busy_slot = [&] {
+		for (WorkerSlot &slot : slots) {
+			std::lock_guard l(slot.mtx);
+			if (slot.state == SlotState::BUSY)
+				return true;
+		}
+		return false;
+	};
+
+	uint64_t seen_generation = 0;
+	for (;;) {
+		bool progress = false;
+		progress = collect_ready_results() || progress;
+
+		for (;;) {
+			bool ordered_progress = false;
+			ordered_progress = emit_pending() || ordered_progress;
+			ordered_progress = stream_expected_large() || ordered_progress;
+			if (!ordered_progress)
+				break;
+			progress = true;
+			collect_ready_results();
 		}
 
-
-		// 5. Shutdown draining: wait for BUSY workers to finish.
-		if (done.load()) {
-			for (;;) {
-				bool progress = false;
-
-				if (!bb0_stash.has_value())
-					bb0_stash = bb0.try_pop();
-				if (bb0_stash.has_value() && bb0_stash->seq == expected) {
-					auto r = std::move(*bb0_stash);
-					bb0_stash.reset();
-					if (!r.bytes.empty())
-						bb1_sink.dest->push(std::move(r.bytes));
-					expected++;
-					progress = true;
-				}
-
-				for (size_t i = 0; i < nworkers; i++) {
-					std::lock_guard l(slots[i].mtx);
-					if (slots[i].state != SlotState::DONE ||
-					    slots[i].result.seq != expected)
-						continue;
-					if (!slots[i].result.bytes.empty())
-						bb1_sink.dest->push(std::move(slots[i].result.bytes));
-					slots[i].state = SlotState::IDLE;
-					expected++;
-					progress = true;
-				}
-
-				{
-					std::lock_guard l(slots[nworkers].mtx);
-					if (slots[nworkers].state == SlotState::BUSY &&
-					    slots[nworkers].work.seq == expected) {
-						auto &w = slots[nworkers].work;
-						stream_large_entry(bb1_sink, w.entry, w.fd);
-						archive_entry_free(w.entry);
-						if (w.fd >= 0) close(w.fd);
-						slots[nworkers].state = SlotState::IDLE;
-						slots[nworkers].cv.notify_all();
-						expected++;
-						progress = true;
-					}
-				}
-
-				// Check if any worker is still BUSY
-				bool any_busy = false;
-				for (size_t i = 0; i <= nworkers; i++) {
-					std::lock_guard l(slots[i].mtx);
-					if (slots[i].state == SlotState::BUSY) {
-						any_busy = true;
-						break;
-					}
-				}
-				if (!any_busy && !bb0_stash.has_value()) {
-					// Also check BB0 one final time
-					bb0_stash = bb0.try_pop();
-					if (bb0_stash.has_value() && bb0_stash->seq == expected)
-						continue;
-					bb0_stash.reset();
-					break;
-				}
-				if (!progress)
-					std::this_thread::sleep_for(std::chrono::microseconds(100));
-			}
-			break;
+		if (done.load() && pending.empty() && !any_busy_slot()) {
+			if (!collect_ready_results() && pending.empty())
+				break;
+			continue;
 		}
 
-		continue;
-	found:;
+		if (progress)
+			continue;
+
+		std::unique_lock l(notify_mtx);
+		seen_generation = notify_generation;
+		notify_cv.wait(l, [&] {
+			return notify_generation != seen_generation;
+		});
+		seen_generation = notify_generation;
 	}
 }
 
@@ -615,7 +607,7 @@ void write_pax_archive(const Options &opts) {
 
 	// ── Bounded buffers ──
 	BoundedBuffer bb1(opts.output_buf_size);
-	BlockingQueue<Result> bb0(BB0_CAPACITY);
+	BlockingQueue<Result> bb0(BB0_CAPACITY_ENTRIES);
 
 	// ── Output thread ──
 	blake3_hasher hasher;
@@ -639,6 +631,8 @@ void write_pax_archive(const Options &opts) {
 	// ── Worker slots ──
 	unsigned nworkers = opts.io_thread > 0 ? opts.io_thread - 1 : 0;
 	vector<WorkerSlot> slots(nworkers + 1);  // last slot = large
+	size_t result_slots = std::max<size_t>(1, COMPLETED_QUEUE_MULTIPLIER * nworkers);
+	BlockingQueue<Result> completed_queue(result_slots);
 
 	// ── Idle queue (worker slots only) ──
 	BlockingQueue<size_t> idle_queue;
@@ -649,7 +643,7 @@ void write_pax_archive(const Options &opts) {
 	std::atomic<bool> done{false};
 	std::mutex notify_mtx;
 	std::condition_variable notify_cv;
-	bool work_queued = false;
+	uint64_t notify_generation = 0;
 
 	// Streaming sink for serializer BB1 output
 	BBSink bb1_sink{&bb1, {}, false};
@@ -658,16 +652,17 @@ void write_pax_archive(const Options &opts) {
 	vector<std::thread> worker_threads;
 	for (size_t i = 0; i < nworkers; i++)
 		worker_threads.emplace_back(worker_main,
-		    std::ref(slots[i]),
+		    i, std::ref(slots[i]),
+		    std::ref(completed_queue), std::ref(idle_queue),
 		    std::ref(notify_mtx), std::ref(notify_cv),
-		    std::ref(work_queued), std::ref(done));
+		    std::ref(notify_generation), std::ref(done));
 
 	// ── Start serializer ──
 	std::thread serializer_thread(serializer_main,
 	    std::ref(slots), std::ref(bb1_sink),
-	    std::ref(bb0), std::ref(idle_queue),
+	    std::ref(bb0), std::ref(completed_queue),
 	    std::ref(notify_mtx), std::ref(notify_cv),
-	    std::ref(work_queued), std::ref(done));
+	    std::ref(notify_generation), std::ref(done));
 
 	// ── Chdir ──
 	if (opts.chdir_dir.has_value() && chdir(opts.chdir_dir->c_str()) != 0)
@@ -687,7 +682,7 @@ void write_pax_archive(const Options &opts) {
 
 	auto notify = [&] {
 		std::lock_guard l(notify_mtx);
-		work_queued = true;
+		++notify_generation;
 		notify_cv.notify_one();
 	};
 
@@ -825,7 +820,7 @@ void write_pax_archive(const Options &opts) {
 	}
 	{
 		std::lock_guard l(notify_mtx);
-		work_queued = true;
+		++notify_generation;
 		notify_cv.notify_all();
 	}
 
