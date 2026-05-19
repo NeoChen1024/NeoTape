@@ -161,20 +161,20 @@ The tape-device backend maps NeoTape volume headers, logical slices, and archive
 A recommended spool layout is:
 
 archive-<archive_uuid>/
-  volume-000001/
+  tape-000001/
     tape-file-000000.medium-header.ntf
     tape-file-000001.volume-header.ntf
     tape-file-000002.slice-000001.ntf
     tape-file-000003.slice-000002.ntf
-  volume-000002/
+  tape-000002/
     tape-file-000001.volume-header.ntf
     ...
 
-Filesystem spool mode MUST preserve the same logical record order as tape mode. It MUST NOT require a different reader algorithm for archive correctness. A reader MAY treat spool files as a virtual tape: file boundaries stand in for filemarks, and volume directories stand in for media or archive volumes. The same neotape-cat-volumes logical reader SHOULD be able to accept either a tape device path or a spool directory path, with the target adapter providing read-record, next-file, next-volume, and EOT/volume-limit events.
+Filesystem spool mode MUST preserve the same logical record order as tape mode. It MUST NOT require a different reader algorithm for archive correctness. A reader MAY treat spool files as a virtual tape: file boundaries stand in for filemarks, and tape directories stand in for media or archive volumes. The same neotape-cat-volumes logical reader SHOULD be able to accept either a tape device path or a spool directory path, with the target adapter providing read-record, next-file, next-volume, and EOT/volume-limit events.
 
-Because ordinary filesystems do not provide physical EOT, a spool writer MAY accept a manual or configured volume capacity limit such as --spool-volume-size or --target-volume-size. When the next committed header, Frame payload, SLICE_METADATA Frame, or Archive End Header would exceed the configured volume capacity, the writer MUST perform the same logical transition it would perform on EOT: close the current volume at the last valid boundary, create the next volume, write its volume header, and continue or drop the incomplete SLICE_METADATA Frames; the final SLICE_CONTENT Frame with END has already been committed.
+Because ordinary filesystems do not provide physical EOT, a spool writer MAY accept a manual or configured volume capacity limit such as --virtual-tape-size. When the next committed header, Frame payload, SLICE_METADATA Frame, or Archive End Header would exceed the configured volume capacity, the writer MUST perform the same logical transition it would perform on EOT: close the current tape at the last valid boundary, create the next tape directory, write its volume header, and continue or drop the incomplete SLICE_METADATA Frames; the final SLICE_CONTENT Frame with END has already been committed.
 
-This manual capacity limit is a simulation of media capacity, not an archive semantic. It is useful for preparing archive volumes before the physical tape drive is available, testing multi-volume continuation, and staging several archives while another process is using the tape drive. A later copy-to-tape tool MAY replay the spool directory to a real tape backend, preserving filemark boundaries and volume ordering.
+This manual capacity limit is a simulation of media capacity, not an archive semantic. It is useful for preparing archive volumes before the physical tape drive is available, testing multi-volume continuation, and staging several archives while another process is using the tape drive. A later copy-to-tape tool MAY replay the spool directory to a real tape backend, preserving filemark boundaries and tape directory ordering.
 
 A spool archive SHOULD include a machine-readable manifest with at least archive_uuid, writer version, target backend, logical volume order, per-file sizes, BLAKE3 digests, declared volume_block_size values, whether drive hardware compression is expected during replay, and the configured virtual volume size. The manifest is advisory; restore correctness still comes from NeoTape headers, lengths, and checksums inside the spool files. A spool writer SHOULD track virtual volume limits in native input bytes unless an implementation explicitly models expected compressed occupancy as an advisory estimate.
 
@@ -629,7 +629,7 @@ Restore without interaction:
   neotape-cat-volumes --control=none --on-eot=fail --on-mismatch=fail /dev/nst0 > payload.out
 
 Create filesystem spool output with a virtual volume size:
-  neotape-write --target=spool --spool-dir ./archive.spool --target-volume-size=12T --payload-profile=pax /source/tree
+  neotape-write --target=spool -o ./archive.spool --virtual-tape-size=12T /source/tree
 
 Replay prepared spool to tape:
   neotape-spool-to-tape ./archive.spool /dev/nst0

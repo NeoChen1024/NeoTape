@@ -11,7 +11,7 @@ on-tape workflow are still under development.
 ## Build
 
 ```sh
-make                    # produces bin/pax, bin/mt-pax, and NeoTape helper tools
+make -j "$(nproc)"      # produces bin/pax, bin/mt-pax, and NeoTape helper tools
 make clean
 ```
 

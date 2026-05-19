@@ -142,7 +142,7 @@ public:
 	explicit SpoolOrchestrator(const fs::path &root) : root_(root) {}
 
 	std::unique_ptr<neotape::SpoolVolumeReader> next_volume() {
-		auto dir = root_ / format("volume-{:06}", next_seq_);
+		auto dir = root_ / format("tape-{:06}", next_seq_);
 		if (!fs::is_directory(dir))
 			return nullptr;
 		++next_seq_;
@@ -345,7 +345,7 @@ int main(int argc, char **argv) {
 
 			if (opts.prompt) {
 				sink->flush();
-				std::cerr << format("neotape-cat-volumes: end of volume-{:06}, ",
+				std::cerr << format("neotape-cat-volumes: end of tape-{:06}, ",
 				    vol->volume_seq_num());
 				std::cerr << "mount next volume and press Enter [q to quit]: ";
 				std::string line;

@@ -6,15 +6,15 @@ This document describes how the NeoTape filesystem spool backend can be used as 
 
 ## Scope
 
-The spool backend represents NeoTape archive volumes as ordinary filesystem objects. A spool archive may contain one or more virtual volume directories. Each virtual volume directory can be copied, archived, burned, or transported independently.
+The spool backend represents NeoTape archive volumes as ordinary filesystem objects. A spool archive may contain one or more virtual tape directories. Each virtual tape directory can be copied, archived, burned, or transported independently.
 
 Optical media usage is a secondary use case:
 
-- The writer produces a spool archive or a set of spool volume directories.
-- The user or a wrapper tool may burn each volume directory to CD/DVD/BD media.
-- The reader later accepts one or more mounted volume directories and reconstructs the archive stream.
+- The writer produces a spool archive or a set of spool tape directories.
+- The user or a wrapper tool may burn each tape directory to CD/DVD/BD media.
+- The reader later accepts one or more mounted tape directories and reconstructs the archive stream.
 
-NeoTape does not need to treat optical media as a special core transport. Optical media support can be modeled as a reader input mode over filesystem-backed volume directories.
+NeoTape does not need to treat optical media as a special core transport. Optical media support can be modeled as a reader input mode over filesystem-backed tape directories.
 
 ## Conceptual Layout
 
@@ -22,26 +22,26 @@ A spool archive may look like this:
 
 ```text
 archive.spool/
-  volume-000001/
+  tape-000001/
     tape-file-000000.medium-header.ntf
     tape-file-000001.volume-header.ntf
     tape-file-000002.slice-000001.ntf
     tape-file-000003.slice-000002.ntf
     manifest.json
-  volume-000002/
+  tape-000002/
     tape-file-000001.volume-header.ntf
     tape-file-000002.slice-000003.ntf
     tape-file-000003.archive-end.ntf
     manifest.json
 ```
 
-Each `volume-*` directory is a self-contained filesystem representation of one NeoTape virtual volume. For optical media, each directory can be used as the source tree for a disc image or a direct burn operation.
+Each `tape-*` directory is a self-contained filesystem representation of one NeoTape virtual volume. For optical media, each directory can be used as the source tree for a disc image or a direct burn operation.
 
 Example conceptual usage:
 
 ```sh
-growisofs -Z /dev/dvd -R -J archive.spool/volume-000001
-growisofs -Z /dev/dvd -R -J archive.spool/volume-000002
+growisofs -Z /dev/dvd -R -J archive.spool/tape-000001
+growisofs -Z /dev/dvd -R -J archive.spool/tape-000002
 ```
 
 The exact disc creation command is outside the NeoTape core format. Implementations may provide helper scripts or wrappers, but the spool format should remain ordinary filesystem data.
@@ -53,7 +53,7 @@ The spool backend is not a real sequential tape device. It must not be forced to
 In particular:
 
 - Spool output is ordinary filesystem data.
-- Volume boundaries are directory boundaries.
+- Tape boundaries are directory boundaries.
 - Tape-file boundaries are regular file boundaries.
 - Filemarks are represented structurally by files and metadata, not by physical tape positioning.
 - Spool writers do not need the tape-device append safety rule that seeks to EOD before writing.
@@ -67,9 +67,9 @@ Reader support for optical or removable media should be implemented as a multi-v
 Inputs may include:
 
 - A complete spool archive directory.
-- A list of `volume-*` directories.
+- A list of `tape-*` directories.
 - A list of mounted optical discs.
-- A staged copy of several burned volume directories.
+- A staged copy of several burned tape directories.
 
 Example conceptual commands:
 
@@ -111,7 +111,7 @@ BD-R DL:  approximately 50 GB nominal media class
 BD-R XL:  larger media classes, depending on drive and media support
 ```
 
-Implementations should reserve space for NeoTape headers, `SLICE_METADATA` Frames, manifests, filesystem overhead, and disc filesystem metadata. The volume size limit should be conservative rather than attempting to fill media to the last byte.
+Implementations should reserve space for NeoTape headers, `SLICE_METADATA` Frames, manifests, filesystem overhead, and disc filesystem metadata. The tape size limit should be conservative rather than attempting to fill media to the last byte.
 
 ## Non-Goals
 
@@ -122,8 +122,8 @@ This design note does not require:
 - ISO/UDF image generation inside the core writer.
 - Tape-device append semantics for spool archives.
 
-Optical usage is best treated as an export/deployment mode for spool volumes, plus reader support for multiple filesystem-backed volumes.
+Optical usage is best treated as an export/deployment mode for spool tapes, plus reader support for multiple filesystem-backed tapes.
 
 ## Summary
 
-The spool backend should remain a filesystem representation of NeoTape virtual volumes. CD/DVD/BD backup is a useful secondary workflow: produce spool volume directories, burn or copy them to removable media, then read them back through a multi-volume filesystem reader. This keeps the core format clean while still enabling practical removable-media backups.
+The spool backend should remain a filesystem representation of NeoTape virtual volumes. CD/DVD/BD backup is a useful secondary workflow: produce spool tape directories, burn or copy them to removable media, then read them back through a multi-volume filesystem reader. This keeps the core format clean while still enabling practical removable-media backups.
