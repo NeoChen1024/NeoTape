@@ -28,6 +28,20 @@ std::vector<std::byte> BoundedBuffer::pop() {
 	return item;
 }
 
+std::vector<std::byte> BoundedBuffer::pop_after_fill(size_t min_bytes) {
+	std::unique_lock lock(mtx_);
+	not_empty_.wait(lock, [this, min_bytes] {
+		return closed_ || (!buf_.empty() && total_bytes_ >= min_bytes);
+	});
+	if (buf_.empty())
+		return {};
+	auto item = std::move(buf_.front());
+	buf_.pop_front();
+	total_bytes_ -= item.size();
+	not_full_.notify_one();
+	return item;
+}
+
 void BoundedBuffer::close() {
 	std::lock_guard lock(mtx_);
 	closed_ = true;
@@ -38,4 +52,14 @@ void BoundedBuffer::close() {
 bool BoundedBuffer::drained() const {
 	std::lock_guard lock(mtx_);
 	return closed_ && buf_.empty();
+}
+
+size_t BoundedBuffer::size_bytes() const {
+	std::lock_guard lock(mtx_);
+	return total_bytes_;
+}
+
+size_t BoundedBuffer::capacity_bytes() const {
+	std::lock_guard lock(mtx_);
+	return capacity_;
 }

@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cctype>
+#include <chrono>
 #include <clocale>
 #include <condition_variable>
 #include <cstdio>
@@ -40,6 +41,7 @@ using std::format;
 using std::size_t;
 using std::string;
 using std::vector;
+using std::cerr;
 
 constexpr size_t SMALL_FILE_THRESHOLD = 4UL * 1024 * 1024;
 constexpr size_t DEFAULT_OUTPUT_BUFFER_SIZE = 64UL * 1024 * 1024;
@@ -57,7 +59,15 @@ struct Options {
 	bool one_file_system = false;
 	std::optional<string> chdir_dir;
 	size_t output_buf_size = DEFAULT_OUTPUT_BUFFER_SIZE;
+	unsigned buffer_percent = 0;
 	unsigned io_thread = 1;
+};
+
+struct ArchiveStats {
+	std::atomic<uint64_t> input_bytes{0};
+	std::atomic<uint64_t> output_bytes{0};
+	std::atomic<uint64_t> walked_entries{0};
+	std::atomic<bool> done{false};
 };
 
 struct Result {
@@ -77,6 +87,7 @@ enum class SlotState : uint8_t { IDLE, BUSY };
 
 struct BBSink {
 	BoundedBuffer *dest;
+	ArchiveStats *stats;
 	std::vector<std::byte> accum;
 	bool drop_mode = false;
 };
@@ -89,8 +100,10 @@ la_ssize_t bb_sink_write(archive *, void *client, const void *data, size_t len) 
 	auto *bytes = static_cast<const std::byte *>(data);
 	sink->accum.insert(sink->accum.end(), bytes, bytes + len);
 	if (sink->accum.size() >= STREAM_FLUSH_THRESH) {
+		size_t chunk_size = sink->accum.size();
 		if (!sink->dest->push(std::move(sink->accum)))
 			return -1;
+		sink->stats->input_bytes.fetch_add(chunk_size, std::memory_order_relaxed);
 		sink->accum = {};
 		sink->accum.reserve(STREAM_FLUSH_THRESH);
 	}
@@ -99,23 +112,37 @@ la_ssize_t bb_sink_write(archive *, void *client, const void *data, size_t len) 
 
 int bb_sink_close(archive *, void *) { return ARCHIVE_OK; }
 
+string stat_rate(uint64_t bytes_per_second) {
+	return neotape::humanize_number(static_cast<size_t>(bytes_per_second));
+}
+
+string stat_count_rate(uint64_t items_per_second) {
+	if (items_per_second < 1000)
+		return format("{}", items_per_second);
+	if (items_per_second < 1000UL * 1000)
+		return format("{:.1f}k", static_cast<double>(items_per_second) / 1000.0);
+	return format("{:.1f}M", static_cast<double>(items_per_second) /
+	    (1000.0 * 1000.0));
+}
+
 // ====================== Diagnostics ==========================
 
 void usage(const char *prog) {
-	std::cerr << format(
+	cerr << format(
 	    "usage: {} -f <out-file|-> [-v|-vv] [-x] [-C <dir>]\n"
-	    "       [--io-thread <N>] [--output-buffer-size <bytes>] <path> [path ...]\n", prog);
+	    "       [-P <buffer-percent>] [--io-thread <N>]\n"
+	    "       [--output-buffer-size <bytes>] <path> [path ...]\n", prog);
 }
 
 [[noreturn]] void fail_archive(const char *context, archive *a) {
 	const char *msg = archive_error_string(a);
-	std::cerr << format("pax: {}{}\n", context,
+	cerr << format("pax: {}{}\n", context,
 	    msg != nullptr ? format(": {}", msg) : string());
 	std::exit(1);
 }
 
 [[noreturn]] void fail_errno(const string &context) {
-	std::cerr << format("pax: {}: {}\n", context, std::strerror(errno));
+	cerr << format("pax: {}: {}\n", context, std::strerror(errno));
 	std::exit(1);
 }
 
@@ -123,7 +150,7 @@ void check_archive(int r, archive *a, const char *context) {
 	if (r == ARCHIVE_OK) return;
 	if (r == ARCHIVE_WARN) {
 		const char *msg = archive_error_string(a);
-		std::cerr << format("pax: warning: {}{}\n", context,
+		cerr << format("pax: warning: {}{}\n", context,
 		    msg != nullptr ? format(": {}", msg) : string());
 		return;
 	}
@@ -132,7 +159,7 @@ void check_archive(int r, archive *a, const char *context) {
 
 void warn_archive(const char *context, archive *a) {
 	const char *msg = archive_error_string(a);
-	std::cerr << format("pax: warning: {}{}\n", context,
+	cerr << format("pax: warning: {}{}\n", context,
 	    msg != nullptr ? format(": {}", msg) : string());
 }
 
@@ -213,7 +240,7 @@ int open_entry_file(archive_entry *entry) {
 	if (src == nullptr) return -1;
 	int fd = open(src, O_RDONLY | O_CLOEXEC);
 	if (fd < 0)
-		std::cerr << format("pax: warning: open {}: {}\n", src, std::strerror(errno));
+		cerr << format("pax: warning: open {}: {}\n", src, std::strerror(errno));
 	return fd;
 }
 
@@ -234,7 +261,7 @@ void copy_file_data(archive *writer, archive_entry *entry, int fd) {
 		ssize_t w = archive_write_data(writer, buf.data(), static_cast<size_t>(n));
 		if (w < 0) fail_archive("write file data", writer);
 		if (w != n) {
-			std::cerr << format("pax: short archive write for {}\n", src);
+			cerr << format("pax: short archive write for {}\n", src);
 			std::exit(1);
 		}
 	}
@@ -261,7 +288,7 @@ int drop_close(archive *, void *) { return ARCHIVE_OK; }
 
 vector<std::byte> serialize_entry(archive_entry *entry, int fd) {
 	archive *a = archive_write_new();
-	if (!a) { std::cerr << "pax: cannot allocate archive writer\n"; std::exit(1); }
+	if (!a) { cerr << "pax: cannot allocate archive writer\n"; std::exit(1); }
 	check_archive(archive_write_add_filter_none(a), a, "set uncompressed");
 	check_archive(archive_write_set_format_pax(a), a, "set pax format");
 	check_archive(archive_write_set_options(a, "xattrheader=ALL,hdrcharset=UTF-8"),
@@ -303,7 +330,7 @@ vector<std::byte> serialize_entry(archive_entry *entry, int fd) {
 void stream_large_entry(BBSink &sink, archive_entry *entry, int fd) {
 	sink.drop_mode = false;
 	archive *a = archive_write_new();
-	if (!a) { std::cerr << "pax: cannot allocate archive writer\n"; std::exit(1); }
+	if (!a) { cerr << "pax: cannot allocate archive writer\n"; std::exit(1); }
 	check_archive(archive_write_add_filter_none(a), a, "set uncompressed");
 	check_archive(archive_write_set_format_pax(a), a, "set pax format");
 	check_archive(archive_write_set_options(a, "xattrheader=ALL,hdrcharset=UTF-8"),
@@ -325,8 +352,11 @@ void stream_large_entry(BBSink &sink, archive_entry *entry, int fd) {
 	copy_file_data(a, entry, fd);
 	check_archive(archive_write_finish_entry(a), a, "finish entry");
 
-	if (!sink.accum.empty())
+	if (!sink.accum.empty()) {
+		size_t chunk_size = sink.accum.size();
 		sink.dest->push(std::move(sink.accum));
+		sink.stats->input_bytes.fetch_add(chunk_size, std::memory_order_relaxed);
+	}
 
 	sink.drop_mode = true;
 	archive_write_close(a);
@@ -427,6 +457,7 @@ void worker_main(size_t slot_idx, WorkerSlot &slot,
 
 void serializer_main(vector<WorkerSlot> &slots, BBSink &bb1_sink,
     BlockingQueue<Result> &bb0, BlockingQueue<Result> &completed_queue,
+    ArchiveStats &stats,
     std::mutex &notify_mtx, std::condition_variable &notify_cv,
     uint64_t &notify_generation, std::atomic<bool> &done) {
 	uint64_t expected = 0;
@@ -463,8 +494,11 @@ void serializer_main(vector<WorkerSlot> &slots, BBSink &bb1_sink,
 				break;
 			Result r = std::move(it->second);
 			pending.erase(it);
-			if (!r.bytes.empty())
-				bb1_sink.dest->push(std::move(r.bytes));
+			if (!r.bytes.empty()) {
+				size_t chunk_size = r.bytes.size();
+				if (bb1_sink.dest->push(std::move(r.bytes)))
+					stats.input_bytes.fetch_add(chunk_size, std::memory_order_relaxed);
+			}
 			expected++;
 			progress = true;
 		}
@@ -544,6 +578,7 @@ void serializer_main(vector<WorkerSlot> &slots, BBSink &bb1_sink,
 Options parse_args(int argc, char **argv) {
 	static const struct option long_opts[] = {
 		{"directory",         required_argument, nullptr, 'C'},
+		{"buffer-percent",    required_argument, nullptr, 'P'},
 		{"io-thread",         required_argument, nullptr, 257},
 		{"output-buffer-size",required_argument, nullptr, 256},
 		{"help",              no_argument,       nullptr, 'h'},
@@ -552,10 +587,20 @@ Options parse_args(int argc, char **argv) {
 
 	Options opts;
 	int c;
-	while ((c = getopt_long(argc, argv, "C:f:vxh", long_opts, nullptr)) != -1) {
+	while ((c = getopt_long(argc, argv, "C:f:P:vxh", long_opts, nullptr)) != -1) {
 		switch (c) {
 		case 'C': opts.chdir_dir = optarg; break;
 		case 'f': opts.output = optarg; break;
+		case 'P': {
+			char *end = nullptr;
+			unsigned long n = std::strtoul(optarg, &end, 10);
+			if (end == optarg || *end != '\0' || n > 100) {
+				cerr << "pax: -P requires a percent from 0 to 100\n";
+				std::exit(2);
+			}
+			opts.buffer_percent = static_cast<unsigned>(n);
+			break;
+		}
 		case 'v': opts.verbose = std::min(opts.verbose + 1, 2); break;
 		case 'x': opts.one_file_system = true; break;
 		case 256:
@@ -563,7 +608,7 @@ Options parse_args(int argc, char **argv) {
 				opts.output_buf_size = static_cast<size_t>(
 				    neotape::parse_size(optarg, "output buffer size"));
 			} catch (const std::exception &e) {
-				std::cerr << format("pax: {}\n", e.what());
+				cerr << format("pax: {}\n", e.what());
 				std::exit(2);
 			}
 			break;
@@ -571,7 +616,7 @@ Options parse_args(int argc, char **argv) {
 			char *end = nullptr;
 			unsigned long n = std::strtoul(optarg, &end, 10);
 			if (end == optarg || *end != '\0')
-				{ std::cerr << "pax: --io-thread requires a number\n"; std::exit(2); }
+				{ cerr << "pax: --io-thread requires a number\n"; std::exit(2); }
 			opts.io_thread = static_cast<unsigned>(n);
 			break;
 		}
@@ -608,22 +653,70 @@ void write_pax_archive(const Options &opts) {
 	// ── Bounded buffers ──
 	BoundedBuffer bb1(opts.output_buf_size);
 	BlockingQueue<Result> bb0(BB0_CAPACITY_ENTRIES);
+	ArchiveStats stats;
 
 	// ── Output thread ──
 	blake3_hasher hasher;
 	blake3_hasher_init(&hasher);
 	std::atomic<bool> output_error{false};
+	size_t output_restart_bytes = opts.output_buf_size * opts.buffer_percent / 100;
+
+	std::thread stats_thread([&] {
+		using clock = std::chrono::steady_clock;
+		uint64_t last_in = 0;
+		uint64_t last_out = 0;
+		uint64_t last_files = 0;
+		auto last_time = clock::now();
+
+		while (!stats.done.load(std::memory_order_relaxed)) {
+			std::this_thread::sleep_for(std::chrono::seconds(1));
+			if (stats.done.load(std::memory_order_relaxed))
+				break;
+			auto now = clock::now();
+			double seconds = std::chrono::duration<double>(now - last_time).count();
+			if (seconds <= 0.0)
+				seconds = 1.0;
+
+			uint64_t current_in = stats.input_bytes.load(std::memory_order_relaxed);
+			uint64_t current_out = stats.output_bytes.load(std::memory_order_relaxed);
+			uint64_t current_files = stats.walked_entries.load(std::memory_order_relaxed);
+			uint64_t in_rate = static_cast<uint64_t>((current_in - last_in) / seconds);
+			uint64_t out_rate = static_cast<uint64_t>((current_out - last_out) / seconds);
+			uint64_t file_rate = static_cast<uint64_t>((current_files - last_files) / seconds);
+			size_t buffered = bb1.size_bytes();
+			size_t capacity = bb1.capacity_bytes();
+			size_t percent = capacity == 0 ? 0 : std::min<size_t>(100,
+			    buffered * 100 / capacity);
+
+			// carridge return to overwrite the previous line, but only if we're not on the first line
+			cerr << format("\rin @ {:>6}/s, out @ {:>6}/s, files @ {:>6}/s, "
+			    "{:>6} total, buffer {:3}% full  ",
+			    stat_rate(in_rate), stat_rate(out_rate), stat_count_rate(file_rate),
+			    neotape::humanize_number(static_cast<size_t>(current_out)), percent);
+
+			last_in = current_in;
+			last_out = current_out;
+			last_files = current_files;
+			last_time = now;
+		}
+	});
 
 	std::thread output_thread([&] {
+		bool wait_for_waterline = output_restart_bytes > 0;
 		for (;;) {
-			auto chunk = bb1.pop();
+			auto chunk = wait_for_waterline
+			    ? bb1.pop_after_fill(output_restart_bytes)
+			    : bb1.pop();
 			if (chunk.empty()) break;
 			if (fwrite(chunk.data(), 1, chunk.size(), out_file) != chunk.size()) {
-				std::cerr << format("pax: write error: {}\n", std::strerror(errno));
+				cerr << format("pax: write error: {}\n", std::strerror(errno));
 				output_error.store(true);
+				bb1.close();
 				break;
 			}
 			blake3_hasher_update(&hasher, chunk.data(), chunk.size());
+			stats.output_bytes.fetch_add(chunk.size(), std::memory_order_relaxed);
+			wait_for_waterline = output_restart_bytes > 0 && bb1.size_bytes() == 0;
 		}
 		if (close_file && out_file) fclose(out_file);
 	});
@@ -646,7 +739,7 @@ void write_pax_archive(const Options &opts) {
 	uint64_t notify_generation = 0;
 
 	// Streaming sink for serializer BB1 output
-	BBSink bb1_sink{&bb1, {}, false};
+	BBSink bb1_sink{&bb1, &stats, {}, false};
 
 	// ── Start workers ──
 	vector<std::thread> worker_threads;
@@ -660,7 +753,7 @@ void write_pax_archive(const Options &opts) {
 	// ── Start serializer ──
 	std::thread serializer_thread(serializer_main,
 	    std::ref(slots), std::ref(bb1_sink),
-	    std::ref(bb0), std::ref(completed_queue),
+	    std::ref(bb0), std::ref(completed_queue), std::ref(stats),
 	    std::ref(notify_mtx), std::ref(notify_cv),
 	    std::ref(notify_generation), std::ref(done));
 
@@ -670,7 +763,7 @@ void write_pax_archive(const Options &opts) {
 
 	// ── Hardlink resolver ──
 	archive_entry_linkresolver *resolver = archive_entry_linkresolver_new();
-	if (!resolver) { std::cerr << "pax: cannot allocate hardlink resolver\n"; std::exit(1); }
+	if (!resolver) { cerr << "pax: cannot allocate hardlink resolver\n"; std::exit(1); }
 	archive *tmp = archive_write_new();
 	archive_write_add_filter_none(tmp);
 	archive_write_set_format_pax(tmp);
@@ -711,15 +804,17 @@ void write_pax_archive(const Options &opts) {
 
 	auto dispatch_entry = [&](archive_entry *entry) {
 		if (!entry) return;
+		stats.walked_entries.fetch_add(1, std::memory_order_relaxed);
 
 		bool is_reg = (archive_entry_filetype(entry) == AE_IFREG);
 		la_int64_t size = archive_entry_size(entry);
 		bool has_data = (is_reg && size > 0);
 
+		// new line before each entry, so it'll cooperate with the stats line (which doesn't print a newline)
 		if (opts.verbose > 1)
-			std::cerr << format("{}\n", verbose_line(entry));
+			cerr << format("\n{}", verbose_line(entry));
 		else if (opts.verbose > 0)
-			std::cerr << format("a {}\n", entry_display_path(entry));
+			cerr << format("\na {}", entry_display_path(entry));
 
 		if (!has_data) {
 			uint64_t seq = next_seq++;
@@ -749,12 +844,12 @@ void write_pax_archive(const Options &opts) {
 		try {
 			spec = neotape::make_source_spec(source_arg);
 		} catch (const std::exception &e) {
-			std::cerr << format("pax: {}\n", e.what());
+			cerr << format("pax: {}\n", e.what());
 			std::exit(1);
 		}
 
 		archive *disk = archive_read_disk_new();
-		if (!disk) { std::cerr << "pax: cannot allocate disk reader\n"; std::exit(1); }
+		if (!disk) { cerr << "pax: cannot allocate disk reader\n"; std::exit(1); }
 		check_archive(archive_read_disk_set_symlink_physical(disk), disk,
 		    "set physical symlink");
 		if (opts.one_file_system)
@@ -768,7 +863,7 @@ void write_pax_archive(const Options &opts) {
 
 		for (;;) {
 			archive_entry *entry = archive_entry_new();
-			if (!entry) { std::cerr << "pax: cannot allocate entry\n"; std::exit(1); }
+			if (!entry) { cerr << "pax: cannot allocate entry\n"; std::exit(1); }
 
 			int r = archive_read_next_header2(disk, entry);
 			if (r == ARCHIVE_EOF) { archive_entry_free(entry); break; }
@@ -830,6 +925,8 @@ void write_pax_archive(const Options &opts) {
 
 	bb1.close();
 	output_thread.join();
+	stats.done.store(true, std::memory_order_relaxed);
+	if (stats_thread.joinable()) stats_thread.join();
 
 	if (output_error.load()) std::exit(1);
 
@@ -838,7 +935,8 @@ void write_pax_archive(const Options &opts) {
 	blake3_hasher_finalize(&hasher, hash.data(), hash.size());
 	string hex;
 	for (uint8_t b : hash) hex += format("{:02x}", static_cast<unsigned>(b));
-	std::cerr << format("{}  {}\n", hex, opts.output == "-" ? "-" : opts.output);
+	// Print a newline to avoid overwriting the stats line, then print the hash and output path
+	cerr << format("\n{}  {}\n", hex, opts.output == "-" ? "-" : opts.output);
 }
 
 } // namespace
