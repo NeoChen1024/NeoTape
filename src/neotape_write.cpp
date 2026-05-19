@@ -1,5 +1,6 @@
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
+#include "neotape/tape_writer.hpp"
 
 #include <blake3.h>
 
@@ -30,11 +31,15 @@ using std::vector;
 
 struct Options {
 	string input = "-";
+	string tape_device;
 	fs::path output_dir;
 	string archive_name = "raw";
 	uint32_t volume_block_size = 1024 * 1024;
 	uint64_t slice_size = 64ull * 1024 * 1024;
 	uint64_t virtual_tape_size = 0;
+	bool init_mode = false;
+	bool init_if_blank = false;
+	bool force_append = false;
 };
 
 struct WriterState {
@@ -68,10 +73,25 @@ struct WriterState {
 
 void usage(const char *prog) {
 	std::cerr << format(
-	    "usage: {} --target=spool -o <spool-dir> [-f <input|->] "
-	    "[--archive-name <name>] [--volume-block-size <bytes>] "
-	    "[--slice-size <bytes>] [--virtual-tape-size <bytes>]\n",
-	    prog);
+	    "usage: {} -f <tape-device> [-i <input>] [options]\n"
+	    "       {} --target=spool -o <dir> [-i <input>] [options]\n"
+	    "\n"
+	    "Tape options:\n"
+	    "  -f <device>       Tape device path (implies tape mode)\n"
+	    "  --init            Write from BOT (overwrites)\n"
+	    "  --init-if-blank   Only init if tape is blank\n"
+	    "  --force-append    Append even without valid tail\n"
+	    "\n"
+	    "Spool options:\n"
+	    "  -o <dir>          Spool output directory\n"
+	    "\n"
+	    "Common options:\n"
+	    "  -i <input>        Payload input file (default: stdin)\n"
+	    "  --archive-name <name>\n"
+	    "  --volume-block-size <bytes>\n"
+	    "  --slice-size <bytes>\n"
+	    "  --virtual-tape-size <bytes>\n",
+	    prog, prog);
 }
 
 Options parse_args(int argc, char **argv) {
@@ -81,6 +101,9 @@ Options parse_args(int argc, char **argv) {
 		{"volume-block-size",   required_argument, nullptr, 'b'},
 		{"slice-size",          required_argument, nullptr, 's'},
 		{"virtual-tape-size", required_argument, nullptr, 'z'},
+		{"init",                no_argument,       nullptr, 256},
+		{"init-if-blank",       no_argument,       nullptr, 257},
+		{"force-append",        no_argument,       nullptr, 258},
 		{"help",                no_argument,       nullptr, 'h'},
 		{nullptr, 0, nullptr, 0}
 	};
@@ -89,14 +112,15 @@ Options parse_args(int argc, char **argv) {
 	bool saw_target = false;
 
 	int c;
-	while ((c = getopt_long(argc, argv, "f:o:h", long_opts, nullptr)) != -1) {
+	while ((c = getopt_long(argc, argv, "f:i:o:h", long_opts, nullptr)) != -1) {
 		switch (c) {
 		case 't':
 			if (string_view(optarg) != "spool")
 				fail("only --target=spool is supported");
 			saw_target = true;
 			break;
-		case 'f': opts.input = optarg; break;
+		case 'f': opts.tape_device = optarg; break;
+		case 'i': opts.input = optarg; break;
 		case 'o': opts.output_dir = optarg; break;
 		case 'n': opts.archive_name = optarg; break;
 		case 'b':
@@ -111,14 +135,21 @@ Options parse_args(int argc, char **argv) {
 			    neotape::parse_size(optarg, "virtual volume size");
 			break;
 		case 'h': usage(argv[0]); std::exit(0);
+		case 256: opts.init_mode = true; break;
+		case 257: opts.init_if_blank = true; break;
+		case 258: opts.force_append = true; break;
 		case '?': std::exit(2);
 		}
 	}
 
-	if (!saw_target || opts.output_dir.empty()) {
-		usage(argv[0]);
-		std::exit(2);
-	}
+	if (!saw_target && opts.output_dir.empty() && opts.tape_device.empty())
+		fail("specify -f <device> (tape) or --target=spool -o <dir>");
+	if (!opts.tape_device.empty() && !opts.output_dir.empty())
+		fail("specify either -f (tape) or -o (spool), not both");
+	if (!opts.tape_device.empty() && opts.virtual_tape_size > 0)
+		fail("--virtual-tape-size is for spool mode only");
+	if (saw_target && !opts.output_dir.empty())
+		opts.tape_device.clear();
 	if (!neotape::valid_block_size(opts.volume_block_size))
 		fail("volume block size must be between 4096 and 16777216 bytes");
 	if (opts.slice_size == 0)
@@ -481,7 +512,20 @@ void write_spool_archive(const Options &opts) {
 int main(int argc, char **argv) {
 	try {
 		Options opts = parse_args(argc, argv);
-		write_spool_archive(opts);
+		if (!opts.tape_device.empty()) {
+			mt::TapeWriterOptions tape_opts;
+			tape_opts.device = std::move(opts.tape_device);
+			tape_opts.input = std::move(opts.input);
+			tape_opts.archive_name = std::move(opts.archive_name);
+			tape_opts.volume_block_size = opts.volume_block_size;
+			tape_opts.slice_size = opts.slice_size;
+			tape_opts.init_mode = opts.init_mode;
+			tape_opts.init_if_blank = opts.init_if_blank;
+			tape_opts.force_append = opts.force_append;
+			mt::write_tape_archive(tape_opts);
+		} else {
+			write_spool_archive(opts);
+		}
 		return 0;
 	} catch (const std::exception &e) {
 		fail(e.what());

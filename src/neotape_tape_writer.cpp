@@ -1,6 +1,7 @@
 #include "neotape/tape.hpp"
 #include "neotape/tape_navigator.hpp"
 #include "neotape/format.hpp"
+#include "neotape/tape_writer.hpp"
 
 #include <blake3.h>
 
@@ -22,19 +23,6 @@ using std::format;
 using std::string;
 using std::string_view;
 using std::vector;
-
-// ====================== Writer State =============================
-
-struct TapeWriterOptions {
-    string device;
-    string input = "-";
-    string archive_name = "raw";
-    uint32_t volume_block_size = 1024 * 1024;
-    uint64_t slice_size = 64ull * 1024 * 1024;
-    bool init_mode = false;
-    bool init_if_blank = false;
-    bool force_append = false;
-};
 
 namespace {
 
