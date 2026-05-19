@@ -2,11 +2,13 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <format>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace neotape {
@@ -21,7 +23,6 @@ SpoolVolumeReader::SpoolVolumeReader(const fs::path &volume_dir)
 		throw std::runtime_error(
 		    std::format("no tape files in volume {}", volume_dir.string()));
 	read_volume_header();
-	file_idx_ = 1;
 }
 
 SpoolVolumeReader::~SpoolVolumeReader() { close_file(); }
@@ -29,44 +30,113 @@ SpoolVolumeReader::~SpoolVolumeReader() { close_file(); }
 void SpoolVolumeReader::scan_files() {
 	tape_files_.clear();
 	file_idx_ = 0;
+
+	static constexpr std::string_view prefix = "tape-file-";
+	static constexpr std::string_view ext = ".ntf";
+
+	std::vector<std::pair<uint64_t, fs::path>> indexed;
+
 	for (const auto &entry : fs::directory_iterator(volume_dir_)) {
-		if (entry.is_regular_file())
-			tape_files_.push_back(entry.path());
+		if (!entry.is_regular_file())
+			continue;
+		auto name = entry.path().filename().string();
+		if (name.size() <= prefix.size() + ext.size() ||
+		    name.substr(0, prefix.size()) != prefix ||
+		    name.substr(name.size() - ext.size()) != ext)
+			continue;
+		auto dot = name.find('.', prefix.size());
+		if (dot == std::string::npos)
+			continue;
+		auto num_str = name.substr(prefix.size(), dot - prefix.size());
+		if (num_str.empty())
+			continue;
+		char *end = nullptr;
+		uint64_t num = std::strtoull(num_str.c_str(), &end, 10);
+		if (end == nullptr || *end != '\0')
+			continue;
+		indexed.emplace_back(num, entry.path());
 	}
-	std::ranges::sort(tape_files_);
+
+	std::ranges::sort(indexed, {}, &std::pair<uint64_t, fs::path>::first);
+
+	tape_files_.reserve(indexed.size());
+	for (auto &p : indexed)
+		tape_files_.push_back(std::move(p.second));
 }
 
 void SpoolVolumeReader::read_volume_header() {
 	close_file();
 
-	file_ = std::fopen(tape_files_[0].c_str(), "rb");
-	if (file_ == nullptr)
-		throw std::runtime_error(std::format("open {}: {}",
-		    tape_files_[0].string(), std::strerror(errno)));
+	for (std::size_t i = 0; i < tape_files_.size(); ++i) {
+		std::FILE *fh = std::fopen(tape_files_[i].c_str(), "rb");
+		if (fh == nullptr)
+			throw std::runtime_error(std::format("open {}: {}",
+			    tape_files_[i].string(), std::strerror(errno)));
 
-	std::error_code ec;
-	uintmax_t file_size = fs::file_size(tape_files_[0], ec);
-	if (ec)
-		throw std::runtime_error(
-		    std::format("stat {}: {}", tape_files_[0].string(), ec.message()));
-	if (file_size < fixed_header_size)
-		throw std::runtime_error("volume header file too short");
+		std::vector<uint8_t> buf(fixed_header_size);
+		if (std::fread(buf.data(), 1, fixed_header_size, fh) != fixed_header_size) {
+			std::fclose(fh);
+			throw std::runtime_error(
+			    std::format("short read from {}: expected {} bytes",
+				tape_files_[i].string(), fixed_header_size));
+		}
 
-	std::vector<uint8_t> buf(static_cast<size_t>(file_size));
-	if (std::fread(buf.data(), 1, buf.size(), file_) != buf.size())
-		throw std::runtime_error("read volume header failed");
-	close_file();
+		auto parsed = parse_fixed_header(buf.data(), buf.size());
 
-	auto parsed = parse_fixed_header(buf.data(), buf.size());
-	if (!parsed.volume)
-		throw std::runtime_error("first tape file is not a volume header");
+		if (parsed.type == HeaderType::medium) {
+			std::fclose(fh);
+			continue;
+		}
 
-	volume_header_ = *parsed.volume;
-	block_size_ = volume_header_.volume_block_size;
-	if (!valid_block_size(block_size_))
-		throw std::runtime_error("invalid volume block size");
-	if (static_cast<uint64_t>(file_size) != block_size_)
-		throw std::runtime_error("volume header file size does not match block size");
+		if (parsed.type != HeaderType::volume) {
+			std::fclose(fh);
+			throw std::runtime_error(
+			    std::format("expected volume header in {}, got {}",
+				tape_files_[i].string(),
+				header_type_name(parsed.type)));
+		}
+
+		// Found volume header — read entire file for validation
+		std::fclose(fh);
+		fh = std::fopen(tape_files_[i].c_str(), "rb");
+		if (fh == nullptr)
+			throw std::runtime_error(std::format("open {}: {}",
+			    tape_files_[i].string(), std::strerror(errno)));
+
+		std::error_code ec;
+		uintmax_t file_size = fs::file_size(tape_files_[i], ec);
+		if (ec) {
+			std::fclose(fh);
+			throw std::runtime_error(
+			    std::format("stat {}: {}", tape_files_[i].string(), ec.message()));
+		}
+		if (file_size < fixed_header_size) {
+			std::fclose(fh);
+			throw std::runtime_error("volume header file too short");
+		}
+
+		buf.resize(static_cast<size_t>(file_size));
+		if (std::fread(buf.data(), 1, buf.size(), fh) != buf.size()) {
+			std::fclose(fh);
+			throw std::runtime_error("read volume header failed");
+		}
+		std::fclose(fh);
+
+		parsed = parse_fixed_header(buf.data(), buf.size());
+
+		volume_header_ = *parsed.volume;
+		block_size_ = volume_header_.volume_block_size;
+		if (!valid_block_size(block_size_))
+			throw std::runtime_error("invalid volume block size");
+		if (static_cast<uint64_t>(file_size) != block_size_)
+			throw std::runtime_error("volume header file size does not match block size");
+
+		file_idx_ = i + 1;
+		return;
+	}
+
+	throw std::runtime_error(
+	    std::format("no volume header found in {}", volume_dir_.string()));
 }
 
 void SpoolVolumeReader::close_file() {

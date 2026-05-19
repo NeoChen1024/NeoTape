@@ -12,6 +12,7 @@
 #include <fstream>
 #include <getopt.h>
 #include <iostream>
+#include <nlohmann-json/json.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -50,7 +51,7 @@ struct WriterState {
 	blake3_hasher slice_hasher;
 	fs::path current_volume_dir;
 	fs::path current_slice_path;
-	vector<string> manifest_files;
+	nlohmann::json manifest_files = nlohmann::json::array();
 };
 
 // ====================== Diagnostics & CLI ========================
@@ -131,35 +132,6 @@ string six(uint64_t value) {
 	return format("{:06}", value);
 }
 
-// ====================== Manifest Helpers =========================
-
-string json_escape(string_view text) {
-	string out;
-	for (char c : text) {
-		switch (c) {
-		case '\\':
-			out += "\\\\";
-			break;
-		case '"':
-			out += "\\\"";
-			break;
-		case '\n':
-			out += "\\n";
-			break;
-		case '\r':
-			out += "\\r";
-			break;
-		case '\t':
-			out += "\\t";
-			break;
-		default:
-			out += c;
-			break;
-		}
-	}
-	return out;
-}
-
 fs::path tape_file_path(WriterState &state, string_view suffix) {
 	++state.tape_file_num;
 	return state.current_volume_dir /
@@ -197,12 +169,13 @@ void write_record(const fs::path &path,
 
 void append_manifest_file(WriterState &state, const fs::path &path,
     uint64_t size, const neotape::Hash &hash) {
-	state.manifest_files.push_back(format(
-	    "    {{\"volume_seq_num\":{},\"tape_file_num\":{},\"path\":\"{}\","
-	    "\"size\":{},\"blake3\":\"{}\"}}",
-	    state.volume_seq_num, state.tape_file_num,
-	    json_escape(path.lexically_relative(state.opts.output_dir).generic_string()), size,
-	    neotape::hash_hex(hash)));
+	state.manifest_files.push_back(nlohmann::json{
+	    {"volume_seq_num", state.volume_seq_num},
+	    {"tape_file_num", state.tape_file_num},
+	    {"path", path.lexically_relative(state.opts.output_dir).generic_string()},
+	    {"size", size},
+	    {"blake3", neotape::hash_hex(hash)},
+	});
 }
 
 neotape::Hash hash_file(const fs::path &path);
@@ -232,7 +205,7 @@ void write_volume_header(WriterState &state) {
 	state.tape_file_num = 0;
 	state.volume_used = 0;
 	state.current_volume_dir =
-	    state.opts.output_dir / format("volume-{}", six(state.volume_seq_num));
+	    state.opts.output_dir / format("tape-{}", six(state.volume_seq_num));
 	fs::create_directories(state.current_volume_dir);
 
 	neotape::VolumeHeader header;
@@ -340,30 +313,23 @@ void write_archive_end(WriterState &state) {
 // ====================== Spool Writer Pipeline ====================
 
 void write_manifest(const WriterState &state) {
+	nlohmann::json j;
+	j["archive_uuid"] = state.archive_uuid;
+	j["archive_name"] = state.opts.archive_name;
+	j["writer"] = "NeoTape reference writer phase2-mvp";
+	j["target_backend"] = "spool";
+	j["payload_profile"] = "raw";
+	j["volume_block_size"] = state.opts.volume_block_size;
+	j["slice_size"] = state.opts.slice_size;
+	j["virtual_volume_size"] = state.opts.virtual_volume_size;
+	j["volume_count"] = state.volume_seq_num;
+	j["files"] = state.manifest_files;
+
 	fs::path path = state.opts.output_dir / "manifest.json";
 	std::ofstream out(path);
 	if (!out)
 		fail(format("open {}", path.string()));
-
-	out << "{\n";
-	out << format("  \"archive_uuid\":\"{}\",\n", state.archive_uuid);
-	out << format("  \"archive_name\":\"{}\",\n", json_escape(state.opts.archive_name));
-	out << "  \"writer\":\"NeoTape reference writer phase2-mvp\",\n";
-	out << "  \"target_backend\":\"spool\",\n";
-	out << "  \"payload_profile\":\"raw\",\n";
-	out << format("  \"volume_block_size\":{},\n", state.opts.volume_block_size);
-	out << format("  \"slice_size\":{},\n", state.opts.slice_size);
-	out << format("  \"virtual_volume_size\":{},\n", state.opts.virtual_volume_size);
-	out << format("  \"volume_count\":{},\n", state.volume_seq_num);
-	out << "  \"files\":[\n";
-	for (size_t i = 0; i < state.manifest_files.size(); ++i) {
-		out << state.manifest_files[i];
-		if (i + 1 != state.manifest_files.size())
-			out << ",";
-		out << "\n";
-	}
-	out << "  ]\n";
-	out << "}\n";
+	out << j.dump(2) << "\n";
 }
 
 void write_spool_archive(const Options &opts) {

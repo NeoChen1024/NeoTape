@@ -226,6 +226,8 @@ ParsedHeader parse_fixed_header(const uint8_t *data, std::size_t size) {
 		throw std::runtime_error("header CRC32C mismatch");
 
 	switch (parsed.type) {
+	case HeaderType::medium:
+		break;
 	case HeaderType::volume:
 		parsed.volume = parse_volume(data);
 		break;
