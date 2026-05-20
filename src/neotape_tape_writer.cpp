@@ -177,6 +177,52 @@ void write_archive_end(WriterState &state) {
     state.dev->write_filemark();
 }
 
+void write_stream_payload(WriterState &state, FILE *input, bool split_slices) {
+    size_t frame_payload_capacity =
+        state.opts.volume_block_size - neotape::fixed_header_size;
+    vector<uint8_t> buffer(frame_payload_capacity);
+    vector<uint8_t> pending;
+    bool have_pending = false;
+
+    for (;;) {
+        if (have_pending && split_slices &&
+            state.current_slice_size + pending.size() >= state.opts.slice_size) {
+            write_content_frame(state, pending, true);
+            pending.clear();
+            have_pending = false;
+            continue;
+        }
+
+        size_t want = buffer.size();
+        if (split_slices) {
+            uint64_t pending_size = have_pending ? pending.size() : 0;
+            uint64_t used = state.slice_open ? state.current_slice_size : 0;
+            uint64_t remaining = state.opts.slice_size - used - pending_size;
+            want = static_cast<size_t>(std::min<uint64_t>(buffer.size(), remaining));
+        }
+
+        size_t n = std::fread(buffer.data(), 1, want, input);
+        if (n > 0) {
+            if (have_pending) {
+                write_content_frame(state, pending, false);
+                pending.clear();
+                have_pending = false;
+            }
+            pending.assign(buffer.begin(),
+                buffer.begin() + static_cast<std::ptrdiff_t>(n));
+            have_pending = true;
+        }
+        if (n != want) {
+            if (std::ferror(input))
+                fail(format("read input: {}", std::strerror(errno)));
+            break;
+        }
+    }
+
+    if (have_pending)
+        write_content_frame(state, pending, true);
+}
+
 } // anonymous namespace
 
 // ====================== Public Entry Point =======================
@@ -211,149 +257,17 @@ void write_tape_archive(const TapeWriterOptions &opts) {
 
     write_volume_header(state);
 
-    // ----- framing loop -----
-    if (opts.payload_profile == "pax") {
-        FILE *input = stdin;
-        if (opts.input != "-") {
-            input = std::fopen(opts.input.c_str(), "rb");
-            if (!input) fail(format("open {}: {}", opts.input, std::strerror(errno)));
-        }
-
-        // Pax profile: read all stdin into memory, scan raw tar headers
-        // to find entry boundaries, feed raw bytes to framer cutting at
-        // entry boundaries (no file split across slices).
-        vector<uint8_t> pax_stream;
-        uint8_t tmp[65536];
-        size_t got;
-        while ((got = std::fread(tmp, 1, sizeof(tmp), input)) > 0)
-            pax_stream.insert(pax_stream.end(), tmp, tmp + got);
-        if (std::ferror(input))
-            fail(format("read input: {}", std::strerror(errno)));
-
-        // Scan for tar entry boundaries. Tar format: each entry starts
-        // with a 512-byte header; size at offset 124 as 12-byte octal.
-        // Data follows, padded to 512 boundary. Next header after data.
-        vector<uint64_t> boundaries;
-        boundaries.push_back(0);
-        uint64_t scan = 0;
-        while (scan + 512 <= pax_stream.size()) {
-            const uint8_t *hdr = pax_stream.data() + scan;
-            // Check for tar magic "ustar\0" at offset 257
-            if (memcmp(hdr + 257, "ustar", 5) == 0 && hdr[262] == '\0' && hdr[263] == '0') {
-                uint64_t entry_size = 0;
-                for (int i = 0; i < 11 && hdr[124+i] >= '0' && hdr[124+i] <= '7'; i++)
-                    entry_size = (entry_size << 3) | (hdr[124+i] - '0');
-                uint64_t padded = ((entry_size + 511) / 512) * 512;
-                scan += 512 + padded;
-                if (scan <= pax_stream.size())
-                    boundaries.push_back(scan);
-            } else {
-                // Not a tar header at this position — scan forward
-                // to find the next valid header.
-                bool found = false;
-                for (uint64_t c = scan + 512; c + 512 <= pax_stream.size(); c += 512) {
-                    if (memcmp(pax_stream.data() + c + 257, "ustar", 5) == 0) {
-                        scan = c;
-                        boundaries.push_back(scan);
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) break;
-            }
-        }
-
-        // Feed raw bytes to framer, cutting slices at entry boundaries.
-        size_t frame_cap = opts.volume_block_size - neotape::fixed_header_size;
-        size_t bi = 0;
-        size_t pos = 0;
-        size_t next_b = (bi + 1 < boundaries.size()) ? boundaries[bi + 1] : pax_stream.size();
-
-        while (pos < pax_stream.size()) {
-            size_t chunk_end = std::min(pos + frame_cap, next_b);
-            bool at_boundary = (chunk_end >= next_b);
-
-            size_t n = chunk_end - pos;
-            bool hit_target = (state.current_slice_size + n >= opts.slice_size);
-            bool end_slice = at_boundary && hit_target;
-
-            vector<uint8_t> payload(pax_stream.begin() + pos, pax_stream.begin() + pos + n);
-            write_content_frame(state, payload, end_slice);
-            pos += n;
-
-            if (at_boundary) {
-                bi++;
-                next_b = (bi + 1 < boundaries.size()) ? boundaries[bi + 1] : pax_stream.size();
-            }
-        }
-
-        if (state.slice_open) {
-            vector<uint8_t> empty;
-            write_content_frame(state, empty, true);
-        }
-
-        if (input != stdin && std::fclose(input) != 0)
-            fail(format("close input: {}", std::strerror(errno)));
-
-    } else {
-        // Raw byte stream loop: read stdin in fixed chunks,
-        // buffer one frame ahead, cut at slice_size byte boundaries.
-        FILE *input = stdin;
-        if (opts.input != "-") {
-            input = std::fopen(opts.input.c_str(), "rb");
-            if (!input) fail(format("open {}: {}", opts.input, std::strerror(errno)));
-        }
-
-        size_t frame_payload_capacity = opts.volume_block_size - neotape::fixed_header_size;
-        vector<uint8_t> buffer(frame_payload_capacity);
-        vector<uint8_t> pending;
-        bool have_pending = false;
-
-        for (;;) {
-            if (have_pending &&
-                state.current_slice_size + pending.size() >= opts.slice_size) {
-                write_content_frame(state, pending, true);
-                pending.clear();
-                have_pending = false;
-                continue;
-            }
-
-            uint64_t pending_size = have_pending ? pending.size() : 0;
-            uint64_t remaining_in_slice =
-                state.slice_open
-                    ? opts.slice_size - state.current_slice_size - pending_size
-                    : opts.slice_size - pending_size;
-            size_t want = static_cast<size_t>(
-                std::min<uint64_t>(buffer.size(), remaining_in_slice));
-            size_t n = std::fread(buffer.data(), 1, want, input);
-            if (n > 0) {
-                if (have_pending) {
-                    write_content_frame(state, pending, false);
-                    pending.clear();
-                    have_pending = false;
-                }
-                vector<uint8_t> payload(buffer.begin(),
-                    buffer.begin() + static_cast<std::ptrdiff_t>(n));
-                if (n != want) {
-                    write_content_frame(state, payload, true);
-                } else {
-                    pending = std::move(payload);
-                    have_pending = true;
-                }
-            }
-            if (n != want) {
-                if (std::ferror(input))
-                    fail(format("read input: {}", std::strerror(errno)));
-                break;
-            }
-        }
-
-        if (input != stdin && std::fclose(input) != 0)
-            fail(format("close input: {}", std::strerror(errno)));
-
-        if (have_pending)
-            write_content_frame(state, pending, true);
+    FILE *input = stdin;
+    if (opts.input != "-") {
+        input = std::fopen(opts.input.c_str(), "rb");
+        if (!input) fail(format("open {}: {}", opts.input, std::strerror(errno)));
     }
+
+    write_stream_payload(state, input,
+        opts.payload_profile == "raw" && opts.slice_size_set);
+
+    if (input != stdin && std::fclose(input) != 0)
+        fail(format("close input: {}", std::strerror(errno)));
 
     write_archive_end(state);
 
