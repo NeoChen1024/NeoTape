@@ -481,7 +481,7 @@ void write_spool_archive(const Options &opts) {
 		uint64_t scan = 0;
 		while (scan + 512 <= pax_stream.size()) {
 			const uint8_t *hdr = pax_stream.data() + scan;
-			if (memcmp(hdr + 257, "ustar", 5) == 0) {
+			if (memcmp(hdr + 257, "ustar", 5) == 0 && hdr[262] == '\0' && hdr[263] == '0') {
 				uint64_t entry_size = 0;
 				for (int i = 0; i < 11 && hdr[124+i] >= '0' && hdr[124+i] <= '7'; i++)
 					entry_size = (entry_size << 3) | (hdr[124+i] - '0');
@@ -579,7 +579,7 @@ void write_spool_archive(const Options &opts) {
 		}
 
 		if (input != stdin && std::fclose(input) != 0)
-			fail_errno(string("close") + (opts.input.empty() ? "input" : opts.input));
+			fail_errno(string("close ") + (opts.input.empty() ? "input" : opts.input));
 
 		if (have_pending)
 			write_content_frame(state, pending, true);

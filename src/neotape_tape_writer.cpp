@@ -144,7 +144,11 @@ void write_content_frame(WriterState &state, const vector<uint8_t> &payload,
     while (!write_tape_record(*state.dev, bytes, &payload,
                               state.opts.volume_block_size)) {
         prompt_next_volume(state.volume_seq_num);
+        bool saved_slice_open = state.slice_open;
+        uint64_t saved_logical_slice_seq_num = state.logical_slice_seq_num;
         write_volume_header(state);
+        state.slice_open = saved_slice_open;
+        state.logical_slice_seq_num = saved_logical_slice_seq_num;
     }
 
     if (end) {
@@ -235,7 +239,7 @@ void write_tape_archive(const TapeWriterOptions &opts) {
         while (scan + 512 <= pax_stream.size()) {
             const uint8_t *hdr = pax_stream.data() + scan;
             // Check for tar magic "ustar\0" at offset 257
-            if (memcmp(hdr + 257, "ustar", 5) == 0) {
+            if (memcmp(hdr + 257, "ustar", 5) == 0 && hdr[262] == '\0' && hdr[263] == '0') {
                 uint64_t entry_size = 0;
                 for (int i = 0; i < 11 && hdr[124+i] >= '0' && hdr[124+i] <= '7'; i++)
                     entry_size = (entry_size << 3) | (hdr[124+i] - '0');
