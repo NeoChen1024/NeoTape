@@ -7,3 +7,4 @@ lib/
 .agent/
 .codex/
 .vscode/
+__pycache__/

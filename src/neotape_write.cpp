@@ -144,9 +144,12 @@ Options parse_args(int argc, char **argv) {
 		case 257: opts.init_if_blank = true; break;
 		case 258: opts.force_append = true; break;
 		case 259: opts.payload_profile = optarg; break;
-		case '?': std::exit(2);
-		}
+	case '?': std::exit(2);
 	}
+}
+
+	if (optind < argc && opts.input == "-")
+		opts.input = argv[optind];
 
 	if (opts.payload_profile != "raw" && opts.payload_profile != "pax")
 		fail("unsupported payload profile (use raw or pax)");
