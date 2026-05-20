@@ -13,98 +13,73 @@ corresponding material in `docs/RFC_Draft.md`.
 draft context. It should not be treated as authoritative for sections that have
 already been split into `docs/spec/`.
 
-The documentation should be split by stability and purpose. The goal is to keep
-the future on-tape format readable while still leaving room for implementation
-notes, experiments, and roadmap planning.
+The documentation is split by stability and purpose.
 
-## Recommended Layout
+## Layout
 
 ```text
 docs/
-  README.md
-  ROADMAP.md
+  README.md                     This file
+  ROADMAP.md                    Implementation milestones and sequencing
+  IDEAS.md                      Early design ideas (not yet in spec/roadmap)
+  RFC_Draft.md                  Historical draft (superseded by spec/)
 
-  spec/
-    terminology.md
-    00-format-common.md
-    01-medium-header.md
-    02-volume-header.md
-    03-frame-header.md
-    04-archive-end-header.md
-    05-spool-dir.md
-    06-volume-layout.md
-    07-frames-and-slices.md
-    08-payload-profiles.md
-    09-reader-state-machine.md
-    10-error-handling.md
-    11-security.md
-    12-future-extensions.md
-    appendix-layout-examples.md
-    appendix-cli.md
-    open-questions.md
+  spec/                         Normative or near-normative format specification
+    terminology.md              Common terms and definitions
+    00-format-common.md         Common format rules, datatypes, encoding
+    01-medium-header.md         Medium Header field inventory
+    02-volume-header.md         Volume Header field inventory
+    03-frame-header.md          Frame Header field inventory
+    04-archive-end-header.md    Archive End Header field inventory
+    05-spool-dir.md             Spool directory format
+    06-volume-layout.md         Logical and physical tape layout
+    07-frames-and-slices.md     Frame model, slice completion, content types
+    08-payload-profiles.md      Payload profile definitions (PAX, raw)
+    09-reader-state-machine.md  Reader transitions and validation
+    10-error-handling.md        Retry/Inspect/Fail/Salvage model
+    11-security.md              Trust model, path safety, authentication
+    12-future-extensions.md     Extension ideas (multi-channel, FEC, encryption)
+    appendix-layout-examples.md Single-volume, multi-volume, multi-archive layouts
+    appendix-cli.md             CLI usage examples for all tools
+    open-questions.md           Unresolved design choices and open questions
+    plan-metadata.md            Plan metadata format (neotape-plan)
 
-  implementation/
-    phase-3.5-mt-pax-writer.md
-    phase-1-header-layout.md
-    build-and-dependencies.md
-    libarchive-pax-notes.md
-    blake3-notes.md
+  implementation/               Implementation-specific notes
+    phase-1-header-layout.md    Byte-offset decisions, serializer/parser design
+    phase-3.5-mt-pax-writer.md  Multi-threaded pax writer architecture and EOA suppression
+    build-and-dependencies.md   Makefile structure, dependencies, source layout
+    libarchive-pax-notes.md     libarchive call patterns, pax writer setup
+    blake3-notes.md             BLAKE3 integration points and performance notes
+    lto-behavior-notes.md       LTO EOT/EOM empirical observations
+    tape-append-semantics.md    Tape backend append safety and initialization
+    mt-pax-architecture.md      mt-pax thread roles and data flow
+    spool-optical-backup.md     Spool backend as optical/removable media staging
+    path-pitfalls.md            Path handling conventions and gotchas
 ```
 
 ## Document Layers
 
 ### `spec/`
 
-Use `docs/spec/` for the NeoTape format specification.
-
-This is where normative or near-normative material belongs: tape model,
-transport semantics, header fields, Frame and slice rules, continuation
-behavior, reader state machine, error handling, and payload profile contracts.
-
-Phase 1 header byte layout work should primarily land in:
-
-```text
-docs/spec/terminology.md
-docs/spec/00-format-common.md
-docs/spec/01-medium-header.md
-docs/spec/02-volume-header.md
-docs/spec/03-frame-header.md
-docs/spec/04-archive-end-header.md
-```
+Use `docs/spec/` for the NeoTape format specification: tape model, transport
+semantics, header fields, Frame and slice rules, continuation behavior, reader
+state machine, error handling, payload profile contracts, and open questions.
 
 ### `implementation/`
 
-Use `docs/implementation/` for implementation-specific notes.
-
-This includes C++ design notes, GNU Makefile structure, libarchive behavior,
-BLAKE3 integration, fixture strategy, and decisions that help the current
-implementation without becoming part of the on-tape format.
-
-Phase 1 implementation planning should primarily land in:
-
-```text
-docs/implementation/phase-1-header-layout.md
-```
+Use `docs/implementation/` for implementation-specific notes: C++ design
+decisions, Makefile structure, libarchive behavior, BLAKE3 integration,
+empirical LTO observations, and path handling gotchas.
 
 ### `ROADMAP.md`
 
-Keep the roadmap focused on milestones, status, and sequencing.
+Keep the roadmap focused on milestones, status, and sequencing. Avoid turning
+it into a second specification.
 
-Avoid turning the roadmap into a second specification. If a milestone needs
-technical depth, put that detail in `spec/` or `implementation/` and link to it.
+### `IDEAS.md`
 
-## Current Drafts
-
-The existing large drafts are still useful source material:
-
-```text
-docs/RFC_Draft.md
-docs/ROADMAP.md
-```
-
-They should be gradually split into the structure above instead of edited into
-even larger monolithic documents. Once a topic has been split into `docs/spec/`,
-the `docs/spec/` version is authoritative.
+Early-stage ideas that are not yet part of the spec or roadmap. May feed into
+future extensions.
 
 ## Splitting Guidance
 

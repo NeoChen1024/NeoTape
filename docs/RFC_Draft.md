@@ -12,6 +12,35 @@ or conflicting text in this RFC draft. This draft remains useful as background
 rationale and historical design context, but it is not authoritative for topics
 already split into `docs/spec/`.
 
+### Split-Out Sections
+
+| RFC Draft Section | Extracted To |
+|---|---|
+| §2 Terminology | `docs/spec/terminology.md` |
+| §5.1 Medium Header | `docs/spec/01-medium-header.md` |
+| §5.2 Multiple Archives | `docs/spec/06-volume-layout.md` |
+| §5.3 Target Backends | `docs/spec/05-spool-dir.md` |
+| §7 Frame Model | `docs/spec/07-frames-and-slices.md` |
+| §8 Header Types | `docs/spec/00-format-common.md` |
+| §9 Volume Header | `docs/spec/02-volume-header.md` |
+| §10 Frame Header | `docs/spec/03-frame-header.md` |
+| §11 Logical Slice Completion | `docs/spec/07-frames-and-slices.md` |
+| §12 Archive End Header | `docs/spec/04-archive-end-header.md` |
+| §13 Catalog | `docs/spec/07-frames-and-slices.md` (SLICE_METADATA) |
+| §14 Writer Pipeline / 14.1 Source Reader Profiles | `docs/spec/08-payload-profiles.md` |
+| §16 Reader Model / §17 Reader State Machine | `docs/spec/09-reader-state-machine.md` |
+| §18 Error Handling | `docs/spec/10-error-handling.md` |
+| §22 Security | `docs/spec/11-security.md` |
+| §23 Future Extensions | `docs/spec/12-future-extensions.md` |
+| Appendix A Example Layout | `docs/spec/appendix-layout-examples.md` |
+| Appendix C Draft CLI | `docs/spec/appendix-cli.md` |
+
+Implementation-specific content from this draft is extracted to
+`docs/implementation/`:
+- LTO EOT observations → `docs/implementation/lto-behavior-notes.md`
+- Tape append semantics → `docs/implementation/tape-append-semantics.md`
+- Spool optical backup → `docs/implementation/spool-optical-backup.md`
+
 本草案的核心假設是：NeoTape core 應承擔 volume、filemark、slice、Frame、continuation、catalog、checksum 與錯誤恢復等 transport semantics；payload archive semantics 則由 payload profile 承擔。v0.1 推薦 NeoTape/PAX profile，但 core framing 不依賴 pax/tar EOA。
 
 # Abstract
@@ -186,6 +215,9 @@ an advisory estimate.
 
 # 6\. Archive Model
 
+> Extracted to: `docs/spec/terminology.md` (Archive, Logical Slice),
+> `docs/spec/06-volume-layout.md` (logical nesting).
+
 Archive 由多個 logical slices 依 slice_seq_num 排列而成：
 
 Archive = LogicalSlice[1] + LogicalSlice[2] + ... + LogicalSlice[N]
@@ -203,6 +235,9 @@ For NeoTape/PAX payload profile, neotape-cat-volumes MAY treat the length-framed
 因此，磁帶上的每個 slice 都可作為錯誤恢復與重新同步單位；下游工具是否需要知道 slice 的存在由 payload profile 決定。
 
 # 7\. Frame Model
+
+> Extracted to: `docs/spec/07-frames-and-slices.md`. Normative Frame
+> Header fields are in `docs/spec/03-frame-header.md`.
 
 Logical slice 可由一個或多個 Frames 組成：
 
@@ -224,6 +259,11 @@ alignment when practical. That alignment is a payload-profile rule, not a core
 Frame Header flag.
 
 # 8\. Header Types
+
+> Normative header field definitions are split into
+> `docs/spec/00-format-common.md` (common rules),
+> `docs/spec/01-medium-header.md`, `docs/spec/02-volume-header.md`,
+> `docs/spec/03-frame-header.md`, `docs/spec/04-archive-end-header.md`.
 
 NeoTape v0.1 定義四種 header type：
 
@@ -303,6 +343,10 @@ Because NeoTape core framing is length-based, Archive End Header does not depend
 若沒有讀到 Archive End Header，則 archive 不應被視為 cleanly complete，即使所有 expected logical slices 都已讀到。Archive-level completion 必須由 Archive End Header 判斷。
 
 # 13\. Catalog
+
+> The catalog format is not yet extracted to a spec file. The
+> `SLICE_METADATA` frame content type is defined in
+> `docs/spec/03-frame-header.md` and `docs/spec/07-frames-and-slices.md`.
 
 NeoTape catalog is an advisory byte index, not the authoritative filesystem metadata source. For NeoTape/PAX payload profile, authoritative restore metadata remains in pax entries. Catalog data exists to support fast listing, partial restore planning, audit, and salvage.
 
@@ -411,6 +455,8 @@ ERROR
 
 # 16\. Reader / neotape-cat-volumes Model
 
+> Extracted to: `docs/spec/09-reader-state-machine.md`.
+
 neotape-cat-volumes 是最小還原工具。它的職責：
 
 * 讀取 volume header
@@ -437,6 +483,8 @@ neotape-cat-volumes 是最小還原工具。它的職責：
   bsdtar \-tvf archive.pax
 
 # 17\. Reader State Machine
+
+> Extracted to: `docs/spec/09-reader-state-machine.md`.
 
 Reader 主要狀態：
 
@@ -468,6 +516,8 @@ ERROR_HANDLER
   處理 read error、UUID mismatch、seq mismatch、header checksum error、slice incomplete 等。
 
 # 18\. Error Handling
+
+> Extracted to: `docs/spec/10-error-handling.md`.
 
 NeoTape 建議採用 Retry / Inspect / Fail / Force-Salvage 模型。
 
@@ -506,6 +556,9 @@ Read error：
 
 # 19\. Control Plane
 
+> Control modes and error policy flags are documented in
+> `docs/spec/10-error-handling.md` (Error Handling).
+
 neotape-cat-volumes 的 stdout 必須只輸出 payload bytes；對 NeoTape/PAX payload profile，stdout 是 pax bytes。互動控制不得使用 stdout。
 
 LTO 磁帶機不一定有穩定可用的磁帶 eject / insert 偵測功能，這部分還得繼續研究。
@@ -532,6 +585,8 @@ LTO 磁帶機不一定有穩定可用的磁帶 eject / insert 偵測功能，這
 
 # 20\. Compatibility with pax / bsdtar / libarchive
 
+> Extracted to: `docs/spec/08-payload-profiles.md` (NeoTape/PAX profile).
+
 NeoTape 不定義檔案 metadata 表示法。Writer 應使用 libarchive 的 pax writer，以取得對 UID/GID、xattrs、ACL、symlink、hardlink、device node、long path 與其他 POSIX metadata 的支援。Reader 端應能將 NeoTape 還原為標準 pax stream，交給 bsdtar 或其他 pax-compatible extractor。
 
 NeoTape core framing does not depend on pax/tar EOA detection. Frame and slice boundaries are determined by NeoTape length fields, not by parsing the payload format.
@@ -557,6 +612,8 @@ Medium Header 提供的恢復能力：
 * 
 * # 22\. Security Considerations
 
+> Extracted to: `docs/spec/11-security.md`.
+
 NeoTape reader 不應信任 metadata bundle 內的 member name、size、mode、timestamp 或 hash。Header metadata bundle is a restricted ar archive and reader SHOULD treat it as a flat collection of named byte blobs, not as a filesystem archive. It MUST NOT interpret member names as paths, MUST reject absolute paths and parent-directory components if any extended name syntax is supported, and MUST NOT restore ownership, permissions, device nodes, symlinks, hardlinks, xattrs, ACLs, or executable bits from header metadata bundles. Catalog 只是索引，不是權威 metadata。實際還原時仍需依 bsdtar/libarchive 的安全選項控制 absolute paths、.. path components、device nodes、ownership restore、ACL/xattr restore 等風險。
 
 若 archive 包含可執行 restore helper binary，reader 不應自動執行。Source code 與 spec 比 binary 更適合作為長期保存資料。
@@ -564,6 +621,8 @@ NeoTape reader 不應信任 metadata bundle 內的 member name、size、mode、t
 BLAKE3 is used for integrity verification, not as an authentication mechanism. If authenticity or tamper resistance is required, NeoTape SHOULD add signatures or keyed authentication metadata over the relevant BLAKE3 digests in a future extension or deployment profile.
 
 # 23\. Future Extensions
+
+> Extracted to: `docs/spec/12-future-extensions.md`.
 
 未來可考慮：
 
@@ -582,6 +641,8 @@ BLAKE3 is used for integrity verification, not as an authentication mechanism. I
 - Optional low-level SCSI passthrough profiles for diagnostics only; normal operation should use the standard sequential tape device interface.
 
 # Appendix A. Example Multi-Volume Layout
+
+> Extracted to: `docs/spec/appendix-layout-examples.md`.
 
 Tape 1:
 
@@ -628,6 +689,8 @@ selected payload profile.
 
 # Appendix C. Draft CLI
 
+> Extracted to: `docs/spec/appendix-cli.md`.
+
 Restore NeoTape/PAX payload profile interactively:
   neotape-cat-volumes --payload-profile=pax --control=auto /dev/nst0 | bsdtar -xpf - --acls --xattrs
 
@@ -647,6 +710,9 @@ Salvage mode:
   neotape-cat-volumes \--salvage \--control=tty /dev/nst0 \> salvage.out
 
 # Appendix D. Open Questions
+
+> Open questions and unresolved design choices are collected in
+> `docs/spec/open-questions.md`.
 
 1. Header binary layout exact byte offsets.
 2. CLOSED: Fixed archive-time headers use CRC32C for fast corruption detection. All non-header integrity hashes SHOULD use BLAKE3 unless a future revision defines a specific exception.

@@ -75,8 +75,8 @@ record, and validate the header.
 | `frame_content_type`         | `uint8_enum` | 1               | MUST        | `SLICE_CONTENT` or `SLICE_METADATA`.                                                                |
 | `frame_payload_blake3`       | `nt_hash`    | 32              | MUST        | BLAKE3 over exactly `frame_payload_size` bytes.                                                       |
 | `flags`                      | `uint16`     | 2               | MUST        | Frame flags:`START`, `END`.                                                                         |
-| `slice_content_size`         | `uint64`     | 8               | MUST        | Slice-level content size; valid only when `END` flag is set for `SLICE_CONTENT`, otherwise zero.    |
-| `slice_content_blake3`       | `nt_hash`    | 32              | MUST        | BLAKE3 over slice content bytes; zero when `END` flag is not set for `SLICE_CONTENT`.               |
+| `slice_content_size`         | `uint64`     | 8               | MUST        | Slice-level payload or metadata size; valid when `END` flag is set for `SLICE_CONTENT` or `SLICE_METADATA`, otherwise zero. |
+| `slice_content_blake3`       | `nt_hash`    | 32              | MUST        | BLAKE3 over slice payload or metadata bytes; zero when `END` flag is not set for the current `frame_content_type`.        |
 | `reserved`                   | `byte[*]`    | *               | MUST        | Zero bytes reserved for future fixed fields.                                                            |
 | `header_crc32c`              | `nt_crc32c`  | 4               | MUST        | CRC32C for fixed header fields, excluding this field.                                                   |
 
@@ -134,21 +134,32 @@ restore, diagnostics, or acceleration.
 
 ## Slice-Level Integrity
 
-The Frame Header with `END` flag and `SLICE_CONTENT` content type carries the
-authoritative `slice_content_size` and `slice_content_blake3` for the logical
-slice content.
+The `slice_content_size` and `slice_content_blake3` fields carry integrity
+metadata for the current `frame_content_type` group. They are valid only on
+END Frames; non-END Frames MUST set both to zero.
 
-`slice_content_blake3` is computed over exactly `slice_content_size` bytes of
-concatenated payload from all `SLICE_CONTENT` Frames in the logical slice, in
-Frame sequence order. `SLICE_METADATA` Frame bytes are NOT included in the
-slice-level BLAKE3.
+### SLICE_CONTENT Integrity
 
-Frames without the `END` flag and Frames with the `SLICE_METADATA` content type
-MUST set both `slice_content_size` and `slice_content_blake3` to zero.
+When `frame_content_type = SLICE_CONTENT` and the `END` flag is set:
+- `slice_content_size` is the concatenated byte count of all `SLICE_CONTENT`
+  payloads in the logical slice.
+- `slice_content_blake3` is computed over exactly `slice_content_size` bytes
+  of concatenated payload from all `SLICE_CONTENT` Frames, in Frame sequence
+  order. `SLICE_METADATA` Frame bytes are NOT included.
 
-Frame-level hashes (`frame_payload_blake3`) are independent and are not combined
-to form the slice-level digest. A reader MUST compute the slice-level BLAKE3
-directly from the concatenated `SLICE_CONTENT` Frame payload bytes.
+### SLICE_METADATA Integrity
+
+When `frame_content_type = SLICE_METADATA` and the `END` flag is set:
+- `slice_content_size` is the concatenated byte count of all `SLICE_METADATA`
+  payloads in the metadata group.
+- `slice_content_blake3` is computed over exactly `slice_content_size` bytes
+  of concatenated metadata from all `SLICE_METADATA` Frames, in Frame sequence
+  order. `SLICE_CONTENT` Frame bytes are NOT included.
+
+Both hashes are independent. A reader MUST compute each slice-level BLAKE3
+directly from the relevant concatenated Frame payload bytes. Frame-level hashes
+(`frame_payload_blake3`) are also independent and are not combined to form
+slice-level digests.
 
 ## Optional Slice Metadata Frames
 

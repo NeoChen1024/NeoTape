@@ -19,13 +19,11 @@ Responsibilities:
 - Resolves hardlinks through `archive_entry_linkresolver`
 - Computes archive paths via `SourceSpec`
 - Dispatches each entry into one of three queues:
-
-  | Entry type                 | Destination                 |
-  |----------------------------|-----------------------------|
-  | Non-file (dir, symlink, …) | `bb0` (BlockingQueue)       |
-  | Small file (< 4 MiB)       | Worker slot via `idle_queue`|
-  | Large file (≥ 4 MiB)       | Large slot                  |
-
+  | Entry type                  | Destination                    |
+  | --------------------------- | ------------------------------ |
+  | Non-file (dir, symlink, …) | `bb0` (BlockingQueue)        |
+  | Small file (< 4 MiB)        | Worker slot via `idle_queue` |
+  | Large file (≥ 4 MiB)       | Large slot                     |
 - Non-file entries are serialised inline (the walker calls `serialize_entry`
   itself) and the resulting bytes are pushed onto `bb0`.
 - Small files are handed to an idle worker via `assign_small` — the walker
@@ -124,22 +122,22 @@ ensures the stats line doesn't corrupt them.
 │          │  + push Result    └──────┘   │
 │          │                              │
 │          │  small files                 │
-│          │  ────────────────────────────►│
+│          │  ───────────────────────────►│
 │          │  assign_small → slot BUSY    │
 │          │    ┌─────────┐               │
-│          │    │ Worker  │── Result──►┌───┴────────┐     ┌──────┐     ┌──────┐
-│          │    │ 0..N-2 │  completed │ Serializer │────►│ bb1  │────►│Output│
-│          │    └─────────┘   queue    │ (merge+order)│  │ Buf. │     │thread│
-│          │                           └───┬────────┘     └──────┘     └──────┘
+│          │    │ Worker  │── Result──►┌──┴──────────┐     ┌──────┐     ┌──────┐
+│          │    │ 0..N-2  │  completed │ Serializer  │────►│ bb1  │────►│Output│
+│          │    └─────────┘   queue    │(merge+order)│     │ Buf. │     │thread│
+│          │                           └───┬─────────┘     └──────┘     └──────┘
 │          │  large files                  │
 │          │  ────────────────────────────►│
 │          │  assign_large → slot BUSY     │
-│          │    ┌──────────┐             │
-│          │    │Large slot│─stream──────►│
-│          │    │(slot N-1)│ (BBSink)     │
-│          │    └──────────┘             │
-└──────────┘                              │
-        notify_generation ────────────────┘
+│          │     ┌──────────┐              │
+│          │     │Large slot│─stream──────►│
+│          │     │(slot N-1)│ (BBSink)     │
+│          │     └──────────┘              │
+└──────────┘                               │
+        notify_generation ─────────────────┘
 ```
 
 ## Sequence numbering
