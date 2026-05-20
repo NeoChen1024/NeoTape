@@ -74,12 +74,21 @@ Responsibilities:
 
 - Walk source paths directly, or consume the optional plan from `--job-dir`.
 - Generate the PAX payload stream internally, initially using/refactoring the
-  `mt-pax` pipeline.
+  `mt-pax` pipeline. (`mt-pax` refactoring is done, library interface should be usable)
 - Generate NeoTape Volume, Frame, Slice, and Archive End structures.
 - Write to one or more initialized tape media.
 - Manage volume transitions within one long-running process.
 - Keep payload streaming through bounded queues; do not require full payload,
   full pax stream, or full slice spooling.
+- Sliced pax stream requires using `neotape-plan` beforehand. (Also enables
+  resumable backup, hardlink handling will require further investigating)
+
+Data Path:
+
+```
+[plan-file (optional)] -> [mt-pax writer (has internal bounded buffer)] ->
+	[neotape slice & framing handling] -> [tape / spool writer] -> [job metadata]
+```
 
 On medium full / EOT:
 
@@ -354,6 +363,6 @@ staging, and debugging, but it is not the default physical tape architecture.
 - Do not require external FIFOs between archive generation and tape writing.
 - Do not require FIFO-based restore, though it is allowed as a payload output
   mode for workflows that need `--on-volume-end=sigstop`.
-- Do not make slice boundaries the only restart boundary for tape writing.
+- Do not make slice boundaries the only restart boundary for tape writing, that should be frames.
 - Do not make the job directory a mandatory full-payload spool.
 - Do not derive Medium UUIDs from Archive UUIDs or vice versa.
