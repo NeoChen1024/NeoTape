@@ -13,6 +13,7 @@ FORMAT_OBJ = $(BUILDDIR)/neotape_format.o
 FORMAT_GEN_OBJ = $(BUILDDIR)/neotape_format_generated.o
 COMMON_OBJ = $(BUILDDIR)/neotape_common.o
 BOUNDEDBUF_OBJ = $(BUILDDIR)/neotape_bounded_buffer.o
+PAX_WRITER_OBJ = $(BUILDDIR)/neotape_pax_writer.o
 TAPE_OBJ = $(BUILDDIR)/neotape_tape.o
 NAV_OBJ  = $(BUILDDIR)/neotape_tape_navigator.o
 TEST_DEVICE_OBJ = $(BUILDDIR)/neotape_tape_test_device.o
@@ -42,8 +43,8 @@ $(BUILDDIR)/%.o : src/%.cpp Makefile | $(BUILDDIR)
 $(BINDIR)/pax : src/pax.cpp $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(COMMON_OBJ) -o $@ $(LDLIBS)
 
-$(BINDIR)/mt-pax : src/mt-pax.cpp $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/mt-pax : src/mt-pax.cpp $(PAX_WRITER_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(PAX_WRITER_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) -o $@ $(LDLIBS)
 
 $(FORMAT_GEN_OBJ): $(GENERATED_CPP) $(GENERATED_HPP) Makefile | $(BUILDDIR)
 	$(CXX) $(CXXFLAGS) -c $(GENERATED_CPP) -o $@
@@ -90,4 +91,4 @@ $(BINDIR)/% : src/%.c Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 countline:
 	scc .
 clean:
-	-rm -f ${EXE} ${BINDIR}/*.o $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TEST_DEVICE_OBJ) $(TAPE_WRITER_OBJ) $(B3LIB) $(B3OBJ) $(CRC32CLIB) $(CRC32COBJ)
+	-rm -f ${EXE} ${BINDIR}/*.o $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) $(PAX_WRITER_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TEST_DEVICE_OBJ) $(TAPE_WRITER_OBJ) $(B3LIB) $(B3OBJ) $(CRC32CLIB) $(CRC32COBJ)
