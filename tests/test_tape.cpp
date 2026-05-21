@@ -9,7 +9,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <sstream>
 #include <unistd.h>
+#include <utility>
 
 namespace {
 
@@ -49,6 +51,28 @@ private:
     bool eio_after_eod_ = false;
 };
 
+class BlockModeTapeDevice final : public mt::TapeDevice {
+public:
+    explicit BlockModeTapeDevice(bool fail_variable)
+        : TapeDevice(-1, "/dev/test-block-mode", true),
+          fail_variable_(fail_variable)
+    {
+    }
+
+    const std::vector<std::pair<int, int>> &ops() const noexcept { return ops_; }
+
+protected:
+    void do_mtop(int op, int count) override {
+        ops_.push_back({op, count});
+        if (op == mt::MTSETBLK && count == 0 && fail_variable_)
+            throw mt::Error(device_path(), "mtop", EIO);
+    }
+
+private:
+    bool fail_variable_ = false;
+    std::vector<std::pair<int, int>> ops_;
+};
+
 } // namespace
 
 static int failures = 0;
@@ -82,6 +106,41 @@ int main() {
               "density code 0x58 -> LTO-5 Ultrium");
         mt::Status scsi2(0x72, 0, 0, 0, 0, 0, 0);
         CHECK(scsi2.type_name() == "SCSI 2", "type code 0x72 -> SCSI 2");
+    }
+
+    // --- Test 0c: variable block mode is preferred and fixed mode is fallback ---
+    {
+        BlockModeTapeDevice dev(false);
+        std::ostringstream warnings;
+        auto result = dev.configure_preferred_variable_block_mode(
+            1048576, "test archive", warnings);
+
+        CHECK(result.mode == mt::TapeBlockMode::variable,
+              "variable block mode preferred when MTSETBLK 0 succeeds");
+        CHECK(result.block_size == 0,
+              "variable block mode reports block size 0");
+        CHECK((dev.ops().size() == 1 && dev.ops()[0] == std::pair<int, int>{mt::MTSETBLK, 0}),
+              "variable block mode issues MTSETBLK 0 only");
+        CHECK(warnings.str().empty(),
+              "variable block mode success emits no warning");
+    }
+
+    {
+        BlockModeTapeDevice dev(true);
+        std::ostringstream warnings;
+        auto result = dev.configure_preferred_variable_block_mode(
+            1048576, "test archive", warnings);
+
+        CHECK(result.mode == mt::TapeBlockMode::fixed,
+              "fixed block mode fallback selected when MTSETBLK 0 fails");
+        CHECK(result.block_size == 1048576,
+              "fixed block fallback reports fallback block size");
+        CHECK((dev.ops().size() == 2 &&
+              dev.ops()[0] == std::pair<int, int>{mt::MTSETBLK, 0} &&
+              dev.ops()[1] == std::pair<int, int>{mt::MTSETBLK, 1048576}),
+              "fixed block fallback tries MTSETBLK 0 then fixed size");
+        CHECK(warnings.str().find("falling back to fixed block mode") != std::string::npos,
+              "fixed block fallback emits warning");
     }
 
     // --- Test 1: blank tape detection ---
