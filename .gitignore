@@ -9,3 +9,5 @@ lib/
 .vscode/
 __pycache__/
 docs/superpowers/
+*_generated.hpp
+*_generated.cpp
