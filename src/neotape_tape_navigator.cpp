@@ -1,5 +1,5 @@
-#include "neotape/tape_navigator.hpp"
 #include "neotape/format.hpp"
+#include "neotape/tape_navigator.hpp"
 
 #include <unistd.h>
 #include <vector>
@@ -13,10 +13,7 @@ constexpr std::size_t tape_probe_read_size = 8 * 1024 * 1024;
 
 } // namespace
 
-TapeNavigator::TapeNavigator(TapeDevice &dev)
-    : dev_(dev)
-{
-}
+TapeNavigator::TapeNavigator(TapeDevice &dev) : dev_(dev) {}
 
 std::optional<neotape::ParsedHeader> TapeNavigator::read_current_header() {
     std::vector<uint8_t> buf(tape_probe_read_size);
@@ -111,8 +108,7 @@ bool TapeNavigator::locate_instance(uint64_t n) {
 
     for (;;) {
         auto header = read_current_header();
-        bool is_volume = header &&
-            header->type == neotape::HeaderType::volume;
+        bool is_volume = header && header->type == neotape::HeaderType::volume;
 
         try {
             dev_.space_fwd(1);
@@ -133,10 +129,9 @@ bool TapeNavigator::locate_instance(uint64_t n) {
 bool TapeNavigator::seek_volume(uint64_t volume_seq_num) {
     for (;;) {
         auto header = read_current_header();
-        bool matches = header &&
-            header->type == neotape::HeaderType::volume &&
-            header->volume &&
-            header->volume->volume_seq_num == volume_seq_num;
+        bool matches = header && header->type == neotape::HeaderType::volume &&
+                       header->volume &&
+                       header->volume->volume_seq_num == volume_seq_num;
 
         try {
             dev_.space_fwd(1);

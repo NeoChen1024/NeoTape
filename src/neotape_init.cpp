@@ -1,5 +1,5 @@
-#include "neotape/tape.hpp"
 #include "neotape/format.hpp"
+#include "neotape/tape.hpp"
 
 #include <cerrno>
 #include <cstdio>
@@ -26,7 +26,8 @@ constexpr std::size_t tape_probe_read_size = 8 * 1024 * 1024;
 }
 
 [[noreturn]] void usage(const char *prog) {
-    std::cerr << format("usage: {} -f <device> [--label <text>] [--force]\n", prog);
+    std::cerr << format("usage: {} -f <device> [--label <text>] [--force]\n",
+                        prog);
     std::exit(2);
 }
 
@@ -39,26 +40,35 @@ struct Options {
 Options parse_args(int argc, char **argv) {
     static const option long_opts[] = {
         {"label", required_argument, nullptr, 'l'},
-        {"force", no_argument,       nullptr, 'F'},
-        {"help",  no_argument,       nullptr, 'h'},
-        {nullptr, 0, nullptr, 0}
-    };
+        {"force", no_argument, nullptr, 'F'},
+        {"help", no_argument, nullptr, 'h'},
+        {nullptr, 0, nullptr, 0}};
 
     Options opts;
     int c;
     while ((c = getopt_long(argc, argv, "f:l:Fh", long_opts, nullptr)) != -1) {
         switch (c) {
-        case 'f': opts.device = optarg; break;
-        case 'l': opts.label = optarg; break;
-        case 'F': opts.force = true; break;
-        case 'h': usage(argv[0]); break;
-        case '?': std::exit(2);
+        case 'f':
+            opts.device = optarg;
+            break;
+        case 'l':
+            opts.label = optarg;
+            break;
+        case 'F':
+            opts.force = true;
+            break;
+        case 'h':
+            usage(argv[0]);
+            break;
+        case '?':
+            std::exit(2);
         }
     }
 
     if (opts.device.empty()) {
         const char *env = std::getenv("TAPE");
-        if (env) opts.device = env;
+        if (env)
+            opts.device = env;
     }
     if (opts.device.empty())
         fail("no tape device specified (use -f or $TAPE)");
@@ -84,9 +94,11 @@ int main(int argc, char **argv) {
             buf.resize(static_cast<std::size_t>(n));
         if (n > 0 && buf.size() >= neotape::fixed_header_size) {
             try {
-                auto parsed = neotape::parse_fixed_header(buf.data(), buf.size());
+                auto parsed =
+                    neotape::parse_fixed_header(buf.data(), buf.size());
                 if (parsed.type == neotape::HeaderType::medium && !opts.force)
-                    fail("medium already initialized (use --force to overwrite)");
+                    fail("medium already initialized (use --force to "
+                         "overwrite)");
             } catch (const std::exception &) {
                 // Not a valid NeoTape header — proceed with init
             }

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "neotape/tape.hpp"
 #include "neotape/format.hpp"
+#include "neotape/tape.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -36,10 +36,11 @@ struct ArchiveBoundary {
 };
 
 class TapeNavigator {
-public:
+  public:
     explicit TapeNavigator(TapeDevice &dev);
 
-    AppendResult locate_append_position(AppendPolicy policy = AppendPolicy::strict);
+    AppendResult
+    locate_append_position(AppendPolicy policy = AppendPolicy::strict);
     AppendResult inspect();
 
     std::optional<neotape::ParsedHeader> read_current_header();
@@ -48,7 +49,7 @@ public:
     bool locate_instance(uint64_t n);
     bool seek_volume(uint64_t volume_seq_num);
 
-private:
+  private:
     TapeDevice &dev_;
 };
 

@@ -8,14 +8,14 @@
 namespace neotape {
 
 struct ParsedHeader {
-	HeaderType type;
-	uint8_t version = 0;
-	uint32_t stored_crc32c = 0;
-	uint32_t computed_crc32c = 0;
-	std::optional<VolumeHeader> volume;
-	std::optional<FrameHeader> frame;
-	std::optional<ArchiveEndHeader> archive_end;
-	std::optional<MediumHeader> medium;
+    HeaderType type;
+    uint8_t version = 0;
+    uint32_t stored_crc32c = 0;
+    uint32_t computed_crc32c = 0;
+    std::optional<VolumeHeader> volume;
+    std::optional<FrameHeader> frame;
+    std::optional<ArchiveEndHeader> archive_end;
+    std::optional<MediumHeader> medium;
 };
 
 HeaderBytes serialize_volume_header(const VolumeHeader &header);

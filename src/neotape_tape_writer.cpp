@@ -1,6 +1,6 @@
+#include "neotape/format.hpp"
 #include "neotape/tape.hpp"
 #include "neotape/tape_navigator.hpp"
-#include "neotape/format.hpp"
 #include "neotape/tape_writer.hpp"
 
 #include <blake3.h>
@@ -51,13 +51,16 @@ bool write_tape_record(TapeDevice &dev, const neotape::HeaderBytes &header,
     vector<uint8_t> buf(block_size, 0);
     std::memcpy(buf.data(), header.data(), header.size());
     if (payload && !payload->empty()) {
-        size_t copy = std::min(payload->size(), buf.size() - neotape::fixed_header_size);
-        std::memcpy(buf.data() + neotape::fixed_header_size, payload->data(), copy);
+        size_t copy =
+            std::min(payload->size(), buf.size() - neotape::fixed_header_size);
+        std::memcpy(buf.data() + neotape::fixed_header_size, payload->data(),
+                    copy);
     }
 
     ssize_t n = ::write(dev.fd(), buf.data(), buf.size());
     if (n < 0) {
-        if (errno == ENOSPC) return false;
+        if (errno == ENOSPC)
+            return false;
         fail(format("write: {}", std::strerror(errno)));
     }
     if (static_cast<std::size_t>(n) != buf.size())
@@ -66,12 +69,14 @@ bool write_tape_record(TapeDevice &dev, const neotape::HeaderBytes &header,
 }
 
 void prompt_next_volume(uint64_t volume_seq_num) {
-    std::cerr << format("End of tape reached, volume_seq_num={}\n", volume_seq_num);
+    std::cerr << format("End of tape reached, volume_seq_num={}\n",
+                        volume_seq_num);
     std::cerr << "Insert next volume and press Enter: ";
     FILE *tty = std::fopen("/dev/tty", "r");
     if (tty) {
         int c;
-        while ((c = std::fgetc(tty)) != EOF && c != '\n') {}
+        while ((c = std::fgetc(tty)) != EOF && c != '\n') {
+        }
         std::fclose(tty);
     }
 }
@@ -87,7 +92,8 @@ void write_volume_header(WriterState &state) {
     vh.archive_name = state.opts.archive_name;
     vh.volume_seq_num = state.volume_seq_num;
     vh.payload_profile = state.opts.payload_profile == "pax"
-        ? neotape::PayloadProfile::pax : neotape::PayloadProfile::raw;
+                             ? neotape::PayloadProfile::pax
+                             : neotape::PayloadProfile::raw;
     vh.volume_write_at_utc = neotape::utc_timestamp_now();
 
     auto bytes = neotape::serialize_volume_header(vh);
@@ -112,13 +118,15 @@ void write_content_frame(WriterState &state, const vector<uint8_t> &payload,
     ++state.global_frame_seq_num;
     ++state.frame_seq_num_within_slice;
 
-    neotape::Hash payload_hash = neotape::blake3_hash(payload.data(), payload.size());
+    neotape::Hash payload_hash =
+        neotape::blake3_hash(payload.data(), payload.size());
     blake3_hasher_update(&state.slice_hasher, payload.data(), payload.size());
     state.current_slice_size += payload.size();
 
     neotape::Hash slice_hash{};
     if (end)
-        blake3_hasher_finalize(&state.slice_hasher, slice_hash.data(), slice_hash.size());
+        blake3_hasher_finalize(&state.slice_hasher, slice_hash.data(),
+                               slice_hash.size());
 
     neotape::FrameHeader fh;
     fh.volume_block_size = state.opts.volume_block_size;
@@ -186,7 +194,8 @@ void write_stream_payload(WriterState &state, FILE *input, bool split_slices) {
 
     for (;;) {
         if (have_pending && split_slices &&
-            state.current_slice_size + pending.size() >= state.opts.slice_size) {
+            state.current_slice_size + pending.size() >=
+                state.opts.slice_size) {
             write_content_frame(state, pending, true);
             pending.clear();
             have_pending = false;
@@ -198,7 +207,8 @@ void write_stream_payload(WriterState &state, FILE *input, bool split_slices) {
             uint64_t pending_size = have_pending ? pending.size() : 0;
             uint64_t used = state.slice_open ? state.current_slice_size : 0;
             uint64_t remaining = state.opts.slice_size - used - pending_size;
-            want = static_cast<size_t>(std::min<uint64_t>(buffer.size(), remaining));
+            want = static_cast<size_t>(
+                std::min<uint64_t>(buffer.size(), remaining));
         }
 
         size_t n = std::fread(buffer.data(), 1, want, input);
@@ -209,7 +219,7 @@ void write_stream_payload(WriterState &state, FILE *input, bool split_slices) {
                 have_pending = false;
             }
             pending.assign(buffer.begin(),
-                buffer.begin() + static_cast<std::ptrdiff_t>(n));
+                           buffer.begin() + static_cast<std::ptrdiff_t>(n));
             have_pending = true;
         }
         if (n != want) {
@@ -241,9 +251,9 @@ void write_tape_archive(const TapeWriterOptions &opts) {
         dev.rewind();
     } else {
         nav::TapeNavigator nav(dev);
-        auto r = nav.locate_append_position(
-            opts.force_append ? nav::AppendPolicy::force
-                              : nav::AppendPolicy::strict);
+        auto r = nav.locate_append_position(opts.force_append
+                                                ? nav::AppendPolicy::force
+                                                : nav::AppendPolicy::strict);
         if (r.condition == nav::TapeCondition::blank) {
             if (!opts.init_if_blank)
                 fail("tape is blank; use --init or --init-if-blank");
@@ -261,19 +271,20 @@ void write_tape_archive(const TapeWriterOptions &opts) {
     FILE *input = stdin;
     if (opts.input != "-") {
         input = std::fopen(opts.input.c_str(), "rb");
-        if (!input) fail(format("open {}: {}", opts.input, std::strerror(errno)));
+        if (!input)
+            fail(format("open {}: {}", opts.input, std::strerror(errno)));
     }
 
     write_stream_payload(state, input,
-        opts.payload_profile == "raw" && opts.slice_size_set);
+                         opts.payload_profile == "raw" && opts.slice_size_set);
 
     if (input != stdin && std::fclose(input) != 0)
         fail(format("close input: {}", std::strerror(errno)));
 
     write_archive_end(state);
 
-    std::cerr << format("archive {} written to tape {}\n",
-        state.archive_uuid, opts.device);
+    std::cerr << format("archive {} written to tape {}\n", state.archive_uuid,
+                        opts.device);
 }
 
 } // namespace mt
