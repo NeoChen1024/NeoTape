@@ -8,3 +8,4 @@ lib/
 .codex/
 .vscode/
 __pycache__/
+docs/superpowers/
