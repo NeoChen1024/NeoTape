@@ -18,6 +18,8 @@ namespace {
 using std::format;
 using std::string;
 
+constexpr std::size_t tape_probe_read_size = 8 * 1024 * 1024;
+
 [[noreturn]] void fail(const string &msg) {
     std::cerr << format("neotape-init: {}\n", msg);
     std::exit(1);
@@ -71,12 +73,16 @@ int main(int argc, char **argv) {
         auto opts = parse_args(argc, argv);
 
         mt::TapeDevice dev(opts.device, true);
+        dev.configure_preferred_variable_block_mode(
+            65536, "neotape-init medium header", std::cerr);
 
         // Check if already initialized
         dev.rewind();
-        std::vector<uint8_t> buf(neotape::fixed_header_size);
+        std::vector<uint8_t> buf(tape_probe_read_size);
         ssize_t n = ::read(dev.fd(), buf.data(), buf.size());
-        if (n > 0) {
+        if (n > 0)
+            buf.resize(static_cast<std::size_t>(n));
+        if (n > 0 && buf.size() >= neotape::fixed_header_size) {
             try {
                 auto parsed = neotape::parse_fixed_header(buf.data(), buf.size());
                 if (parsed.type == neotape::HeaderType::medium && !opts.force)

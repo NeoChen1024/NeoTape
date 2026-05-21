@@ -3,13 +3,17 @@
 
 #include <cerrno>
 #include <cstring>
+#include <format>
 #include <fcntl.h>
+#include <iostream>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 namespace mt {
 namespace {
+
+using std::format;
 
 // -----------------------------------------------------------------------
 // Minimal density table — independently researched from public specs.
@@ -220,6 +224,22 @@ void TapeDevice::erase(int count)            { do_mtop(MTERASE, count); }
 // -- drive control -----------------------------------------------------
 
 void TapeDevice::set_block_size(int bytes)   { do_mtop(MTSETBLK, bytes); }
+TapeBlockModeResult TapeDevice::configure_preferred_variable_block_mode(
+    uint32_t fallback_block_size,
+    std::string_view context,
+    std::ostream &warnings)
+{
+    try {
+        set_block_size(0);
+        return TapeBlockModeResult{TapeBlockMode::variable, 0};
+    } catch (const Error &e) {
+        warnings << format(
+            "{}: variable block mode unavailable: {}; falling back to fixed block mode {} bytes\n",
+            context, e.what(), fallback_block_size);
+        set_block_size(static_cast<int>(fallback_block_size));
+        return TapeBlockModeResult{TapeBlockMode::fixed, fallback_block_size};
+    }
+}
 void TapeDevice::set_density(int code)       { do_mtop(MTSETDENSITY, code); }
 void TapeDevice::set_compression(bool en)    { do_mtop(MTCOMPRESSION, en ? 1 : 0); }
 void TapeDevice::lock()                      { do_mtop(MTLOCK, 1); }

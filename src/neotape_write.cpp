@@ -165,7 +165,7 @@ Options parse_args(int argc, char **argv) {
 	if (saw_target && !opts.output_dir.empty())
 		opts.tape_device.clear();
 	if (!neotape::valid_block_size(opts.volume_block_size))
-		fail("volume block size must be between 4096 and 16777216 bytes");
+		fail("volume block size must be between 4096 and 8388608 bytes");
 	if (opts.slice_size_set && opts.slice_size == 0)
 		fail("slice size must be greater than zero");
 	if (opts.slice_size_set && opts.slice_size < opts.volume_block_size)

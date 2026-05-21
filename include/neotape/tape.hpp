@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <iosfwd>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -73,6 +74,16 @@ struct Position final {
     long block_no;
 };
 
+enum class TapeBlockMode {
+    variable,
+    fixed,
+};
+
+struct TapeBlockModeResult {
+    TapeBlockMode mode;
+    uint32_t block_size;
+};
+
 // -----------------------------------------------------------------------
 // TapeDevice — RAII tape device handle
 // -----------------------------------------------------------------------
@@ -120,6 +131,10 @@ public:
     // -- drive control -------------------------------------------------
 
     void set_block_size(int bytes);
+    TapeBlockModeResult configure_preferred_variable_block_mode(
+        uint32_t fallback_block_size,
+        std::string_view context,
+        std::ostream &warnings);
     void set_density(int code);
     void set_compression(bool enable);
     void lock();

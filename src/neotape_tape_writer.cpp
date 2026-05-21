@@ -229,6 +229,8 @@ void write_stream_payload(WriterState &state, FILE *input, bool split_slices) {
 
 void write_tape_archive(const TapeWriterOptions &opts) {
     TapeDevice dev(opts.device, true);
+    dev.configure_preferred_variable_block_mode(
+        opts.volume_block_size, "neotape-write archive records", std::cerr);
 
     WriterState state;
     state.opts = opts;
@@ -252,7 +254,6 @@ void write_tape_archive(const TapeWriterOptions &opts) {
         }
     }
 
-    dev.set_block_size(opts.volume_block_size);
     state.archive_uuid = neotape::make_uuid_v4();
 
     write_volume_header(state);

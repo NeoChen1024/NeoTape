@@ -92,7 +92,7 @@ def generate_hpp() -> str:
     emit("inline constexpr std::array<char, 8> magic = {'N','e','o','T','a','p','e','\\0'};")
     emit('inline constexpr uint8_t header_version = 1;')
     emit('inline constexpr uint32_t min_block_size = 4096;')
-    emit('inline constexpr uint32_t max_block_size = 16 * 1024 * 1024;')
+    emit('inline constexpr uint32_t max_block_size = 8 * 1024 * 1024;')
     emit()
     emit('using HeaderBytes = std::array<uint8_t, fixed_header_size>;')
     emit('using Hash = std::array<uint8_t, 32>;')

@@ -7,19 +7,26 @@
 namespace mt {
 namespace nav {
 
+namespace {
+
+constexpr std::size_t tape_probe_read_size = 8 * 1024 * 1024;
+
+} // namespace
+
 TapeNavigator::TapeNavigator(TapeDevice &dev)
     : dev_(dev)
 {
 }
 
 std::optional<neotape::ParsedHeader> TapeNavigator::read_current_header() {
-    std::vector<uint8_t> buf(neotape::fixed_header_size);
+    std::vector<uint8_t> buf(tape_probe_read_size);
     ssize_t n = ::read(dev_.fd(), buf.data(), buf.size());
     if (n <= 0)
         return std::nullopt;
-    buf.resize(static_cast<std::size_t>(n));
-    if (buf.size() < neotape::fixed_header_size)
+    if (static_cast<std::size_t>(n) < neotape::fixed_header_size)
         buf.resize(neotape::fixed_header_size, 0);
+    else
+        buf.resize(static_cast<std::size_t>(n));
     return neotape::parse_fixed_header(buf.data(), buf.size());
 }
 
