@@ -20,6 +20,17 @@ Dependencies: libarchive (system, `-larchive`), BLAKE3 (bundled submodule
 `3rdparty/crc32c` → `lib/libcrc32c.a`). mt-st is a submodule but unused in
 the build.
 
+## Python Codegen
+
+- `scripts/neotape_header_defs.py` is the Python source of truth for NeoTape
+  fixed-header layout data.
+- `scripts/generate_neotape_parsers.py` generates
+  `include/neotape/format_generated.hpp` and `src/neotape_format_generated.cpp`.
+- Regenerate codegen outputs with `make` or directly with
+  `python3 scripts/generate_neotape_parsers.py`.
+- Do not hand-edit generated files; update the Python definitions instead and
+  regenerate.
+
 ## Project layout
 
 - `src/pax.cpp` — single-threaded Phase 0 pax writer (stable baseline)
