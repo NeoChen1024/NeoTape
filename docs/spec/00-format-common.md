@@ -138,11 +138,18 @@ the header consumes 25% of each record.
 
 ### Maximum
 
-The NeoTape record block size MUST NOT exceed 16 MiB (16777216 bytes). A reader
+The NeoTape record block size MUST NOT exceed 8 MiB (8388608 bytes). A reader
 SHOULD reject larger values as unsupported.
 
-16 MiB is the typical variable-length record size limit of LTO tape drives.
-Values above 16 MiB may fail at the hardware layer.
+8 MiB is the practical variable-length record ceiling validated on the target
+LTO-5 drive. Values above 8 MiB may fail at the hardware layer.
+
+### Shape
+
+The format MAY use non-power-of-2 block sizes. In practice, that is usually a
+poor choice for any physical medium, especially LTO tape. Writers SHOULD prefer
+power-of-2 block sizes unless they have a concrete medium-specific reason not
+to.
 
 ### Scope
 

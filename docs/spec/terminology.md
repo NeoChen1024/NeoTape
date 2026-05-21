@@ -292,7 +292,10 @@ in the Medium Header.
 | ------------------- | ----------------------- | ------------------------------------------------------- |
 | Minimum             | 4 KiB (4096 bytes)      | Below 4 KiB, header overhead dominates.                 |
 | Recommended minimum | 64 KiB                  | At 4 KiB, the Frame Header consumes 25% of each record. |
-| Maximum             | 16 MiB (16777216 bytes) | LTO hardware record size limit.                         |
+| Maximum             | 8 MiB (8388608 bytes)   | LTO hardware record size limit.                         |
+
+Non-power-of-2 block sizes are allowed by the format, but they are generally
+not a good choice for physical media, including LTO tape.
 
 ## Header Field Terminology
 

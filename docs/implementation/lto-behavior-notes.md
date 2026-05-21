@@ -132,3 +132,22 @@ volume.
 
 Tested native capacity of non-partitioned LTO-5 tapes:
 `partition number: 0, partition record data counter [MB]: 1541438`
+
+## Variable Block Read Probe
+
+On the validated LTO-5 drive, NeoTape wrote a 1 MiB record in Linux variable
+block mode (`MTSETBLK 0`) and then read using multiple buffer sizes. The
+validated window was 1 MiB through 8 MiB inclusive: 512 KiB failed with
+`ENOMEM`, 1 MiB, 2 MiB, 4 MiB, and 8 MiB returned one 1 MiB record.
+
+Observed probe results:
+
+| Read buffer | Result |
+| --- | --- |
+| 512 KiB | `ENOMEM` |
+| 1 MiB | `1048576` bytes returned |
+| 2 MiB | `1048576` bytes returned |
+| 4 MiB | `1048576` bytes returned |
+| 8 MiB | `1048576` bytes returned |
+This supports using an 8 MiB probe ceiling on the validated drive while still
+treating each successful `read()` as one physical tape record.

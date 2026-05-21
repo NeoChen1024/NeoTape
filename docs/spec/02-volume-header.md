@@ -59,6 +59,10 @@ It is not a recommendation. After the Volume Header is committed, the writer
 MUST use this `volume_block_size` for all NeoTape records in the same archive
 volume.
 
+The format MAY use non-power-of-2 `volume_block_size` values, but they are
+generally a poor choice for physical media, including LTO tape. Writers SHOULD
+prefer power-of-2 values unless a medium-specific reason justifies otherwise.
+
 A reader SHOULD treat a record-size change inside the volume as a format error
 unless an explicit future extension allows it.
 
