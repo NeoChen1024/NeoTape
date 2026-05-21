@@ -28,7 +28,7 @@ AppendResult TapeNavigator::locate_append_position(AppendPolicy policy) {
 
     {
         auto s = dev_.status();
-        if (s.bot())
+        if (s.bot() || (s.eod() && s.fileno() == 0 && s.blkno() < 0))
             return {false, TapeCondition::blank, std::nullopt};
     }
 

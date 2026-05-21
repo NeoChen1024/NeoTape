@@ -37,7 +37,7 @@ const char *density_name_for_code(int code) noexcept {
         { 0x55, "IBM 3592 E08 (TS1150)"        },
         { 0x56, "IBM 3592 55F (TS1155)"        },
         { 0x57, "IBM 3592 60F (TS1160)"        },
-        { 0x58, "LTO-6 Ultrium"                },
+        { 0x58, "LTO-5 Ultrium"                },
         { 0x59, "IBM 3592 70F (TS1170)"        },
         { 0x5a, "LTO-7 Ultrium"                },
         { 0x5c, "LTO-8 Ultrium"                },
@@ -180,7 +180,20 @@ void TapeDevice::do_mtop(int op, int count) {
 // -- positioning -------------------------------------------------------
 
 void TapeDevice::rewind()                    { do_mtop(MTREW, 1); }
-void TapeDevice::space_to_eod()              { do_mtop(MTEOM, 1); }
+void TapeDevice::space_to_eod() {
+    try {
+        do_mtop(MTEOM, 1);
+    } catch (const Error &e) {
+        if (e.error_code() == EIO) {
+            try {
+                if (status().eod())
+                    return;
+            } catch (const Error &) {
+            }
+        }
+        throw;
+    }
+}
 void TapeDevice::space_fwd(int count)        { do_mtop(MTFSF, count); }
 void TapeDevice::space_bwd(int count)        { do_mtop(MTBSF, count); }
 void TapeDevice::space_fwd_filemark(int cnt) { do_mtop(MTFSFM, cnt); }
