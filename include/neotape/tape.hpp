@@ -2,10 +2,12 @@
 
 #include <cstdint>
 #include <iosfwd>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 namespace mt {
 
@@ -172,6 +174,39 @@ class TapeDevice {
     int fd_ = -1;
     std::string device_path_;
     bool read_write_ = false;
+};
+
+class SpoolTapeDevice final : public TapeDevice {
+  public:
+    explicit SpoolTapeDevice(const std::filesystem::path &root,
+                             bool read_write = false);
+    ~SpoolTapeDevice() override;
+
+    SpoolTapeDevice(const SpoolTapeDevice &) = delete;
+    SpoolTapeDevice &operator=(const SpoolTapeDevice &) = delete;
+    SpoolTapeDevice(SpoolTapeDevice &&) = delete;
+    SpoolTapeDevice &operator=(SpoolTapeDevice &&) = delete;
+
+    int fd() const noexcept override;
+
+  protected:
+    void do_mtop(int op, int count) override;
+    Position do_tell() override;
+    Status do_status() override;
+
+  private:
+    std::filesystem::path root_;
+    int spool_fd_ = -1;
+    bool read_write_ = false;
+    std::vector<std::filesystem::path> files_;
+    std::size_t read_index_ = 0;
+    uint64_t next_file_num_ = 0;
+    uint64_t current_file_num_ = 0;
+    uint64_t current_record_ = 0;
+    uint32_t current_block_size_ = 0;
+    bool exhausted_ = false;
+    bool current_is_temp_ = false;
+    std::filesystem::path current_path_;
 };
 
 } // namespace mt

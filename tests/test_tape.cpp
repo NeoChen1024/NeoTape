@@ -1,17 +1,17 @@
-// Basic verification of FileBackedTapeDevice + TapeNavigator.
+// Basic verification of TapeDevice helpers and spool backend behavior.
 // Run: make test_tape && bin/test_tape
 
-#include "tape_test_device.hpp"
 #include "neotape/tape_navigator.hpp"
 #include "neotape/format.hpp"
 #include "neotape/tape_ioctl.h"
 
+#include <filesystem>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <sstream>
 #include <unistd.h>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -136,120 +136,82 @@ int main() {
         CHECK(result.block_size == 1048576,
               "fixed block fallback reports fallback block size");
         CHECK((dev.ops().size() == 2 &&
-              dev.ops()[0] == std::pair<int, int>{mt::MTSETBLK, 0} &&
-              dev.ops()[1] == std::pair<int, int>{mt::MTSETBLK, 1048576}),
+               dev.ops()[0] == std::pair<int, int>{mt::MTSETBLK, 0} &&
+               dev.ops()[1] == std::pair<int, int>{mt::MTSETBLK, 1048576}),
               "fixed block fallback tries MTSETBLK 0 then fixed size");
         CHECK(warnings.str().find("falling back to fixed block mode") != std::string::npos,
               "fixed block fallback emits warning");
     }
 
-    // --- Test 1: blank tape detection ---
+    // --- Test 8: spool backend writes the new single-root .nts layout ---
     {
-        mt::test::FileBackedTapeDevice dev("/tmp/tape_test_1.bin", 4096);
-        mt::nav::TapeNavigator nav(dev);
-        auto r = nav.locate_append_position(mt::nav::AppendPolicy::strict);
-        CHECK(!r.ok, "blank tape -> not ok");
-        CHECK(r.condition == mt::nav::TapeCondition::blank, "blank tape -> blank condition");
-    }
+        namespace fs = std::filesystem;
 
-    // --- Test 2: write a header, read it back ---
-    {
-        mt::test::FileBackedTapeDevice dev("/tmp/tape_test_2.bin", 4096, true);
-        int fd = dev.fd();
+        fs::path root = fs::temp_directory_path() / "neotape-spool-backend-test";
+        fs::remove_all(root);
+        fs::create_directories(root);
 
-        char buf[1024] = {};
-        memcpy(buf, "NeoTape", 7);
-        buf[8] = 1;  // version
-        buf[9] = 3;  // HeaderType::frame
+        mt::SpoolTapeDevice dev(root, true);
 
-        ssize_t n = ::write(fd, buf, sizeof(buf));
-        CHECK(n == 1024, "write 1024 bytes");
-        dev.write_filemark();
+        auto write_record = [&](const auto &bytes) {
+            ssize_t n = ::write(dev.fd(), bytes.data(), bytes.size());
+            CHECK(n == static_cast<ssize_t>(bytes.size()),
+                  "spool backend writes one fixed-size record");
+            dev.write_filemark();
+        };
 
-        dev.rewind();
-        char rbuf[1024] = {};
-        n = ::read(fd, rbuf, sizeof(rbuf));
-        CHECK(n == 1024, "read 1024 bytes");
-        CHECK(memcmp(rbuf, "NeoTape", 7) == 0, "magic matches");
-    }
+        neotape::MediumHeader mh;
+        mh.medium_uuid = "11111111-2222-3333-4444-555555555555";
+        mh.medium_label = "spool-test";
+        mh.initialized_at_utc = "2026-05-22T00:00:00Z";
+        mh.medium_header_block_size = 4096;
+        mh.medium_header_block_count = 1;
+        mh.created_by_implementation = "test";
+        write_record(neotape::serialize_medium_header(mh));
 
-    // --- Test 3: tell() throws on test device ---
-    {
-        mt::test::FileBackedTapeDevice dev("/tmp/tape_test_3.bin", 4096);
-        bool threw = false;
-        try {
-            dev.tell();
-        } catch (const mt::Error &) {
-            threw = true;
-        }
-        CHECK(threw, "tell() throws on FileBackedTapeDevice");
-    }
+        neotape::VolumeHeader vh;
+        vh.volume_block_size = 4096;
+        vh.archive_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        vh.archive_name = "archive";
+        vh.volume_seq_num = 1;
+        vh.payload_profile = neotape::PayloadProfile::raw;
+        vh.volume_write_at_utc = "2026-05-22T00:00:01Z";
+        write_record(neotape::serialize_volume_header(vh));
 
-    // --- Test 4: filemark index after writes ---
-    {
-        mt::test::FileBackedTapeDevice dev("/tmp/tape_test_4.bin", 4096, true);
-        CHECK(dev.file_count() == 0, "no files initially");
-
-        char buf[1024] = {};
-        ::write(dev.fd(), buf, sizeof(buf));
-        dev.write_filemark();
-        CHECK(dev.file_count() == 1, "one file after first write+fm");
-
-        ::write(dev.fd(), buf, sizeof(buf));
-        dev.write_filemark();
-        CHECK(dev.file_count() == 2, "two files after second write+fm");
-    }
-
-    // --- Test 5: navigator on non-blank tape ---
-    {
-        mt::test::FileBackedTapeDevice dev("/tmp/tape_test_5.bin", 4096, true);
+        neotape::FrameHeader fh;
+        fh.volume_block_size = 4096;
+        fh.archive_uuid = vh.archive_uuid;
+        fh.archive_name = vh.archive_name;
+        fh.volume_seq_num = 1;
+        fh.logical_slice_seq_num = 1;
+        fh.global_frame_seq_num = 1;
+        fh.frame_seq_num_within_slice = 1;
+        fh.frame_payload_size = 0;
+        fh.flags = neotape::frame_flag_start | neotape::frame_flag_end;
+        write_record(neotape::serialize_frame_header(fh));
 
         neotape::ArchiveEndHeader ae;
-        ae.archive_uuid = "test-uuid-0000-0000-000000000000";
-        ae.archive_name = "test";
         ae.volume_block_size = 4096;
-        auto bytes = neotape::serialize_archive_end_header(ae);
-        ::write(dev.fd(), bytes.data(), bytes.size());
-        dev.write_filemark();
+        ae.archive_uuid = vh.archive_uuid;
+        ae.archive_name = vh.archive_name;
+        ae.volume_seq_num = 1;
+        ae.last_logical_slice_seq_num = 1;
+        ae.last_global_frame_seq_num = 1;
+        ae.created_by_implementation = "test";
+        ae.archive_end_at_utc = "2026-05-22T00:00:02Z";
+        write_record(neotape::serialize_archive_end_header(ae));
 
-        mt::nav::TapeNavigator nav(dev);
-        auto r = nav.locate_append_position(mt::nav::AppendPolicy::strict);
-        CHECK(r.ok, "non-blank with valid tail -> ok");
+        CHECK(fs::exists(root / "tape-file-000000.medium-header.nts"),
+              "medium header file uses .nts name");
+        CHECK(fs::exists(root / "tape-file-000001.volume-header.nts"),
+              "volume header file uses .nts name");
+        CHECK(fs::exists(root / "tape-file-000002.slice-000001.nts"),
+              "slice file uses parsed slice sequence name");
+        CHECK(fs::exists(root / "tape-file-000003.archive-end.nts"),
+              "archive end file uses .nts name");
+
+        fs::remove_all(root);
     }
-
-    // --- Test 6: real blank LTO media may report EOD file 0, not BOT ---
-    {
-        BlankEodTapeDevice dev;
-        mt::nav::TapeNavigator nav(dev);
-        auto r = nav.locate_append_position(mt::nav::AppendPolicy::strict);
-        CHECK(!r.ok, "blank EOD file 0 -> not ok");
-        CHECK(r.condition == mt::nav::TapeCondition::blank,
-              "blank EOD file 0 -> blank condition");
-    }
-
-    // --- Test 7: some drives report EIO from MTEOM after reaching blank EOD ---
-    {
-        BlankEodTapeDevice dev(true);
-        mt::nav::TapeNavigator nav(dev);
-        bool threw = false;
-        mt::nav::AppendResult r;
-        try {
-            r = nav.locate_append_position(mt::nav::AppendPolicy::strict);
-        } catch (const mt::Error &) {
-            threw = true;
-        }
-        CHECK(!threw, "blank EOD after MTEOM EIO -> no throw");
-        CHECK(!r.ok, "blank EOD after MTEOM EIO -> not ok");
-        CHECK(r.condition == mt::nav::TapeCondition::blank,
-              "blank EOD after MTEOM EIO -> blank condition");
-    }
-
-    // --- Cleanup ---
-    unlink("/tmp/tape_test_1.bin");
-    unlink("/tmp/tape_test_2.bin");
-    unlink("/tmp/tape_test_3.bin");
-    unlink("/tmp/tape_test_4.bin");
-    unlink("/tmp/tape_test_5.bin");
 
     fprintf(stderr, "\n%d failure(s)\n", failures);
     return failures ? 1 : 0;

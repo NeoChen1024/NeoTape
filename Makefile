@@ -16,7 +16,6 @@ BOUNDEDBUF_OBJ = src/neotape_bounded_buffer.o
 PAX_WRITER_OBJ = src/neotape_pax_writer.o
 TAPE_OBJ = src/neotape_tape.o
 NAV_OBJ  = src/neotape_tape_navigator.o
-TEST_DEVICE_OBJ = tests/tape_test_device.o
 TAPE_WRITER_OBJ = src/neotape_tape_writer.o
 
 include 3rdparty/blake3.mk
@@ -54,9 +53,6 @@ $(FORMAT_GEN_OBJ): $(GENERATED_CPP) $(GENERATED_HPP) Makefile
 $(BINDIR)/neotape-write : src/neotape_write.cpp $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) -o $@ $(LDLIBS)
 
-$(TEST_DEVICE_OBJ) : tests/tape_test_device.cpp Makefile
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-
 $(BINDIR)/neotape-inspect : src/neotape_inspect.cpp $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) -o $@ $(LDLIBS)
 
@@ -71,8 +67,8 @@ $(BINDIR)/neotape-init : src/neotape_init.cpp $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(
 	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
 # Test binary
-$(BINDIR)/test_tape : tests/test_tape.cpp $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TEST_DEVICE_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TEST_DEVICE_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/test_tape : tests/test_tape.cpp $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) -o $@ $(LDLIBS)
 
 test: $(BINDIR)/test_tape
 	$(BINDIR)/test_tape
