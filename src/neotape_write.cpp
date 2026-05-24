@@ -1,6 +1,7 @@
 #include "neotape/cli.hpp"
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
+#include "neotape/pax_writer.hpp"
 #include "neotape/tape_writer.hpp"
 
 #include <blake3.h>
@@ -15,6 +16,8 @@
 #include <getopt.h>
 #include <iostream>
 #include <nlohmann-json/json.hpp>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -51,6 +54,16 @@ struct RawWriteOptions {
     string archive_name = "raw";
     uint32_t volume_block_size = 4 * 1024 * 1024;
     neotape::ControlPolicy control = neotape::ControlPolicy::auto_prompt;
+};
+
+struct BackupOptions {
+    neotape::Locator target;
+    string archive_name = "pax";
+    uint32_t volume_block_size = 4 * 1024 * 1024;
+    neotape::ControlPolicy control = neotape::ControlPolicy::auto_prompt;
+    std::optional<string> chdir_dir;
+    std::optional<fs::path> plan_path;
+    vector<fs::path> sources;
 };
 
 struct WriterState {
@@ -259,6 +272,78 @@ RawWriteOptions parse_raw_write_args(int argc, char **argv) {
         fail("write does not accept positional arguments");
     if (opts.target.kind != "spool" && opts.target.kind != "tape")
         fail("write target must be tape: or spool:");
+    if (!neotape::valid_block_size(opts.volume_block_size))
+        fail("volume block size must be between 4096 and 8388608 bytes");
+    return opts;
+}
+
+void backup_usage() {
+    std::cerr << "usage: neotape backup --target <locator> [-C <dir>] <path> [path ...]\n"
+                 "       neotape backup --target <locator> -p <plan>\n"
+                 "       [--name <name>] [--volume-block-size <bytes>] "
+                 "[--control=auto|none]\n";
+}
+
+BackupOptions parse_backup_args(int argc, char **argv) {
+    static const struct option long_opts[] = {
+        {"target", required_argument, nullptr, 't'},
+        {"name", required_argument, nullptr, 'n'},
+        {"volume-block-size", required_argument, nullptr, 'b'},
+        {"control", required_argument, nullptr, 'c'},
+        {"plan", required_argument, nullptr, 'p'},
+        {"directory", required_argument, nullptr, 'C'},
+        {"help", no_argument, nullptr, 'h'},
+        {nullptr, 0, nullptr, 0}};
+
+    BackupOptions opts;
+    bool saw_target = false;
+    bool saw_chdir = false;
+    int c;
+    optind = 1;
+    while ((c = getopt_long(argc, argv, "C:p:", long_opts, nullptr)) != -1) {
+        switch (c) {
+        case 't':
+            opts.target = neotape::parse_locator(optarg);
+            saw_target = true;
+            break;
+        case 'n':
+            opts.archive_name = optarg;
+            break;
+        case 'b':
+            opts.volume_block_size = static_cast<uint32_t>(
+                neotape::parse_size(optarg, "volume block size"));
+            break;
+        case 'c':
+            opts.control = neotape::parse_control_policy(optarg);
+            break;
+        case 'p':
+            opts.plan_path = fs::path(optarg);
+            break;
+        case 'C':
+            if (saw_chdir)
+                fail("-C may be specified at most once");
+            saw_chdir = true;
+            opts.chdir_dir = optarg;
+            break;
+        case 'h':
+            backup_usage();
+            std::exit(0);
+        case '?':
+            std::exit(2);
+        }
+    }
+
+    while (optind < argc)
+        opts.sources.emplace_back(argv[optind++]);
+
+    if (!saw_target)
+        fail("backup requires --target <locator>");
+    if (opts.target.kind != "spool" && opts.target.kind != "tape")
+        fail("backup target must be tape: or spool:");
+    if (opts.plan_path && (opts.chdir_dir || !opts.sources.empty()))
+        fail("-p cannot be combined with -C or positional sources");
+    if (!opts.plan_path && opts.sources.empty())
+        fail("backup requires source paths or -p <plan>");
     if (!neotape::valid_block_size(opts.volume_block_size))
         fail("volume block size must be between 4096 and 8388608 bytes");
     return opts;
@@ -590,6 +675,66 @@ uint64_t read_spool_virtual_tape_size(const fs::path &root) {
     return manifest.value("virtual_tape_size", 0ull);
 }
 
+class SpoolArchiveSink {
+    WriterState state_;
+    bool ended_ = false;
+
+  public:
+    explicit SpoolArchiveSink(Options opts) {
+        state_.opts = std::move(opts);
+
+        bool is_append = fs::exists(state_.opts.output_dir);
+        if (is_append) {
+            uint64_t last_seq = find_last_tape_seq(state_.opts.output_dir);
+            state_.tape_seq = last_seq;
+
+            if (last_seq > 0 && state_.opts.virtual_tape_size > 0) {
+                TapeDirInfo last_info = scan_tape_dir(
+                    state_.opts.output_dir / format("tape-{}", six(last_seq)));
+                if (last_info.used_bytes +
+                        static_cast<uint64_t>(state_.opts.volume_block_size) *
+                            2 <=
+                    state_.opts.virtual_tape_size) {
+                    state_.tape_file_num = last_info.last_file_num;
+                    state_.volume_used = last_info.used_bytes;
+                    state_.current_volume_dir = state_.opts.output_dir /
+                                                format("tape-{}", six(last_seq));
+                }
+            }
+        } else {
+            fs::create_directories(state_.opts.output_dir);
+        }
+
+        state_.archive_uuid = neotape::make_uuid_v4();
+        bool reuse_dir = is_append && !state_.current_volume_dir.empty();
+        write_volume_header(state_, reuse_dir);
+    }
+
+    WriterState &state() { return state_; }
+
+    void write_payload(const uint8_t *data, size_t len, bool end) {
+        vector<uint8_t> payload;
+        if (len > 0)
+            payload.assign(data, data + len);
+        write_content_frame(state_, payload, end);
+    }
+
+    void end_slice() {
+        vector<uint8_t> empty;
+        write_content_frame(state_, empty, true);
+    }
+
+    void finish() {
+        if (ended_)
+            return;
+        write_archive_end(state_);
+        write_tape_manifest(state_);
+        ended_ = true;
+        std::cerr << format("archive {} written to {}\n", state_.archive_uuid,
+                            state_.opts.output_dir.string());
+    }
+};
+
 void write_spool_archive(const Options &opts) {
     FILE *input = stdin;
     if (opts.input != "-") {
@@ -598,43 +743,54 @@ void write_spool_archive(const Options &opts) {
             fail_errno(string("open ") + opts.input);
     }
 
-    WriterState state;
-    state.opts = opts;
-
-    bool is_append = fs::exists(opts.output_dir);
-    if (is_append) {
-        uint64_t last_seq = find_last_tape_seq(opts.output_dir);
-        state.tape_seq = last_seq;
-
-        if (last_seq > 0 && opts.virtual_tape_size > 0) {
-            TapeDirInfo last_info = scan_tape_dir(
-                opts.output_dir / format("tape-{}", six(last_seq)));
-            if (last_info.used_bytes +
-                    static_cast<uint64_t>(opts.volume_block_size) * 2 <=
-                opts.virtual_tape_size) {
-                state.tape_file_num = last_info.last_file_num;
-                state.volume_used = last_info.used_bytes;
-                state.current_volume_dir =
-                    opts.output_dir / format("tape-{}", six(last_seq));
-            }
-        }
-    } else {
-        fs::create_directories(opts.output_dir);
-    }
-
-    state.archive_uuid = neotape::make_uuid_v4();
-    bool reuse_dir = is_append && !state.current_volume_dir.empty();
-    write_volume_header(state, reuse_dir);
-
-    write_stream_payload(state, input,
-                         opts.payload_profile == "raw" && opts.slice_size_set);
+    SpoolArchiveSink sink(opts);
+    write_stream_payload(sink.state(), input,
+                          opts.payload_profile == "raw" && opts.slice_size_set);
     if (input != stdin && std::fclose(input) != 0)
         fail_errno(string("close ") +
                    (opts.input.empty() ? "input" : opts.input));
-    write_archive_end(state);
-    write_tape_manifest(state);
-    std::cerr << format("archive {} written to {}\n", state.archive_uuid,
-                        opts.output_dir.string());
+    sink.finish();
+}
+
+void run_spool_pax_backup(const BackupOptions &backup) {
+    Options opts;
+    opts.output_dir = backup.target.locator;
+    opts.archive_name = backup.archive_name;
+    opts.volume_block_size = backup.volume_block_size;
+    opts.virtual_tape_size = read_spool_virtual_tape_size(opts.output_dir);
+    opts.payload_profile = "pax";
+
+    SpoolArchiveSink sink(std::move(opts));
+    neotape::PaxWriterOptions pax;
+    pax.output_name = "-";
+    pax.plan_path = backup.plan_path;
+    pax.chdir_dir = backup.chdir_dir;
+    for (const auto &source : backup.sources)
+        pax.sources.push_back(source.string());
+
+    bool slice_open = false;
+    neotape::PaxWriterCallbacks callbacks;
+    callbacks.begin_slice = [&](uint64_t) {
+        if (slice_open)
+            throw std::runtime_error(
+                "pax writer began a slice before ending the previous slice");
+        slice_open = true;
+    };
+    callbacks.write_chunk = [&](neotape::PaxChunk chunk) {
+        if (!slice_open)
+            callbacks.begin_slice(chunk.slice);
+        auto *data = reinterpret_cast<const uint8_t *>(chunk.bytes.data());
+        sink.write_payload(data, chunk.bytes.size(), false);
+    };
+    callbacks.end_slice = [&](uint64_t) {
+        sink.end_slice();
+        slice_open = false;
+    };
+
+    neotape::write_pax(pax, std::move(callbacks));
+    if (slice_open)
+        throw std::runtime_error("pax writer ended with an open slice");
+    sink.finish();
 }
 
 void run_writer(Options opts) {
@@ -686,6 +842,21 @@ int neotape_write_main(int argc, char **argv) {
         return 0;
     } catch (const std::exception &e) {
         std::cerr << format("neotape write: {}\n", e.what());
+        return 1;
+    }
+}
+
+int neotape_backup_main(int argc, char **argv) {
+    try {
+        auto backup = parse_backup_args(argc, argv);
+        if (backup.target.kind == "tape")
+            throw std::runtime_error(
+                "backup currently supports spool: targets; tape: backup needs "
+                "tape sink wiring");
+        run_spool_pax_backup(backup);
+        return 0;
+    } catch (const std::exception &e) {
+        std::cerr << format("neotape backup: {}\n", e.what());
         return 1;
     }
 }

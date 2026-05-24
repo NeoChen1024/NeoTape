@@ -74,6 +74,7 @@ struct Options {
     string output = "-";
     bool list_mode = false;
     bool prompt = false;
+    neotape::ControlPolicy control = neotape::ControlPolicy::auto_prompt;
 };
 
 struct RawReadOptions {
@@ -200,6 +201,26 @@ std::unique_ptr<OutputSink> create_sink(const Options &opts) {
     if (opts.output == "-")
         return std::make_unique<StdoutSink>();
     return std::make_unique<FileSink>(opts.output);
+}
+
+void append_pax_eoa_if_needed(const string &output) {
+    static const uint8_t zeros[1024] = {0};
+    if (output == "-") {
+        if (std::fwrite(zeros, 1, sizeof(zeros), stdout) != sizeof(zeros))
+            throw std::runtime_error(
+                "write pax end-of-archive to stdout failed");
+        return;
+    }
+
+    std::FILE *file = std::fopen(output.c_str(), "ab");
+    if (file == nullptr)
+        throw std::runtime_error(
+            format("open {}: {}", output, std::strerror(errno)));
+    if (std::fwrite(zeros, 1, sizeof(zeros), file) != sizeof(zeros)) {
+        std::fclose(file);
+        throw std::runtime_error("write pax end-of-archive failed");
+    }
+    std::fclose(file);
 }
 
 // ====================== Spool Orchestrator ========================
@@ -502,8 +523,10 @@ void run_cat_volumes(const Options &opts) {
         }
     }
 
-    if (!found_archive_end)
+    if (!found_archive_end) {
+        neotape::require_prompt_allowed(opts.control);
         fail("archive incomplete: no Archive End Header found");
+    }
 
     sink->flush();
 
@@ -539,6 +562,7 @@ int neotape_read_main(int argc, char **argv) {
         Options opts;
         opts.spool_dir = raw.source.locator;
         opts.output = raw.output;
+        opts.control = raw.control;
         run_cat_volumes(opts);
         return 0;
     } catch (const std::exception &e) {
@@ -559,6 +583,22 @@ int neotape_list_main(int argc, char **argv) {
         return 0;
     } catch (const std::exception &e) {
         std::cerr << format("neotape list: {}\n", e.what());
+        return 1;
+    }
+}
+
+int neotape_restore_main(int argc, char **argv) {
+    try {
+        auto raw = parse_raw_read_args(argc, argv);
+        Options opts;
+        opts.spool_dir = raw.source.locator;
+        opts.output = raw.output;
+        opts.control = raw.control;
+        run_cat_volumes(opts);
+        append_pax_eoa_if_needed(opts.output);
+        return 0;
+    } catch (const std::exception &e) {
+        std::cerr << format("neotape restore: {}\n", e.what());
         return 1;
     }
 }

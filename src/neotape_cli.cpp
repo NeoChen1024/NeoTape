@@ -36,6 +36,12 @@ std::string control_policy_name(ControlPolicy policy) {
     return "unknown";
 }
 
+void require_prompt_allowed(ControlPolicy policy) {
+    if (policy == ControlPolicy::none)
+        throw std::runtime_error(
+            "volume change required but --control=none is set");
+}
+
 namespace {
 
 int open_tty() { return ::open("/dev/tty", O_RDWR | O_CLOEXEC); }

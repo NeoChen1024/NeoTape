@@ -22,11 +22,6 @@ or advisory? If advisory, should the manifest be the canonical record locator?
 Is `manifest.json` purely advisory, or should it have a partially standardized
 schema that readers can rely on when headers are damaged?
 
-### Block Size Default
-
-What is the first stable `volume_block_size` default for real LTO drives?
-1 MiB, 4 MiB, 8 MiB, or device-specific?
-
 ### Frame Header Repeated Fields
 
 Frame Header repeats `archive_uuid`, `archive_name`, `volume_block_size`, and
@@ -89,12 +84,6 @@ Should the NeoTape/PAX profile mandate per-slice pax EOA for independent slice
 restorability, or keep the current design where only the concatenated stream
 needs a final EOA?
 
-### Profile-Specific Stdout Finalization
-
-Should the reader append pax EOA automatically, or should the user or wrapper
-script handle it? Current design: core reader emits bytes as-is; profile tools
-(scripts/wrappers) handle finalization.
-
 ## Safety and Recovery
 
 ### Encrypted Payload Profiles
@@ -153,4 +142,11 @@ tape occupancy.
 6. **No mandatory trailer rewrite** — closed. The format does not require
    seeking back to BOT.
 7. **Length-framed transport** — closed. Frame boundaries by `frame_payload_size`,
-   not by payload parsing.
+    not by payload parsing.
+8. **Default archive volume block size** — closed for the current CLI. `backup`
+   and `write` default to 4 MiB unless explicitly overridden.
+9. **Profile-specific stdout finalization** — closed for the current CLI. Core
+   raw `read` emits stored bytes as-is; PAX-profile `restore` appends pax EOA
+   finalization.
+10. **Raw vs PAX command split** — closed for the current CLI. `write/read` are
+    raw-profile commands; `backup/restore` are PAX-profile commands.

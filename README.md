@@ -4,12 +4,12 @@ A seekable multi-volume length-framed payload transport container designed for L
 
 NeoTape wraps a payload byte stream (typically a POSIX pax/tar archive) in a lightweight framing layer that provides per-slice and per-Frame structure, integrity verification via BLAKE3, and multi-volume continuation. The on-tape format uses LTO filemarks at logical-slice boundaries, enabling native tape seek to independently verifiable checkpoint units without requiring per-Frame filemarks.
 
-This is a design-stage project. The current implementation includes a
-**Phase 0 pax writer** (`bin/pax`, `src/pax.cpp`) and a **Phase 3.5
-multi-threaded pax writer** (`bin/mt-pax`, `src/mt-pax.cpp`) — both produce
-plain POSIX pax-format tar streams. The NeoTape framing layer (volume headers,
-Frame Headers, slice metadata Frames, catalog, tape backend) exists only as a
-specification.
+This is an early implementation-stage project. The current implementation
+includes standalone pax writers (`bin/pax`, `bin/mt-pax`) plus a primary
+`bin/neotape <subcommand>` CLI for initializing spool media, writing raw or PAX
+profile archives, listing archive instances, and reading/restoring from spool
+archives. The tape-device backend and full on-tape workflow are still under
+development.
 
 ## Specification Status
 
@@ -43,7 +43,7 @@ All records in an archive volume use a fixed **volume_block_size** declared in t
 | 2     | Filesystem spool backend           | Review |
 | 3     | Minimal reader                     | Review |
 | 3.5   | mt-pax writer CLI                  | Done   |
-| 4     | NeoTape/PAX integration            | Spec   |
+| 4     | NeoTape/PAX integration            | Review |
 | 5     | Slice metadata Frames & catalog    | Spec   |
 | 6     | Tape device backend                | Spec   |
 | 7     | Recovery & salvage                 | Spec   |
@@ -74,11 +74,28 @@ git submodule update --init --recursive
 make
 ```
 
-Produces `bin/pax` (Phase 0) and `bin/mt-pax` (Phase 3.5).
+Produces `bin/neotape`, `bin/mt-pax`, and standalone NeoTape helper tools.
 
 ## Usage
 
-### bin/pax (Phase 0, single-threaded)
+### bin/neotape
+
+```sh
+bin/neotape init spool:./archive.spool --label TEST --virtual-tape-size 100G
+bin/neotape plan -C /data -o home.plan photos docs
+bin/neotape backup --target spool:./archive.spool -p home.plan --name home
+bin/neotape restore --source spool:./archive.spool --output home.pax
+
+bin/neotape write --target spool:./archive.spool --input payload.bin --name raw1
+bin/neotape read --source spool:./archive.spool --output payload.out
+bin/neotape list --source spool:./archive.spool --json
+```
+
+Default archive `--volume-block-size` is 4 MiB. Payload-producing commands keep
+stdout as payload bytes only; diagnostics and prompts go to stderr or
+`/dev/tty`.
+
+### bin/pax (single-threaded standalone PAX writer)
 
 ```sh
 bin/pax -f <output-file|-> [-v|-vv] [-x] [-C <dir>] <path> [path ...]

@@ -40,7 +40,7 @@ CLANG_TIDY_FILES = $(filter-out src/neotape_format_generated.cpp, $(wildcard src
 $(GENERATED_HPP) $(GENERATED_CPP): $(GENERATOR) scripts/neotape_header_defs.py
 	python3 $(GENERATOR)
 
-.PHONY: all clean countline format test generate tidy
+.PHONY: all clean countline format test test_pax_cli generate tidy
 
 all: ${EXE}
 
@@ -65,14 +65,14 @@ src/neotape_cat_volumes.cmd.o : src/neotape_cat_volumes.cpp Makefile
 $(BINDIR)/mt-pax : src/mt-pax.cpp $(PAX_WRITER_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(PAX_WRITER_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape : src/neotape.cpp $(CLI_OBJ) $(INIT_CMD_OBJ) $(PLAN_CMD_OBJ) $(WRITE_CMD_OBJ) $(READ_CMD_OBJ) $(COMMAND_STUBS_OBJ) src/neotape_reader.o $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) $(INIT_CMD_OBJ) $(PLAN_CMD_OBJ) $(WRITE_CMD_OBJ) $(READ_CMD_OBJ) $(COMMAND_STUBS_OBJ) src/neotape_reader.o $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/neotape : src/neotape.cpp $(CLI_OBJ) $(INIT_CMD_OBJ) $(PLAN_CMD_OBJ) $(WRITE_CMD_OBJ) $(READ_CMD_OBJ) $(COMMAND_STUBS_OBJ) src/neotape_reader.o $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) $(PAX_WRITER_OBJ) $(BOUNDEDBUF_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) $(INIT_CMD_OBJ) $(PLAN_CMD_OBJ) $(WRITE_CMD_OBJ) $(READ_CMD_OBJ) $(COMMAND_STUBS_OBJ) src/neotape_reader.o $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) $(PAX_WRITER_OBJ) $(BOUNDEDBUF_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
 $(FORMAT_GEN_OBJ): $(GENERATED_CPP) $(GENERATED_HPP) Makefile
 	$(CXX) $(CXXFLAGS) -c $(GENERATED_CPP) -o $@
 
-$(BINDIR)/neotape-write : src/neotape_write.cpp $(CLI_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/neotape-write : src/neotape_write.cpp $(CLI_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) $(PAX_WRITER_OBJ) $(BOUNDEDBUF_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) $(PAX_WRITER_OBJ) $(BOUNDEDBUF_OBJ) -o $@ $(LDLIBS)
 
 $(BINDIR)/neotape-inspect : src/neotape_inspect.cpp $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) -o $@ $(LDLIBS)
@@ -94,9 +94,13 @@ $(BINDIR)/test_tape : tests/test_tape.cpp $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE
 $(BINDIR)/test_cli : tests/test_cli.cpp $(CLI_OBJ) Makefile | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) -o $@
 
-test: $(BINDIR)/test_tape $(BINDIR)/test_cli
+test: $(BINDIR)/test_tape $(BINDIR)/test_cli $(BINDIR)/neotape
 	$(BINDIR)/test_tape
 	$(BINDIR)/test_cli
+	sh tests/smoke_pax_backup_restore.sh
+
+test_pax_cli: $(BINDIR)/neotape
+	sh tests/smoke_pax_backup_restore.sh
 
 $(BINDIR)/% : src/%.c Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)

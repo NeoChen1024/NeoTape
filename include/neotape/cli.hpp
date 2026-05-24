@@ -31,6 +31,7 @@ struct VolumePromptResult {
 Locator parse_locator(std::string_view text);
 ControlPolicy parse_control_policy(std::string_view text);
 std::string control_policy_name(ControlPolicy policy);
+void require_prompt_allowed(ControlPolicy policy);
 VolumePromptResult prompt_for_volume_change(const VolumePromptRequest &request);
 
 } // namespace neotape
