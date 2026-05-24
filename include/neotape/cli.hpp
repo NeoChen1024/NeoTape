@@ -14,7 +14,12 @@ struct Locator {
 
 enum class ControlPolicy { auto_prompt, none };
 
-enum class VolumePromptChoice { continue_current, change_locator, shell, abort };
+enum class VolumePromptChoice {
+    continue_current,
+    change_locator,
+    shell,
+    abort
+};
 
 struct VolumePromptRequest {
     std::string archive_uuid;

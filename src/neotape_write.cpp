@@ -220,10 +220,9 @@ Options parse_args(int argc, char **argv) {
 }
 
 void raw_write_usage() {
-    std::cerr
-        << "usage: neotape write --target <locator> --input <file|-> "
-           "[--name <name>] [--volume-block-size <bytes>] "
-           "[--control=auto|none]\n";
+    std::cerr << "usage: neotape write --target <locator> --input <file|-> "
+                 "[--name <name>] [--volume-block-size <bytes>] "
+                 "[--control=auto|none]\n";
 }
 
 RawWriteOptions parse_raw_write_args(int argc, char **argv) {
@@ -279,7 +278,8 @@ RawWriteOptions parse_raw_write_args(int argc, char **argv) {
 }
 
 void backup_usage() {
-    std::cerr << "usage: neotape backup --target <locator> [-C <dir>] <path> [path ...]\n"
+    std::cerr << "usage: neotape backup --target <locator> [-C <dir>] <path> "
+                 "[path ...]\n"
                  "       neotape backup --target <locator> -p <plan>\n"
                  "       [--name <name>] [--volume-block-size <bytes>] "
                  "[--control=auto|none]\n";
@@ -698,8 +698,9 @@ class SpoolArchiveSink {
                     state_.opts.virtual_tape_size) {
                     state_.tape_file_num = last_info.last_file_num;
                     state_.volume_used = last_info.used_bytes;
-                    state_.current_volume_dir = state_.opts.output_dir /
-                                                format("tape-{}", six(last_seq));
+                    state_.current_volume_dir =
+                        state_.opts.output_dir /
+                        format("tape-{}", six(last_seq));
                 }
             }
         } else {
@@ -746,7 +747,7 @@ void write_spool_archive(const Options &opts) {
 
     SpoolArchiveSink sink(opts);
     write_stream_payload(sink.state(), input,
-                          opts.payload_profile == "raw" && opts.slice_size_set);
+                         opts.payload_profile == "raw" && opts.slice_size_set);
     if (input != stdin && std::fclose(input) != 0)
         fail_errno(string("close ") +
                    (opts.input.empty() ? "input" : opts.input));
@@ -802,36 +803,36 @@ void run_tape_pax_backup(const BackupOptions &backup) {
     opts.payload_profile = "pax";
 
     auto produce = [&](mt::TapeChunkWriter writer) {
-            neotape::PaxWriterOptions pax;
-            pax.output_name = "-";
-            pax.plan_path = backup.plan_path;
-            pax.chdir_dir = backup.chdir_dir;
-            for (const auto &source : backup.sources)
-                pax.sources.push_back(source.string());
+        neotape::PaxWriterOptions pax;
+        pax.output_name = "-";
+        pax.plan_path = backup.plan_path;
+        pax.chdir_dir = backup.chdir_dir;
+        for (const auto &source : backup.sources)
+            pax.sources.push_back(source.string());
 
-            bool slice_open = false;
-            neotape::PaxWriterCallbacks callbacks;
-            callbacks.begin_slice = [&](uint64_t) {
-                if (slice_open)
-                    throw std::runtime_error(
-                        "pax writer began a slice before ending the previous slice");
-                slice_open = true;
-            };
-            callbacks.write_chunk = [&](neotape::PaxChunk chunk) {
-                if (!slice_open)
-                    callbacks.begin_slice(chunk.slice);
-                auto *data = reinterpret_cast<const uint8_t *>(chunk.bytes.data());
-                writer(data, chunk.bytes.size(), false);
-            };
-            callbacks.end_slice = [&](uint64_t) {
-                writer(nullptr, 0, true);
-                slice_open = false;
-            };
-
-            neotape::write_pax(pax, std::move(callbacks));
+        bool slice_open = false;
+        neotape::PaxWriterCallbacks callbacks;
+        callbacks.begin_slice = [&](uint64_t) {
             if (slice_open)
-                throw std::runtime_error("pax writer ended with an open slice");
+                throw std::runtime_error("pax writer began a slice before "
+                                         "ending the previous slice");
+            slice_open = true;
         };
+        callbacks.write_chunk = [&](neotape::PaxChunk chunk) {
+            if (!slice_open)
+                callbacks.begin_slice(chunk.slice);
+            auto *data = reinterpret_cast<const uint8_t *>(chunk.bytes.data());
+            writer(data, chunk.bytes.size(), false);
+        };
+        callbacks.end_slice = [&](uint64_t) {
+            writer(nullptr, 0, true);
+            slice_open = false;
+        };
+
+        neotape::write_pax(pax, std::move(callbacks));
+        if (slice_open)
+            throw std::runtime_error("pax writer ended with an open slice");
+    };
 
     if (fs::is_directory(backup.target.locator)) {
         opts.init_if_blank = true;
@@ -883,7 +884,8 @@ int neotape_write_main(int argc, char **argv) {
         opts.payload_profile = "raw";
         if (raw.target.kind == "spool") {
             opts.output_dir = raw.target.locator;
-            opts.virtual_tape_size = read_spool_virtual_tape_size(opts.output_dir);
+            opts.virtual_tape_size =
+                read_spool_virtual_tape_size(opts.output_dir);
         } else {
             opts.tape_device = raw.target.locator;
         }
@@ -910,5 +912,7 @@ int neotape_backup_main(int argc, char **argv) {
 }
 
 #ifndef NEOTAPE_NO_STANDALONE_MAIN
-int main(int argc, char **argv) { return neotape_write_legacy_main(argc, argv); }
+int main(int argc, char **argv) {
+    return neotape_write_legacy_main(argc, argv);
+}
 #endif

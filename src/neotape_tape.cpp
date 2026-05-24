@@ -2,18 +2,18 @@
 #include "neotape/tape.hpp"
 #include "neotape/tape_ioctl.h"
 
-#include <cerrno>
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <fcntl.h>
 #include <format>
 #include <fstream>
 #include <iostream>
 #include <map>
-#include <vector>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 namespace mt {
 namespace {
@@ -31,17 +31,10 @@ namespace fs = std::filesystem;
 // -----------------------------------------------------------------------
 
 const map<int, string> density_names = {
-    {0x0, "default"},
-    {0x41, "LTO-2 Ultrium"},
-    {0x42, "LTO-2 Ultrium"},
-    {0x44, "LTO-3 Ultrium"},
-    {0x46, "LTO-4 Ultrium"},
-    {0x58, "LTO-5 Ultrium"},
-    {0x5a, "LTO-6 Ultrium"},
-    {0x5c, "LTO-7 Ultrium"},
-    {0x5d, "LTO-7 M8"},
-    {0x5e, "LTO-8 Ultrium"},
-    {0x60, "LTO-9 Ultrium"},
+    {0x0, "default"},        {0x41, "LTO-2 Ultrium"}, {0x42, "LTO-2 Ultrium"},
+    {0x44, "LTO-3 Ultrium"}, {0x46, "LTO-4 Ultrium"}, {0x58, "LTO-5 Ultrium"},
+    {0x5a, "LTO-6 Ultrium"}, {0x5c, "LTO-7 Ultrium"}, {0x5d, "LTO-7 M8"},
+    {0x5e, "LTO-8 Ultrium"}, {0x60, "LTO-9 Ultrium"},
 };
 
 constexpr string_view spool_prefix = "tape-file-";
@@ -113,9 +106,8 @@ std::string spool_suffix_for_header(const neotape::ParsedHeader &header) {
 
 fs::path spool_final_path(const fs::path &root, uint64_t file_num,
                           const neotape::ParsedHeader &header) {
-    return root /
-           format("{}{:06}.{}.nts", spool_prefix, file_num,
-                  spool_suffix_for_header(header));
+    return root / format("{}{:06}.{}.nts", spool_prefix, file_num,
+                         spool_suffix_for_header(header));
 }
 
 fs::path spool_temp_path(const fs::path &root, uint64_t file_num) {
@@ -137,8 +129,8 @@ neotape::ParsedHeader parse_spool_header_file(const fs::path &path) {
 int open_fd(const fs::path &path, int flags) {
     int fd = ::open(path.c_str(), flags, 0666);
     if (fd < 0)
-        throw std::runtime_error(format("open {}: {}", path.string(),
-                                        std::strerror(errno)));
+        throw std::runtime_error(
+            format("open {}: {}", path.string(), std::strerror(errno)));
     return fd;
 }
 
@@ -436,7 +428,8 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
             current_block_size_ = header.frame->volume_block_size;
         else if (header.archive_end)
             current_block_size_ = header.archive_end->volume_block_size;
-        fs::path final_path = spool_final_path(root_, current_file_num_, header);
+        fs::path final_path =
+            spool_final_path(root_, current_file_num_, header);
         fs::rename(current_path_, final_path);
         current_is_temp_ = false;
         current_path_.clear();
@@ -461,9 +454,10 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
         }
 
         auto it = std::ranges::find(files_, current_path_);
-        size_t index = it == files_.end()
-                           ? 0
-                           : static_cast<size_t>(std::distance(files_.begin(), it)) + 1;
+        size_t index =
+            it == files_.end()
+                ? 0
+                : static_cast<size_t>(std::distance(files_.begin(), it)) + 1;
         if (index >= files_.size()) {
             current_path_.clear();
             return;

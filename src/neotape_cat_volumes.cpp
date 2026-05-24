@@ -190,7 +190,8 @@ RawReadOptions parse_raw_read_args(int argc, char **argv,
         fail("read requires --source <locator>");
     if (optind != argc)
         fail("read does not accept positional arguments");
-    if (opts.source.kind != "spool" && !(allow_tape && opts.source.kind == "tape"))
+    if (opts.source.kind != "spool" &&
+        !(allow_tape && opts.source.kind == "tape"))
         fail("read currently supports spool: sources");
     if (!opts.archive_selector.empty() && opts.archive_selector != "1")
         fail("read currently supports only the first archive");
@@ -379,7 +380,8 @@ std::vector<ArchiveEntry> collect_archives(SpoolOrchestrator &orch) {
             current.emplace();
             current->uuid = vol_uuid;
             current->name = vh.archive_name;
-            current->profile = neotape::payload_profile_name(vh.payload_profile);
+            current->profile =
+                neotape::payload_profile_name(vh.payload_profile);
             current->block_size = vh.volume_block_size;
         }
 
@@ -421,8 +423,8 @@ void print_archives_human(const std::vector<ArchiveEntry> &entries) {
     }
 
     std::cout << format("{:<5}  {:<36}  {:<16}  {:<7}  {:>7}  {:>12}  {:<10}\n",
-                        "INDEX", "UUID", "NAME", "PROFILE", "VOLUMES",
-                        "SIZE", "STATUS");
+                        "INDEX", "UUID", "NAME", "PROFILE", "VOLUMES", "SIZE",
+                        "STATUS");
     std::cout << string(106, '-') << '\n';
     for (size_t i = 0; i < entries.size(); ++i) {
         const auto &e = entries[i];
@@ -539,9 +541,10 @@ void run_cat_volumes(const Options &opts) {
             ++total_volumes;
     }
 
-    std::cerr << format("neotape-cat-volumes: ok volumes={} slices={} frames={}\n",
-                        total_volumes, rs.expected_logical_slice_seq_num - 1,
-                        rs.expected_global_frame_seq_num - 1);
+    std::cerr << format(
+        "neotape-cat-volumes: ok volumes={} slices={} frames={}\n",
+        total_volumes, rs.expected_logical_slice_seq_num - 1,
+        rs.expected_global_frame_seq_num - 1);
 }
 
 void run_tape_device_restore(const Options &opts, mt::TapeDevice &device) {
@@ -557,9 +560,10 @@ void run_tape_device_restore(const Options &opts, mt::TapeDevice &device) {
     }
 
     sink->flush();
-    std::cerr << format("neotape-cat-volumes: ok volumes=1 slices={} frames={}\n",
-                        rs.expected_logical_slice_seq_num - 1,
-                        rs.expected_global_frame_seq_num - 1);
+    std::cerr << format(
+        "neotape-cat-volumes: ok volumes=1 slices={} frames={}\n",
+        rs.expected_logical_slice_seq_num - 1,
+        rs.expected_global_frame_seq_num - 1);
 }
 
 } // namespace

@@ -637,13 +637,13 @@ void run_plan(Options &opts) {
     if (opts.meta_out && opts.meta_out != stdout)
         fclose(opts.meta_out);
 
-    std::cerr << format(
-        "scanned entries={} total_disk={} total_apparent={} "
-        "target_slice={} buffer_size={}\n",
-        totals.entries, neotape::humanize_number(totals.disk_bytes),
-        neotape::humanize_number(totals.apparent_bytes),
-        neotape::humanize_number(opts.slice_size),
-        neotape::humanize_number(opts.metadata_buffer_size));
+    std::cerr << format("scanned entries={} total_disk={} total_apparent={} "
+                        "target_slice={} buffer_size={}\n",
+                        totals.entries,
+                        neotape::humanize_number(totals.disk_bytes),
+                        neotape::humanize_number(totals.apparent_bytes),
+                        neotape::humanize_number(opts.slice_size),
+                        neotape::humanize_number(opts.metadata_buffer_size));
 
     if (!slice_sizes.empty()) {
         uint64_t min_sz = slice_sizes[0], max_sz = slice_sizes[0];

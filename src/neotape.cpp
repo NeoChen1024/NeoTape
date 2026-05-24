@@ -8,18 +8,17 @@
 namespace {
 
 void usage(const char *prog) {
-    std::cerr << std::format(
-        "usage: {} <subcommand> [options]\n"
-        "\n"
-        "subcommands:\n"
-        "  init      initialize a tape or spool medium\n"
-        "  list      list archive instances\n"
-        "  plan      create PAX plan metadata\n"
-        "  backup    write a PAX-profile archive\n"
-        "  restore   read a PAX-profile archive\n"
-        "  write     write a raw-profile archive\n"
-        "  read      read a raw-profile archive\n",
-        prog);
+    std::cerr << std::format("usage: {} <subcommand> [options]\n"
+                             "\n"
+                             "subcommands:\n"
+                             "  init      initialize a tape or spool medium\n"
+                             "  list      list archive instances\n"
+                             "  plan      create PAX plan metadata\n"
+                             "  backup    write a PAX-profile archive\n"
+                             "  restore   read a PAX-profile archive\n"
+                             "  write     write a raw-profile archive\n"
+                             "  read      read a raw-profile archive\n",
+                             prog);
 }
 
 int dispatch(int argc, char **argv) {

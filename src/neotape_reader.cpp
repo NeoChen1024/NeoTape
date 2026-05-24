@@ -8,9 +8,9 @@
 #include <format>
 #include <stdexcept>
 #include <string>
+#include <unistd.h>
 #include <utility>
 #include <vector>
-#include <unistd.h>
 
 namespace neotape {
 
@@ -191,8 +191,8 @@ TapeDeviceVolumeReader::TapeDeviceVolumeReader(mt::TapeDevice &device)
     std::vector<uint8_t> buf(8 * 1024 * 1024);
     ssize_t n = ::read(device_.fd(), buf.data(), buf.size());
     if (n < 0)
-        throw std::runtime_error(std::format("read volume header: {}",
-                                             std::strerror(errno)));
+        throw std::runtime_error(
+            std::format("read volume header: {}", std::strerror(errno)));
     if (static_cast<std::size_t>(n) < fixed_header_size)
         throw std::runtime_error("short read from tape volume header");
 
@@ -238,9 +238,9 @@ bool TapeDeviceVolumeReader::read_record(std::vector<uint8_t> &out) {
         throw std::runtime_error(
             std::format("read tape record: {}", std::strerror(errno)));
     if (static_cast<std::size_t>(n) != block_size_)
-        throw std::runtime_error(std::format(
-            "short read at tape file {}: expected {} bytes, got {}",
-            tape_file_num_, block_size_, n));
+        throw std::runtime_error(
+            std::format("short read at tape file {}: expected {} bytes, got {}",
+                        tape_file_num_, block_size_, n));
     return true;
 }
 

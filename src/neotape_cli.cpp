@@ -74,7 +74,8 @@ std::string read_line(int fd) {
 
 } // namespace
 
-VolumePromptResult prompt_for_volume_change(const VolumePromptRequest &request) {
+VolumePromptResult
+prompt_for_volume_change(const VolumePromptRequest &request) {
     int tty = open_tty();
     if (tty < 0)
         throw std::runtime_error("volume change requires /dev/tty");
@@ -88,15 +89,16 @@ VolumePromptResult prompt_for_volume_change(const VolumePromptRequest &request) 
 
     try {
         while (true) {
-            write_all(tty, std::format(
-                               "Volume change required for archive {}, expected volume {}.\n"
-                               "Options:\n"
-                               "  [c] Continue\n"
-                               "  [d] Change device\n"
-                               "  [s] Shell\n"
-                               "  [a] Abort\n"
-                               "> ",
-                               request.archive_uuid, request.expected_volume));
+            write_all(tty, std::format("Volume change required for archive {}, "
+                                       "expected volume {}.\n"
+                                       "Options:\n"
+                                       "  [c] Continue\n"
+                                       "  [d] Change device\n"
+                                       "  [s] Shell\n"
+                                       "  [a] Abort\n"
+                                       "> ",
+                                       request.archive_uuid,
+                                       request.expected_volume));
             std::string line = read_line(tty);
             if (line == "c" || line == "C") {
                 close_tty();
@@ -114,11 +116,12 @@ VolumePromptResult prompt_for_volume_change(const VolumePromptRequest &request) 
                 const char *shell = std::getenv("SHELL");
                 if (shell == nullptr || std::strlen(shell) == 0)
                     shell = "/bin/sh";
-                write_all(tty,
-                          std::format("Entering shell {}. Exit to return.\n",
-                                      shell));
+                write_all(
+                    tty,
+                    std::format("Entering shell {}. Exit to return.\n", shell));
                 int rc = std::system(shell);
-                write_all(tty, std::format("Shell exited with status {}.\n", rc));
+                write_all(tty,
+                          std::format("Shell exited with status {}.\n", rc));
                 continue;
             }
             if (line == "a" || line == "A") {
