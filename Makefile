@@ -5,7 +5,7 @@ INCS	= -Iinclude -Itests -Llib -I/usr/local/include -Lusr/local/lib
 CFLAGS	= -O3 -flto -g -Wall -Wextra -pipe -fPIE -fPIC -std=c17 -march=native -pedantic $(INCS)
 CXXFLAGS= -O3 -flto -g -Wall -Wextra -pipe -fPIE -fPIC -std=c++20 -march=native -pedantic $(INCS)
 LDLIBS	= lib/libb3sum.a lib/libcrc32c.a -larchive
-EXE	= bin/pax bin/mt-pax bin/neotape-write bin/neotape-inspect bin/neotape-plan bin/neotape-cat-volumes bin/test_tape bin/neotape-init
+EXE	= bin/mt-pax bin/neotape-write bin/neotape-inspect bin/neotape-plan bin/neotape-cat-volumes bin/test_tape bin/neotape-init
 BINDIR	= bin
 LIBDIR	= lib
 BUILDDIR= build
@@ -29,11 +29,13 @@ GENERATED_CPP = src/neotape_format_generated.cpp
 CLANG_FORMAT ?= clang-format
 CLANG_FORMAT_FILES = $(filter-out $(GENERATED_HPP) $(GENERATED_CPP), \
 	$(wildcard src/*.cpp include/neotape/*.hpp include/neotape/*.h))
+CLANG_TIDY ?= clang-tidy
+CLANG_TIDY_FILES = $(filter-out src/neotape_format_generated.cpp, $(wildcard src/*.cpp))
 
 $(GENERATED_HPP) $(GENERATED_CPP): $(GENERATOR) scripts/neotape_header_defs.py
 	python3 $(GENERATOR)
 
-.PHONY: all clean countline format test generate
+.PHONY: all clean countline format test generate tidy
 
 all: ${EXE}
 
@@ -42,9 +44,6 @@ $(BINDIR) $(LIBDIR) $(BUILDDIR) $(BUILDDIR)/blake3 $(BUILDDIR)/crc32c:
 
 src/%.o : src/%.cpp Makefile
 	$(CXX) $(CXXFLAGS) -c $< -o $@
-
-$(BINDIR)/pax : src/pax.cpp $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(COMMON_OBJ) -o $@ $(LDLIBS)
 
 $(BINDIR)/mt-pax : src/mt-pax.cpp $(PAX_WRITER_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(PAX_WRITER_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) -o $@ $(LDLIBS)
@@ -86,5 +85,7 @@ countline:
 	scc .
 format:
 	$(CLANG_FORMAT) -i $(CLANG_FORMAT_FILES)
+tidy:
+	$(CLANG_TIDY) $(CLANG_TIDY_FILES) -- $(CXXFLAGS)
 clean:
 	-rm -f ${EXE} ${BINDIR}/*.o src/*.o tests/*.o $(B3LIB) $(B3OBJ) $(CRC32CLIB) $(CRC32COBJ)
