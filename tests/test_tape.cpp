@@ -4,6 +4,7 @@
 #include "neotape/tape_navigator.hpp"
 #include "neotape/format.hpp"
 #include "neotape/tape_ioctl.h"
+#include "neotape/tape_writer.hpp"
 
 #include <filesystem>
 #include <cstdio>
@@ -209,6 +210,66 @@ int main() {
               "slice file uses parsed slice sequence name");
         CHECK(fs::exists(root / "tape-file-000003.archive-end.nts"),
               "archive end file uses .nts name");
+
+        fs::remove_all(root);
+    }
+
+    // --- Test 9: callback tape writer works with file-backed tape device ---
+    {
+        namespace fs = std::filesystem;
+
+        fs::path root = fs::temp_directory_path() / "neotape-tape-callback-test";
+        fs::remove_all(root);
+        fs::create_directories(root);
+
+        mt::SpoolTapeDevice dev(root, true);
+        mt::TapeWriterOptions opts;
+        opts.device = root.string();
+        opts.archive_name = "callback";
+        opts.volume_block_size = 4096;
+        opts.init_mode = true;
+        opts.payload_profile = "pax";
+
+        const uint8_t payload[] = {'a', 'b', 'c'};
+        mt::write_tape_archive_from_chunks_to_device(
+            dev, opts, [&](mt::TapeChunkWriter writer) {
+                writer(payload, sizeof(payload), false);
+                writer(nullptr, 0, true);
+            });
+
+        CHECK(fs::exists(root / "tape-file-000000.volume-header.nts"),
+              "callback tape writer emits volume header");
+        CHECK(fs::exists(root / "tape-file-000001.slice-000001.nts"),
+              "callback tape writer emits slice file");
+        CHECK(fs::exists(root / "tape-file-000002.archive-end.nts"),
+              "callback tape writer emits archive end");
+
+        mt::SpoolTapeDevice reader(root, false);
+        std::vector<uint8_t> record(opts.volume_block_size);
+        ssize_t n = ::read(reader.fd(), record.data(), record.size());
+        CHECK(n == static_cast<ssize_t>(record.size()),
+              "file-backed tape reader reads volume header record");
+        auto parsed = neotape::parse_fixed_header(record.data(), record.size());
+        CHECK(parsed.volume.has_value(),
+              "file-backed tape reader parses volume header");
+
+        reader.space_fwd_filemark();
+        n = ::read(reader.fd(), record.data(), record.size());
+        CHECK(n == static_cast<ssize_t>(record.size()),
+              "file-backed tape reader reads slice record");
+        parsed = neotape::parse_fixed_header(record.data(), record.size());
+        CHECK(parsed.frame.has_value(),
+              "file-backed tape reader parses frame header");
+        CHECK(parsed.frame && parsed.frame->frame_payload_size == sizeof(payload),
+              "file-backed tape reader preserves frame payload size");
+
+        reader.space_fwd_filemark();
+        n = ::read(reader.fd(), record.data(), record.size());
+        CHECK(n == static_cast<ssize_t>(record.size()),
+              "file-backed tape reader reads archive end record");
+        parsed = neotape::parse_fixed_header(record.data(), record.size());
+        CHECK(parsed.archive_end.has_value(),
+              "file-backed tape reader parses archive end");
 
         fs::remove_all(root);
     }

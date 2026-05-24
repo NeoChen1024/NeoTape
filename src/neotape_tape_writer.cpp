@@ -233,20 +233,14 @@ void write_stream_payload(WriterState &state, FILE *input, bool split_slices) {
         write_content_frame(state, pending, true);
 }
 
-} // anonymous namespace
-
-// ====================== Public Entry Point =======================
-
-void write_tape_archive(const TapeWriterOptions &opts) {
-    TapeDevice dev(opts.device, true);
+void initialize_for_write(WriterState &state, TapeDevice &dev,
+                          const TapeWriterOptions &opts) {
     dev.configure_preferred_variable_block_mode(
         opts.volume_block_size, "neotape-write archive records", std::cerr);
 
-    WriterState state;
     state.opts = opts;
     state.dev = &dev;
 
-    // Positioning
     if (opts.init_mode) {
         dev.rewind();
     } else {
@@ -265,8 +259,18 @@ void write_tape_archive(const TapeWriterOptions &opts) {
     }
 
     state.archive_uuid = neotape::make_uuid_v4();
-
     write_volume_header(state);
+}
+
+} // anonymous namespace
+
+// ====================== Public Entry Point =======================
+
+void write_tape_archive(const TapeWriterOptions &opts) {
+    TapeDevice dev(opts.device, true);
+
+    WriterState state;
+    initialize_for_write(state, dev, opts);
 
     FILE *input = stdin;
     if (opts.input != "-") {
@@ -280,6 +284,31 @@ void write_tape_archive(const TapeWriterOptions &opts) {
 
     if (input != stdin && std::fclose(input) != 0)
         fail(format("close input: {}", std::strerror(errno)));
+
+    write_archive_end(state);
+
+    std::cerr << format("archive {} written to tape {}\n", state.archive_uuid,
+                        opts.device);
+}
+
+void write_tape_archive_from_chunks(const TapeWriterOptions &opts,
+                                    TapePayloadProducer producer) {
+    TapeDevice dev(opts.device, true);
+    write_tape_archive_from_chunks_to_device(dev, opts, std::move(producer));
+}
+
+void write_tape_archive_from_chunks_to_device(TapeDevice &dev,
+                                              const TapeWriterOptions &opts,
+                                              TapePayloadProducer producer) {
+    WriterState state;
+    initialize_for_write(state, dev, opts);
+
+    producer([&](const uint8_t *data, std::size_t len, bool end_slice) {
+        vector<uint8_t> payload;
+        if (len > 0)
+            payload.assign(data, data + len);
+        write_content_frame(state, payload, end_slice);
+    });
 
     write_archive_end(state);
 

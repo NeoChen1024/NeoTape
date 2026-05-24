@@ -62,8 +62,11 @@ bool parse_spool_file_name(const fs::path &path, uint64_t &file_num) {
         name.substr(name.size() - spool_ext.size()) != spool_ext)
         return false;
 
-    string_view middle(name.c_str() + spool_prefix.size(),
-                       name.size() - spool_prefix.size() - spool_ext.size());
+    size_t number_begin = spool_prefix.size();
+    size_t number_end = name.find('.', number_begin);
+    if (number_end == string::npos || number_end == number_begin)
+        return false;
+    string_view middle(name.c_str() + number_begin, number_end - number_begin);
     char *end = nullptr;
     file_num = std::strtoull(middle.data(), &end, 10);
     return end != nullptr && end == middle.data() + middle.size();
@@ -406,6 +409,10 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
         return;
 
     switch (op) {
+    case MTSETBLK:
+        current_block_size_ = static_cast<uint32_t>(count);
+        return;
+
     case MTWEOF: {
         if (!read_write_)
             throw Error(device_path(), "write filemark", ENOTSUP);
@@ -444,6 +451,32 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
         return;
     }
 
+    case MTFSF:
+    case MTFSFM: {
+        if (read_write_)
+            throw Error(device_path(), "filemark spacing", ENOTSUP);
+        if (spool_fd_ >= 0) {
+            ::close(spool_fd_);
+            spool_fd_ = -1;
+        }
+
+        auto it = std::ranges::find(files_, current_path_);
+        size_t index = it == files_.end()
+                           ? 0
+                           : static_cast<size_t>(std::distance(files_.begin(), it)) + 1;
+        if (index >= files_.size()) {
+            current_path_.clear();
+            return;
+        }
+
+        current_path_ = files_[index];
+        parse_spool_file_name(current_path_, current_file_num_);
+        spool_fd_ = open_fd(current_path_, O_RDONLY);
+        current_record_ = 0;
+        current_block_size_ = 0;
+        return;
+    }
+
     case MTREW:
         if (spool_fd_ < 0)
             throw Error(device_path(), "rewind", EBADF);
@@ -459,8 +492,6 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
             throw Error(device_path(), "lseek", errno);
         return;
 
-    case MTFSF:
-    case MTFSFM:
     case MTBSF:
     case MTBSFM:
         throw Error(device_path(), "filemark spacing", ENOTSUP);

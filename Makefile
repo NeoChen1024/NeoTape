@@ -40,7 +40,7 @@ CLANG_TIDY_FILES = $(filter-out src/neotape_format_generated.cpp, $(wildcard src
 $(GENERATED_HPP) $(GENERATED_CPP): $(GENERATOR) scripts/neotape_header_defs.py
 	python3 $(GENERATOR)
 
-.PHONY: all clean countline format test test_pax_cli generate tidy
+.PHONY: all clean countline format test test_pax_cli test_tape_backup_wiring test_file_backed_tape generate tidy
 
 all: ${EXE}
 
@@ -88,8 +88,8 @@ $(BINDIR)/neotape-init : src/neotape_init.cpp $(CLI_OBJ) $(FORMAT_OBJ) $(FORMAT_
 	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
 # Test binary
-$(BINDIR)/test_tape : tests/test_tape.cpp $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/test_tape : tests/test_tape.cpp $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
 $(BINDIR)/test_cli : tests/test_cli.cpp $(CLI_OBJ) Makefile | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) -o $@
@@ -98,9 +98,17 @@ test: $(BINDIR)/test_tape $(BINDIR)/test_cli $(BINDIR)/neotape
 	$(BINDIR)/test_tape
 	$(BINDIR)/test_cli
 	sh tests/smoke_pax_backup_restore.sh
+	sh tests/smoke_tape_backup_wiring.sh
+	sh tests/smoke_file_backed_tape_roundtrip.sh
 
 test_pax_cli: $(BINDIR)/neotape
 	sh tests/smoke_pax_backup_restore.sh
+
+test_tape_backup_wiring: $(BINDIR)/neotape
+	sh tests/smoke_tape_backup_wiring.sh
+
+test_file_backed_tape: $(BINDIR)/test_tape
+	sh tests/smoke_file_backed_tape_roundtrip.sh
 
 $(BINDIR)/% : src/%.c Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)

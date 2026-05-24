@@ -793,6 +793,47 @@ void run_spool_pax_backup(const BackupOptions &backup) {
     sink.finish();
 }
 
+void run_tape_pax_backup(const BackupOptions &backup) {
+    mt::TapeWriterOptions opts;
+    opts.device = backup.target.locator;
+    opts.archive_name = backup.archive_name;
+    opts.volume_block_size = backup.volume_block_size;
+    opts.payload_profile = "pax";
+
+    mt::write_tape_archive_from_chunks(
+        opts, [&](mt::TapeChunkWriter writer) {
+            neotape::PaxWriterOptions pax;
+            pax.output_name = "-";
+            pax.plan_path = backup.plan_path;
+            pax.chdir_dir = backup.chdir_dir;
+            for (const auto &source : backup.sources)
+                pax.sources.push_back(source.string());
+
+            bool slice_open = false;
+            neotape::PaxWriterCallbacks callbacks;
+            callbacks.begin_slice = [&](uint64_t) {
+                if (slice_open)
+                    throw std::runtime_error(
+                        "pax writer began a slice before ending the previous slice");
+                slice_open = true;
+            };
+            callbacks.write_chunk = [&](neotape::PaxChunk chunk) {
+                if (!slice_open)
+                    callbacks.begin_slice(chunk.slice);
+                auto *data = reinterpret_cast<const uint8_t *>(chunk.bytes.data());
+                writer(data, chunk.bytes.size(), false);
+            };
+            callbacks.end_slice = [&](uint64_t) {
+                writer(nullptr, 0, true);
+                slice_open = false;
+            };
+
+            neotape::write_pax(pax, std::move(callbacks));
+            if (slice_open)
+                throw std::runtime_error("pax writer ended with an open slice");
+        });
+}
+
 void run_writer(Options opts) {
     if (!opts.tape_device.empty()) {
         mt::TapeWriterOptions tape_opts;
@@ -850,10 +891,9 @@ int neotape_backup_main(int argc, char **argv) {
     try {
         auto backup = parse_backup_args(argc, argv);
         if (backup.target.kind == "tape")
-            throw std::runtime_error(
-                "backup currently supports spool: targets; tape: backup needs "
-                "tape sink wiring");
-        run_spool_pax_backup(backup);
+            run_tape_pax_backup(backup);
+        else
+            run_spool_pax_backup(backup);
         return 0;
     } catch (const std::exception &e) {
         std::cerr << format("neotape backup: {}\n", e.what());

@@ -1,9 +1,16 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace mt {
+
+class TapeDevice;
+
+using TapeChunkWriter = std::function<void(const uint8_t *, std::size_t, bool)>;
+using TapePayloadProducer = std::function<void(TapeChunkWriter)>;
 
 struct TapeWriterOptions {
     std::string device;
@@ -19,5 +26,10 @@ struct TapeWriterOptions {
 };
 
 void write_tape_archive(const TapeWriterOptions &opts);
+void write_tape_archive_from_chunks_to_device(TapeDevice &dev,
+                                              const TapeWriterOptions &opts,
+                                              TapePayloadProducer producer);
+void write_tape_archive_from_chunks(const TapeWriterOptions &opts,
+                                    TapePayloadProducer producer);
 
 } // namespace mt
