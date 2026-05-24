@@ -9,7 +9,6 @@ int stub(const char *name) {
 
 } // namespace
 
-int neotape_plan_main(int, char **) { return stub("plan"); }
 int neotape_write_main(int, char **) { return stub("write"); }
 int neotape_read_main(int, char **) { return stub("read"); }
 int neotape_backup_main(int, char **) { return stub("backup"); }

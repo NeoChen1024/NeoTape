@@ -85,8 +85,8 @@ void warn(const string &message) {
 
 void usage(const char *prog) {
     std::cerr << format(
-        "usage: {} [--slice-size <bytes>] [--metadata-buffer-size <bytes>]\n"
-        "       -o <file> [-C <dir>] [-x] [-v]\n"
+        "usage: {} [-C <dir>] -o <file|-> [--slice-size <bytes>]\n"
+        "       [--metadata-buffer-size <bytes>] [-x] [-v]\n"
         "       [--io-threads <N>] <path> [path ...]\n",
         prog);
 }
@@ -102,7 +102,9 @@ Options parse_args(int argc, char **argv) {
         {nullptr, 0, nullptr, 0}};
 
     Options opts;
+    bool saw_chdir = false;
     int c;
+    optind = 1;
     while ((c = getopt_long(argc, argv, "C:o:xvh", long_opts, nullptr)) != -1) {
         switch (c) {
         case 's':
@@ -116,6 +118,9 @@ Options parse_args(int argc, char **argv) {
             opts.output_path = optarg;
             break;
         case 'C':
+            if (saw_chdir)
+                fail("-C may be specified at most once");
+            saw_chdir = true;
             opts.chdir_dir = optarg;
             break;
         case 'x':

@@ -20,6 +20,7 @@ TAPE_WRITER_OBJ = src/neotape_tape_writer.o
 CLI_OBJ = src/neotape_cli.o
 COMMAND_STUBS_OBJ = src/neotape_command_stubs.o
 INIT_CMD_OBJ = src/neotape_init.cmd.o
+PLAN_CMD_OBJ = src/neotape_plan.cmd.o
 
 include 3rdparty/blake3.mk
 include 3rdparty/crc32c.mk
@@ -50,11 +51,14 @@ src/%.o : src/%.cpp Makefile
 src/neotape_init.cmd.o : src/neotape_init.cpp Makefile
 	$(CXX) $(CXXFLAGS) -DNEOTAPE_NO_STANDALONE_MAIN -c $< -o $@
 
+src/neotape_plan.cmd.o : src/neotape_plan.cpp Makefile
+	$(CXX) $(CXXFLAGS) -DNEOTAPE_NO_STANDALONE_MAIN -c $< -o $@
+
 $(BINDIR)/mt-pax : src/mt-pax.cpp $(PAX_WRITER_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(PAX_WRITER_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape : src/neotape.cpp $(CLI_OBJ) $(INIT_CMD_OBJ) $(COMMAND_STUBS_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) $(INIT_CMD_OBJ) $(COMMAND_STUBS_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/neotape : src/neotape.cpp $(CLI_OBJ) $(INIT_CMD_OBJ) $(PLAN_CMD_OBJ) $(COMMAND_STUBS_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) $(INIT_CMD_OBJ) $(PLAN_CMD_OBJ) $(COMMAND_STUBS_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
 $(FORMAT_GEN_OBJ): $(GENERATED_CPP) $(GENERATED_HPP) Makefile
 	$(CXX) $(CXXFLAGS) -c $(GENERATED_CPP) -o $@
