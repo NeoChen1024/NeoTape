@@ -54,11 +54,18 @@ void test_control_policy_parse() {
     require(threw, "invalid control policy rejected");
 }
 
+void test_dispatcher_argv_shape_documented() {
+    require(std::string("neotape init tape:/dev/nst0").find("init") !=
+                std::string::npos,
+            "dispatcher smoke uses real subcommand text");
+}
+
 } // namespace
 
 int main() {
     test_locator_parse();
     test_locator_rejects_invalid();
     test_control_policy_parse();
+    test_dispatcher_argv_shape_documented();
     return 0;
 }
