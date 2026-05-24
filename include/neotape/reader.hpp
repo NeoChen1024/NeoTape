@@ -1,6 +1,7 @@
 #pragma once
 
 #include "neotape/format.hpp"
+#include "neotape/tape.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -50,6 +51,27 @@ class SpoolVolumeReader final : public VirtualTapeReader {
     std::size_t file_idx_ = 0;
 
     std::FILE *file_ = nullptr;
+    VolumeHeader volume_header_;
+    uint32_t block_size_ = 0;
+    uint64_t tape_file_num_ = 0;
+    bool exhausted_ = false;
+};
+
+class TapeDeviceVolumeReader final : public VirtualTapeReader {
+  public:
+    explicit TapeDeviceVolumeReader(mt::TapeDevice &device);
+
+    bool read_record(std::vector<uint8_t> &out) override;
+    bool next_file() override;
+    uint32_t block_size() const override { return block_size_; }
+    uint64_t tape_file_num() const override { return tape_file_num_; }
+    bool exhausted() const override { return exhausted_; }
+
+    const VolumeHeader &volume_header() const { return volume_header_; }
+    uint64_t volume_seq_num() const { return volume_header_.volume_seq_num; }
+
+  private:
+    mt::TapeDevice &device_;
     VolumeHeader volume_header_;
     uint32_t block_size_ = 0;
     uint64_t tape_file_num_ = 0;

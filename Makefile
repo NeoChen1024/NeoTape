@@ -107,7 +107,7 @@ test_pax_cli: $(BINDIR)/neotape
 test_tape_backup_wiring: $(BINDIR)/neotape
 	sh tests/smoke_tape_backup_wiring.sh
 
-test_file_backed_tape: $(BINDIR)/test_tape
+test_file_backed_tape: $(BINDIR)/test_tape $(BINDIR)/neotape
 	sh tests/smoke_file_backed_tape_roundtrip.sh
 
 $(BINDIR)/% : src/%.c Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)

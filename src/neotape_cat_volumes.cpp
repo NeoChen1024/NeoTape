@@ -2,6 +2,7 @@
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
 #include "neotape/reader.hpp"
+#include "neotape/tape.hpp"
 
 #include <blake3.h>
 
@@ -148,7 +149,8 @@ void raw_read_usage() {
                  "[--archive <index|uuid>] [--control=auto|none]\n";
 }
 
-RawReadOptions parse_raw_read_args(int argc, char **argv) {
+RawReadOptions parse_raw_read_args(int argc, char **argv,
+                                   bool allow_tape = false) {
     static const struct option long_opts[] = {
         {"source", required_argument, nullptr, 's'},
         {"output", required_argument, nullptr, 'o'},
@@ -188,7 +190,7 @@ RawReadOptions parse_raw_read_args(int argc, char **argv) {
         fail("read requires --source <locator>");
     if (optind != argc)
         fail("read does not accept positional arguments");
-    if (opts.source.kind != "spool")
+    if (opts.source.kind != "spool" && !(allow_tape && opts.source.kind == "tape"))
         fail("read currently supports spool: sources");
     if (!opts.archive_selector.empty() && opts.archive_selector != "1")
         fail("read currently supports only the first archive");
@@ -542,6 +544,24 @@ void run_cat_volumes(const Options &opts) {
                         rs.expected_global_frame_seq_num - 1);
 }
 
+void run_tape_device_restore(const Options &opts, mt::TapeDevice &device) {
+    neotape::TapeDeviceVolumeReader vol(device);
+    auto sink = create_sink(opts);
+    VolumeReadState rs{};
+    rs.sink = sink.get();
+
+    bool found_archive_end = process_volume(vol, rs);
+    if (!found_archive_end) {
+        neotape::require_prompt_allowed(opts.control);
+        fail("archive incomplete: no Archive End Header found");
+    }
+
+    sink->flush();
+    std::cerr << format("neotape-cat-volumes: ok volumes=1 slices={} frames={}\n",
+                        rs.expected_logical_slice_seq_num - 1,
+                        rs.expected_global_frame_seq_num - 1);
+}
+
 } // namespace
 
 // ====================== Main ======================================
@@ -589,12 +609,22 @@ int neotape_list_main(int argc, char **argv) {
 
 int neotape_restore_main(int argc, char **argv) {
     try {
-        auto raw = parse_raw_read_args(argc, argv);
+        auto raw = parse_raw_read_args(argc, argv, true);
         Options opts;
-        opts.spool_dir = raw.source.locator;
         opts.output = raw.output;
         opts.control = raw.control;
-        run_cat_volumes(opts);
+        if (raw.source.kind == "tape") {
+            if (fs::is_directory(raw.source.locator)) {
+                mt::SpoolTapeDevice device(raw.source.locator, false);
+                run_tape_device_restore(opts, device);
+            } else {
+                mt::TapeDevice device(raw.source.locator, false);
+                run_tape_device_restore(opts, device);
+            }
+        } else {
+            opts.spool_dir = raw.source.locator;
+            run_cat_volumes(opts);
+        }
         append_pax_eoa_if_needed(opts.output);
         return 0;
     } catch (const std::exception &e) {

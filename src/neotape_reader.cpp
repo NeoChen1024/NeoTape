@@ -10,6 +10,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 
 namespace neotape {
 
@@ -183,6 +184,64 @@ bool SpoolVolumeReader::next_file() {
     }
     ++tape_file_num_;
     return open_file(file_idx_++);
+}
+
+TapeDeviceVolumeReader::TapeDeviceVolumeReader(mt::TapeDevice &device)
+    : device_(device) {
+    std::vector<uint8_t> buf(8 * 1024 * 1024);
+    ssize_t n = ::read(device_.fd(), buf.data(), buf.size());
+    if (n < 0)
+        throw std::runtime_error(std::format("read volume header: {}",
+                                             std::strerror(errno)));
+    if (static_cast<std::size_t>(n) < fixed_header_size)
+        throw std::runtime_error("short read from tape volume header");
+
+    buf.resize(static_cast<std::size_t>(n));
+    auto parsed = parse_fixed_header(buf.data(), buf.size());
+    if (!parsed.volume)
+        throw std::runtime_error(std::format("expected volume header, got {}",
+                                             header_type_name(parsed.type)));
+
+    volume_header_ = *parsed.volume;
+    block_size_ = volume_header_.volume_block_size;
+    if (!valid_block_size(block_size_))
+        throw std::runtime_error("invalid volume block size");
+}
+
+bool TapeDeviceVolumeReader::next_file() {
+    if (exhausted_)
+        return false;
+    try {
+        device_.space_fwd_filemark();
+    } catch (const mt::Error &) {
+        exhausted_ = true;
+        return false;
+    }
+    if (device_.fd() < 0) {
+        exhausted_ = true;
+        return false;
+    }
+    ++tape_file_num_;
+    return true;
+}
+
+bool TapeDeviceVolumeReader::read_record(std::vector<uint8_t> &out) {
+    if (exhausted_ || device_.fd() < 0)
+        return false;
+    out.resize(block_size_);
+    ssize_t n = ::read(device_.fd(), out.data(), out.size());
+    if (n == 0) {
+        out.clear();
+        return false;
+    }
+    if (n < 0)
+        throw std::runtime_error(
+            std::format("read tape record: {}", std::strerror(errno)));
+    if (static_cast<std::size_t>(n) != block_size_)
+        throw std::runtime_error(std::format(
+            "short read at tape file {}: expected {} bytes, got {}",
+            tape_file_num_, block_size_, n));
+    return true;
 }
 
 } // namespace neotape

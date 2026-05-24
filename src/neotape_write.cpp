@@ -2,6 +2,7 @@
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
 #include "neotape/pax_writer.hpp"
+#include "neotape/tape.hpp"
 #include "neotape/tape_writer.hpp"
 
 #include <blake3.h>
@@ -800,8 +801,7 @@ void run_tape_pax_backup(const BackupOptions &backup) {
     opts.volume_block_size = backup.volume_block_size;
     opts.payload_profile = "pax";
 
-    mt::write_tape_archive_from_chunks(
-        opts, [&](mt::TapeChunkWriter writer) {
+    auto produce = [&](mt::TapeChunkWriter writer) {
             neotape::PaxWriterOptions pax;
             pax.output_name = "-";
             pax.plan_path = backup.plan_path;
@@ -831,7 +831,15 @@ void run_tape_pax_backup(const BackupOptions &backup) {
             neotape::write_pax(pax, std::move(callbacks));
             if (slice_open)
                 throw std::runtime_error("pax writer ended with an open slice");
-        });
+        };
+
+    if (fs::is_directory(backup.target.locator)) {
+        opts.init_if_blank = true;
+        mt::SpoolTapeDevice dev(backup.target.locator, true);
+        mt::write_tape_archive_from_chunks_to_device(dev, opts, produce);
+    } else {
+        mt::write_tape_archive_from_chunks(opts, produce);
+    }
 }
 
 void run_writer(Options opts) {
