@@ -6,10 +6,13 @@ NeoTape wraps a payload byte stream (typically a POSIX pax/tar archive) in a lig
 
 This is an early implementation-stage project. The current implementation
 includes standalone pax writers (`bin/pax`, `bin/mt-pax`) plus a primary
-`bin/neotape <subcommand>` CLI for initializing spool media, writing raw or PAX
-profile archives, listing archive instances, and reading/restoring from spool
-archives. The tape-device backend and full on-tape workflow are still under
-development.
+`bin/neotape <subcommand>` CLI for initializing spool or tape media, writing raw
+or PAX profile archives, listing archive instances, and reading/restoring from
+spool archives. The spool backend is the hardware-free file-backed backend and
+uses the same single-root `.nts` tape-file model as the tape abstraction.
+`tape:` locators are reserved for real tape devices such as `/dev/nst0`; directory
+fallback for `tape:<dir>` is intentionally not supported. Real tape-device
+end-to-end validation is still pending.
 
 ## Specification Status
 
@@ -90,6 +93,10 @@ bin/neotape write --target spool:./archive.spool --input payload.bin --name raw1
 bin/neotape read --source spool:./archive.spool --output payload.out
 bin/neotape list --source spool:./archive.spool --json
 ```
+
+Use `spool:<dir>` for file-backed testing. Use `tape:<device>` only for real
+tape devices, for example `tape:/dev/nst0`; do not use `tape:<dir>` as a spool
+shortcut.
 
 Default archive `--volume-block-size` is 4 MiB. Payload-producing commands keep
 stdout as payload bytes only; diagnostics and prompts go to stderr or

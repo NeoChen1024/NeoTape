@@ -7,23 +7,23 @@ This roadmap is a planning draft. It is not part of the normative NeoTape v0.1 f
 Current implementation snapshot:
 
 - Phase 0-3 have working MVP code paths: `bin/pax`, `bin/mt-pax`,
-  minimal fixed headers, spool writer, and spool reader can build and raw
-  payloads can round-trip through spool archives.
+  minimal fixed headers, and a spool backend using the single-root `.nts` tape
+  file layout. Raw payloads can round-trip through spool archives.
 - Phase 0-3 validation is incomplete: there is no CI configuration in the
-  repository, and the current `make test` target only runs the tape
-  abstraction/navigator test binary. The roadmap validation fixtures for pax
-  smoke tests, corrupt spool objects, and missing/end-frame cases still need to
-  become automated tests.
-- Phase 4 has an experimental PAX-byte-stream framing path for
-  `--payload-profile=pax`, but it is not yet the planned tree-walking PAX
-  profile. It currently expects an already-generated pax/tar stream, keeps the
-  stream in memory, and still needs automated regression coverage for both
-  stdin and `-i <file>` inputs.
+  repository, but `make test` now runs unit tests plus spool PAX/raw smoke tests
+  and tape CLI wiring checks. Corrupt spool object and broader recovery fixtures
+  still need to become automated tests.
+- Phase 4 has a streaming PAX profile path wired through `neotape backup` and
+  `neotape restore` for spool archives, including planned slice boundaries.
+  Broader POSIX metadata fixtures for xattrs, ACLs, sparse files, and device
+  nodes still need coverage.
 - Phase 5 is not implemented beyond enum/header support for
   `SLICE_METADATA`.
-- Phase 6 has a prototype tape writer, tape device wrapper, navigator, and test
-  file-backed device, but real tape read/write validation and recovery behavior
-  are not complete.
+- Phase 6 has a tape device wrapper, navigator, callback writer, tape restore
+  adapter, and `SpoolTapeDevice` implementation used by the spool backend and
+  unit tests. Public `tape:` locators are real tape devices only; the old
+  `tape:<dir>` file-backed CLI fallback has been removed. Real tape read/write
+  validation and recovery behavior are not complete.
 - Phase 8 has a minimal Medium Header serializer/parser and `neotape-init`
   prototype. The self-description metadata bundle is not implemented.
 
@@ -101,16 +101,18 @@ Spec feedback expected:
 
 Goal: implement NeoTape logical archive creation without tape hardware.
 
-Implementation status: `neotape-write --target=spool` can write raw payloads,
-create volume directories, slice tape files, archive-end files, and simulate
-volume rollover with `--virtual-tape-size`. Manifest contents are currently
-minimal and do not yet include every validation field listed below.
+Implementation status: `neotape init spool:<dir>`, `neotape write --target
+spool:<dir>`, `neotape backup --target spool:<dir>`, `neotape read --source
+spool:<dir>`, `neotape restore --source spool:<dir>`, and `neotape list --source
+spool:<dir>` operate on the single-root `.nts` spool layout. The spool manifest
+is currently minimal and does not yet include every validation field listed
+below.
 
 Deliverables:  
 - neotape-write --target=spool.  
 - Deterministic spool directory layout.  
-- Volume directory creation.  
-- Tape-file object creation for volume header, slice files, and archive end header.  
+- Single-root `.nts` tape-file object creation for medium header, volume header,
+  slice files, and archive end header.
 - Frame Header + content sequence inside each slice tape file; the final `SLICE_CONTENT` Frame Header carries slice verification.
 - Configurable virtual volume size to simulate EOT/ENOSPC.
 
@@ -220,10 +222,11 @@ Spec feedback expected:
 
 Goal: replay the same logical format onto a real sequential tape device.
 
-Implementation status: Linux tape ioctl wrappers, a navigator, a tape writer
-prototype, and a file-backed test device exist. The implementation still needs
-real tape/emulated-tape end-to-end validation, tape read path integration for
-`neotape-cat-volumes`, and the recovery/control policies planned in Phase 7.
+Implementation status: Linux tape ioctl wrappers, a navigator, a tape writer,
+and a tape read adapter exist. The spool backend uses `SpoolTapeDevice` for
+hardware-free testing, but `tape:` itself no longer accepts directory fallback
+locators. The implementation still needs real tape end-to-end validation and the
+recovery/control policies planned in Phase 7.
 
 Deliverables:  
 - Tape backend adapter using standard OS tape device operations.  

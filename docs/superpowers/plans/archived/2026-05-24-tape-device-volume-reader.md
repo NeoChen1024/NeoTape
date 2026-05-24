@@ -1,5 +1,10 @@
 # Tape Device Volume Reader Implementation Plan
 
+Archived note: this plan was superseded after `spool:` became the file-backed
+CLI backend using the single-root `.nts` spool layout. The old public
+`tape:<dir>` restore fallback and `test_file_backed_tape` smoke target were
+removed; public `tape:` locators now refer to real tape devices only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let `neotape restore --source tape:<locator>` consume the same tape abstraction used by `SpoolTapeDevice`, enabling hardware-free tape restore tests before real LTO validation.

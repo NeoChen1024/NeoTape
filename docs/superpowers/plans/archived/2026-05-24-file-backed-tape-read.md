@@ -1,5 +1,10 @@
 # File-Backed Tape Read Implementation Plan
 
+Archived note: this plan was superseded after `spool:` became the file-backed
+CLI backend using the single-root `.nts` spool layout. The old public
+`tape:<dir>`/`test_file_backed_tape` direction was removed; public `tape:`
+locators now refer to real tape devices only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Prove the tape abstraction can write and read a PAX backup through a file-backed `SpoolTapeDevice` without real LTO hardware.
