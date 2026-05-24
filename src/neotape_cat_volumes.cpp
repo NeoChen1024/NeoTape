@@ -339,64 +339,70 @@ void list_archives(SpoolOrchestrator &orch) {
     }
 }
 
+void run_cat_volumes(const Options &opts) {
+    SpoolOrchestrator orch(opts.spool_dir);
+
+    if (opts.list_mode) {
+        list_archives(orch);
+        return;
+    }
+
+    auto sink = create_sink(opts);
+    VolumeReadState rs{};
+    rs.sink = sink.get();
+
+    bool found_archive_end = false;
+
+    while (auto vol = orch.next_volume()) {
+        found_archive_end = process_volume(*vol, rs);
+        if (found_archive_end)
+            break;
+
+        if (opts.prompt) {
+            sink->flush();
+            std::cerr << format("neotape-cat-volumes: end of tape-{:06}, ",
+                                vol->volume_seq_num());
+            std::cerr << "mount next volume and press Enter [q to quit]: ";
+            std::string line;
+            std::getline(std::cin, line);
+            if (line == "q")
+                fail("aborted by user");
+        }
+    }
+
+    if (!found_archive_end)
+        fail("archive incomplete: no Archive End Header found");
+
+    sink->flush();
+
+    uint64_t total_volumes = 0;
+    {
+        SpoolOrchestrator count_orch(opts.spool_dir);
+        while (count_orch.next_volume())
+            ++total_volumes;
+    }
+
+    std::cerr << format("neotape-cat-volumes: ok volumes={} slices={} frames={}\n",
+                        total_volumes, rs.expected_logical_slice_seq_num - 1,
+                        rs.expected_global_frame_seq_num - 1);
+}
+
 } // namespace
 
 // ====================== Main ======================================
 
-int main(int argc, char **argv) {
-    auto opts = parse_args(argc, argv);
-
+int neotape_cat_volumes_legacy_main(int argc, char **argv) {
     try {
-        SpoolOrchestrator orch(opts.spool_dir);
-
-        if (opts.list_mode) {
-            list_archives(orch);
-            return 0;
-        }
-
-        auto sink = create_sink(opts);
-        VolumeReadState rs{};
-        rs.sink = sink.get();
-
-        bool found_archive_end = false;
-
-        while (auto vol = orch.next_volume()) {
-            found_archive_end = process_volume(*vol, rs);
-            if (found_archive_end)
-                break;
-
-            if (opts.prompt) {
-                sink->flush();
-                std::cerr << format("neotape-cat-volumes: end of tape-{:06}, ",
-                                    vol->volume_seq_num());
-                std::cerr << "mount next volume and press Enter [q to quit]: ";
-                std::string line;
-                std::getline(std::cin, line);
-                if (line == "q")
-                    fail("aborted by user");
-            }
-        }
-
-        if (!found_archive_end)
-            fail("archive incomplete: no Archive End Header found");
-
-        sink->flush();
-
-        uint64_t total_volumes = 0;
-        {
-            SpoolOrchestrator count_orch(opts.spool_dir);
-            while (count_orch.next_volume())
-                ++total_volumes;
-        }
-
-        std::cerr << format(
-            "neotape-cat-volumes: ok volumes={} slices={} frames={}\n",
-            total_volumes, rs.expected_logical_slice_seq_num - 1,
-            rs.expected_global_frame_seq_num - 1);
-
+        auto opts = parse_args(argc, argv);
+        run_cat_volumes(opts);
+        return 0;
     } catch (const std::exception &e) {
         fail(e.what());
     }
-
-    return 0;
 }
+
+#ifndef NEOTAPE_NO_STANDALONE_MAIN
+int main(int argc, char **argv) {
+    return neotape_cat_volumes_legacy_main(argc, argv);
+}
+#endif

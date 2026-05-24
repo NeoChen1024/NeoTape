@@ -557,29 +557,37 @@ void write_spool_archive(const Options &opts) {
                         opts.output_dir.string());
 }
 
+void run_writer(Options opts) {
+    if (!opts.tape_device.empty()) {
+        mt::TapeWriterOptions tape_opts;
+        tape_opts.device = std::move(opts.tape_device);
+        tape_opts.input = std::move(opts.input);
+        tape_opts.archive_name = std::move(opts.archive_name);
+        tape_opts.volume_block_size = opts.volume_block_size;
+        tape_opts.slice_size = opts.slice_size;
+        tape_opts.slice_size_set = opts.slice_size_set;
+        tape_opts.init_mode = opts.init_mode;
+        tape_opts.init_if_blank = opts.init_if_blank;
+        tape_opts.force_append = opts.force_append;
+        tape_opts.payload_profile = opts.payload_profile;
+        mt::write_tape_archive(tape_opts);
+    } else {
+        write_spool_archive(opts);
+    }
+}
+
 } // namespace
 
-int main(int argc, char **argv) {
+int neotape_write_legacy_main(int argc, char **argv) {
     try {
         Options opts = parse_args(argc, argv);
-        if (!opts.tape_device.empty()) {
-            mt::TapeWriterOptions tape_opts;
-            tape_opts.device = std::move(opts.tape_device);
-            tape_opts.input = std::move(opts.input);
-            tape_opts.archive_name = std::move(opts.archive_name);
-            tape_opts.volume_block_size = opts.volume_block_size;
-            tape_opts.slice_size = opts.slice_size;
-            tape_opts.slice_size_set = opts.slice_size_set;
-            tape_opts.init_mode = opts.init_mode;
-            tape_opts.init_if_blank = opts.init_if_blank;
-            tape_opts.force_append = opts.force_append;
-            tape_opts.payload_profile = opts.payload_profile;
-            mt::write_tape_archive(tape_opts);
-        } else {
-            write_spool_archive(opts);
-        }
+        run_writer(std::move(opts));
         return 0;
     } catch (const std::exception &e) {
         fail(e.what());
     }
 }
+
+#ifndef NEOTAPE_NO_STANDALONE_MAIN
+int main(int argc, char **argv) { return neotape_write_legacy_main(argc, argv); }
+#endif

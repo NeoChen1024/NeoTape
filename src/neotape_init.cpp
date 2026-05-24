@@ -78,7 +78,7 @@ Options parse_args(int argc, char **argv) {
 
 } // namespace
 
-int main(int argc, char **argv) {
+int neotape_init_main(int argc, char **argv) {
     try {
         auto opts = parse_args(argc, argv);
 
@@ -133,3 +133,7 @@ int main(int argc, char **argv) {
         fail(e.what());
     }
 }
+
+#ifndef NEOTAPE_NO_STANDALONE_MAIN
+int main(int argc, char **argv) { return neotape_init_main(argc, argv); }
+#endif

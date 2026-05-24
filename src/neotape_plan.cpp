@@ -588,91 +588,92 @@ class PlannerScanner {
     }
 };
 
+void run_plan(Options &opts) {
+    if (opts.output_path == "-") {
+        opts.meta_out = stdout;
+    } else {
+        opts.meta_out = fopen(opts.output_path.c_str(), "wb");
+        if (!opts.meta_out)
+            fail(format("open {}: {}", opts.output_path, std::strerror(errno)));
+    }
+
+    if (!opts.chdir_dir.empty()) {
+        if (chdir(opts.chdir_dir.c_str()) != 0)
+            fail(format("chdir {}: {}", opts.chdir_dir, std::strerror(errno)));
+        string line = format("/chdir/{}", opts.chdir_dir);
+        fwrite(line.data(), 1, line.size(), opts.meta_out);
+        fputc('\0', opts.meta_out);
+        fputc('\n', opts.meta_out);
+    }
+
+    vector<neotape::SourceSpec> sources;
+    for (const fs::path &source : opts.sources)
+        sources.push_back(neotape::make_source_spec(source.generic_string()));
+
+    vector<uint64_t> slice_sizes;
+    SlicePlan current_slice;
+    ScanTotals totals;
+    uint64_t slice_num = 0;
+
+    unsigned nworkers = opts.io_threads > 0 ? opts.io_threads - 1 : 0;
+    WorkerPool pool(nworkers);
+    pool.start(nworkers);
+
+    PlannerScanner scanner(opts, current_slice, slice_num, totals, slice_sizes,
+                           nworkers > 0 ? &pool : nullptr);
+    for (const neotape::SourceSpec &spec : sources)
+        scanner.scan_source(spec);
+
+    pool.stop();
+
+    if (!current_slice.entries.empty())
+        emit_slice(current_slice, opts, slice_num++, slice_sizes);
+
+    if (opts.meta_out && opts.meta_out != stdout)
+        fclose(opts.meta_out);
+
+    std::cerr << format(
+        "scanned entries={} total_disk={} total_apparent={} "
+        "target_slice={} buffer_size={}\n",
+        totals.entries, neotape::humanize_number(totals.disk_bytes),
+        neotape::humanize_number(totals.apparent_bytes),
+        neotape::humanize_number(opts.slice_size),
+        neotape::humanize_number(opts.metadata_buffer_size));
+
+    if (!slice_sizes.empty()) {
+        uint64_t min_sz = slice_sizes[0], max_sz = slice_sizes[0];
+        uint64_t sum_sz = 0;
+        for (uint64_t sz : slice_sizes) {
+            if (sz < min_sz)
+                min_sz = sz;
+            if (sz > max_sz)
+                max_sz = sz;
+            sum_sz += sz;
+        }
+        double avg = static_cast<double>(sum_sz) / slice_sizes.size();
+        double var_sum = 0;
+        for (uint64_t sz : slice_sizes) {
+            double d = static_cast<double>(sz) - avg;
+            var_sum += d * d;
+        }
+        double stddev = std::sqrt(var_sum / slice_sizes.size());
+        std::cerr << format(
+            "slice_sizes: slices={} min={} avg={} max={} "
+            "stddev={}\n",
+            slice_sizes.size(), neotape::humanize_number(min_sz),
+            neotape::humanize_number(static_cast<uint64_t>(avg)),
+            neotape::humanize_number(max_sz),
+            neotape::humanize_number(static_cast<uint64_t>(stddev)));
+    }
+}
+
 } // namespace
 
-int main(int argc, char **argv) {
+int neotape_plan_main(int argc, char **argv) {
     try {
         Options opts = parse_args(argc, argv);
-
-        if (opts.output_path == "-") {
-            opts.meta_out = stdout;
-        } else {
-            opts.meta_out = fopen(opts.output_path.c_str(), "wb");
-            if (!opts.meta_out)
-                fail(format("open {}: {}", opts.output_path,
-                            std::strerror(errno)));
-        }
-
-        if (!opts.chdir_dir.empty()) {
-            if (chdir(opts.chdir_dir.c_str()) != 0)
-                fail(format("chdir {}: {}", opts.chdir_dir,
-                            std::strerror(errno)));
-            string line = format("/chdir/{}", opts.chdir_dir);
-            fwrite(line.data(), 1, line.size(), opts.meta_out);
-            fputc('\0', opts.meta_out);
-            fputc('\n', opts.meta_out);
-        }
-
-        vector<neotape::SourceSpec> sources;
-        for (const fs::path &source : opts.sources)
-            sources.push_back(
-                neotape::make_source_spec(source.generic_string()));
-
-        vector<uint64_t> slice_sizes;
-        SlicePlan current_slice;
-        ScanTotals totals;
-        uint64_t slice_num = 0;
-
-        unsigned nworkers = opts.io_threads > 0 ? opts.io_threads - 1 : 0;
-        WorkerPool pool(nworkers);
-        pool.start(nworkers);
-
-        PlannerScanner scanner(opts, current_slice, slice_num, totals,
-                               slice_sizes, nworkers > 0 ? &pool : nullptr);
-        for (const neotape::SourceSpec &spec : sources)
-            scanner.scan_source(spec);
-
-        pool.stop();
-
-        if (!current_slice.entries.empty())
-            emit_slice(current_slice, opts, slice_num++, slice_sizes);
-
-        if (opts.meta_out && opts.meta_out != stdout)
-            fclose(opts.meta_out);
-
-        std::cerr << format(
-            "scanned entries={} total_disk={} total_apparent={} "
-            "target_slice={} buffer_size={}\n",
-            totals.entries, neotape::humanize_number(totals.disk_bytes),
-            neotape::humanize_number(totals.apparent_bytes),
-            neotape::humanize_number(opts.slice_size),
-            neotape::humanize_number(opts.metadata_buffer_size));
-
-        if (!slice_sizes.empty()) {
-            uint64_t min_sz = slice_sizes[0], max_sz = slice_sizes[0];
-            uint64_t sum_sz = 0;
-            for (uint64_t sz : slice_sizes) {
-                if (sz < min_sz)
-                    min_sz = sz;
-                if (sz > max_sz)
-                    max_sz = sz;
-                sum_sz += sz;
-            }
-            double avg = static_cast<double>(sum_sz) / slice_sizes.size();
-            double var_sum = 0;
-            for (uint64_t sz : slice_sizes) {
-                double d = static_cast<double>(sz) - avg;
-                var_sum += d * d;
-            }
-            double stddev = std::sqrt(var_sum / slice_sizes.size());
-            std::cerr << format(
-                "slice_sizes: slices={} min={} avg={} max={} "
-                "stddev={}\n",
-                slice_sizes.size(), neotape::humanize_number(min_sz),
-                neotape::humanize_number(static_cast<uint64_t>(avg)),
-                neotape::humanize_number(max_sz),
-                neotape::humanize_number(static_cast<uint64_t>(stddev)));
-        }
+        run_plan(opts);
+        return 0;
 
     } catch (const std::exception &e) {
         fail(e.what());
@@ -680,3 +681,7 @@ int main(int argc, char **argv) {
 
     return 0;
 }
+
+#ifndef NEOTAPE_NO_STANDALONE_MAIN
+int main(int argc, char **argv) { return neotape_plan_main(argc, argv); }
+#endif
