@@ -97,7 +97,7 @@ future extensions.
 
 Phase 0 is complete enough to move on to Phase 1 discussion.
 
-The current `pax` tool can create POSIX pax archives that `bsdtar` can restore,
+The current `mt-pax` tool can create POSIX pax archives that `bsdtar` can restore,
 while preserving important filesystem metadata such as xattrs and hardlinks.
 This validates the initial payload producer direction and lets Phase 1 focus on
 NeoTape binary headers and transport framing.

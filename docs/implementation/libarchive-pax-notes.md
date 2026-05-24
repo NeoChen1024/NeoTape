@@ -5,12 +5,12 @@ Status: implementation note.
 ## Overview
 
 NeoTape uses libarchive's pax writer to produce POSIX pax/tar byte streams. The
-writer is initialized once (single-threaded `pax`) or per-entry
+writer is initialized once (original single-threaded writer) or per-entry
 (multi-threaded `mt-pax` with EOA suppression).
 
 ## Initialization
 
-### Single-Threaded Writer (`src/pax.cpp`)
+### Single-Threaded Writer
 
 ```cpp
 struct archive *a = archive_write_new();
@@ -85,7 +85,7 @@ occurrence.
 
 ## Directory Traversal
 
-### Single-Threaded (`src/pax.cpp`)
+### Single-Threaded
 
 Uses `archive_read_disk` for filesystem traversal:
 

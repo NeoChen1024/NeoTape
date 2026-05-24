@@ -49,14 +49,11 @@ file-backed archives.
 # Multi-threaded pax writer:
 bin/mt-pax -f output.pax --io-thread 4 -P 50 ./source
 
-# Single-threaded pax writer:
-bin/pax -f output.pax -v ./source
-
 # Inspect archive volumes and headers:
 bin/neotape-inspect /path/to/archive.spool
 ```
 
-`bin/mt-pax` remains the standalone advanced PAX writer. `bin/neotape-inspect`
+`bin/mt-pax` is the standalone PAX writer. `bin/neotape-inspect`
 remains the low-level inspection and forensic tool.
 
 ## Output Conventions

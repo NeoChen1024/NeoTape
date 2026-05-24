@@ -3,14 +3,14 @@
 Status: implementation note.
 
 Phase 3.5 is the multi-threaded pax writer (`bin/mt-pax`, source
-`src/mt-pax.cpp`). It produces the same POSIX pax byte stream as Phase 0
-(`bin/pax`, `src/pax.cpp`), but uses a worker pool to serialize small files in
+`src/mt-pax.cpp`). It produces the same POSIX pax byte stream as the original
+single-threaded writer, but uses a worker pool to serialize small files in
 parallel and a streaming path for large files.
 
 ## Overview
 
 Phase 0 produces a POSIX pax byte stream using libarchive's pax writer. The
-single-threaded writer (`src/pax.cpp`) opens one archive writer for the entire
+single-threaded writer opens one archive writer for the entire
 run and closes it once at the end, producing exactly one End-of-Archive marker
 (two consecutive zero-filled 512-byte blocks) at the end of the stream. This is
 the normal pax archive layout expected by bsdtar.
@@ -108,13 +108,13 @@ Frame Headers—so the absence of EOA throughout the stream is harmless.
 
 ## Contrast with Single-Threaded Writer
 
-`src/pax.cpp` opens a single archive writer and writes all entries through it.
-EOA appears only once, after the final `archive_write_close()` at
-`src/pax.cpp:470-471`. No suppression is needed; the single trailing EOA is the
+The single-threaded writer opens a single archive writer and writes all entries through it.
+EOA appears only once, after the final `archive_write_close()`.
+No suppression is needed; the single trailing EOA is the
 normal pax end marker that bsdtar expects.
 
 ```
-// src/pax.cpp — single EOA at end
+// single-threaded writer — single EOA at end
 [entry 1 pax bytes][entry 2 pax bytes]...[entry N pax bytes][EOA]
 
 // mt-pax.cpp without suppression — would produce EOA per entry
@@ -132,7 +132,7 @@ stream is irrelevant at the transport layer. The reader (`neotape-cat-volumes`)
 follows NeoTape length fields to extract payload ranges and passes the
 concatenated pax bytes to the downstream payload profile (e.g. bsdtar).
 
-The Phase 0 pax writer's output is therefore compatible with both:
+The single-threaded pax writer's output is therefore compatible with both:
 
 - **Direct bsdtar consumption**: The stream ends with no EOA. bsdtar will read
   until EOF and emit a warning about the missing EOA, but will still extract

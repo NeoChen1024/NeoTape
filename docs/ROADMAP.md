@@ -6,7 +6,7 @@ This roadmap is a planning draft. It is not part of the normative NeoTape v0.1 f
 
 Current implementation snapshot:
 
-- Phase 0-3 have working MVP code paths: `bin/pax`, `bin/mt-pax`,
+- Phase 0-3 have working MVP code paths: `bin/mt-pax`,
   minimal fixed headers, and a spool backend using the single-root `.nts` tape
   file layout. Raw payloads can round-trip through spool archives.
 - Phase 0-3 validation is incomplete: there is no CI configuration in the

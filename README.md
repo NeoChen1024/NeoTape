@@ -5,7 +5,7 @@ A seekable multi-volume length-framed payload transport container designed for L
 NeoTape wraps a payload byte stream (typically a POSIX pax/tar archive) in a lightweight framing layer that provides per-slice and per-Frame structure, integrity verification via BLAKE3, and multi-volume continuation. The on-tape format uses LTO filemarks at logical-slice boundaries, enabling native tape seek to independently verifiable checkpoint units without requiring per-Frame filemarks.
 
 This is an early implementation-stage project. The current implementation
-includes standalone pax writers (`bin/pax`, `bin/mt-pax`) plus a primary
+includes a standalone pax writer (`bin/mt-pax`) plus a primary
 `bin/neotape <subcommand>` CLI for initializing spool or tape media, writing raw
 or PAX profile archives, listing archive instances, and reading/restoring from
 spool archives. The spool backend is the hardware-free file-backed backend and
@@ -102,21 +102,7 @@ Default archive `--volume-block-size` is 4 MiB. Payload-producing commands keep
 stdout as payload bytes only; diagnostics and prompts go to stderr or
 `/dev/tty`.
 
-### bin/pax (single-threaded standalone PAX writer)
-
-```sh
-bin/pax -f <output-file|-> [-v|-vv] [-x] [-C <dir>] <path> [path ...]
-```
-
-- `-f`  Output file path, or `-` for stdout
-- `-v`  Verbose output (file listing)
-- `-vv` Very verbose output (detailed metadata per entry)
-- `-x`  Stay within one file system (do not cross mount points)
-- `-C`  Change directory before walking
-
-All diagnostics are written to stderr. Stdout contains pure archive payload bytes. On completion, a BLAKE3 digest of the output is printed to stderr.
-
-### bin/mt-pax (Phase 3.5, multi-threaded)
+### bin/mt-pax (multi-threaded PAX writer)
 
 ```sh
 bin/mt-pax -f <output-file|-> [-v|-vv] [-x] [-C <dir>]
@@ -124,7 +110,7 @@ bin/mt-pax -f <output-file|-> [-v|-vv] [-x] [-C <dir>]
            [--output-buffer-size <bytes>] <path> [path ...]
 ```
 
-All `bin/pax` options plus:
+Additional options:
 
 - `--io-thread <N>`  Total I/O threads (default 1). N=1 uses no worker threads;
   N>1 spawns N-1 workers for small files.
@@ -136,14 +122,11 @@ All `bin/pax` options plus:
 ### Examples
 
 ```sh
-# Pack a directory (single-threaded)
-bin/pax -f backup.tar src/
+# Pack a directory with 4 I/O threads
+bin/mt-pax -f backup.tar --io-thread 4 src/
 
 # Stream to stdout and pipe to bsdtar
-bin/pax -f - src/ | bsdtar -tvf -
-
-# Multi-threaded with 4 I/O threads
-bin/mt-pax -f backup.tar --io-thread 4 src/
+bin/mt-pax -f - --io-thread 2 src/ | bsdtar -tvf -
 
 # Multi-threaded with output buffer tuning for tape
 bin/mt-pax -f /dev/nst0 --io-thread 4 --output-buffer-size 256M -P 50 src/

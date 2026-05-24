@@ -2,16 +2,15 @@
 
 ## What it is
 
-LTO tape-oriented multi-volume length-framed backup container. Two pax
-writers exist: `bin/pax` (single-threaded, `src/pax.cpp`) and `bin/mt-pax`
-(multi-threaded with `--io-thread`, `src/mt-pax.cpp`).  Early NeoTape
-format/spool tooling is also present, but the tape-device backend and full
-on-tape workflow are still under development.
+LTO tape-oriented multi-volume length-framed backup container. A pax writer
+exists: `bin/mt-pax` (multi-threaded with `--io-thread`, `src/mt-pax.cpp`).
+Early NeoTape format/spool tooling is also present, but the tape-device
+backend and full on-tape workflow are still under development.
 
 ## Build
 
 ```sh
-make -j "$(nproc)"      # produces bin/pax, bin/mt-pax, and NeoTape helper tools
+make -j "$(nproc)"      # produces bin/mt-pax and NeoTape helper tools
 make clean
 ```
 
@@ -33,7 +32,6 @@ the build.
 
 ## Project layout
 
-- `src/pax.cpp` — single-threaded Phase 0 pax writer (stable baseline)
 - `src/mt-pax.cpp` — multi-threaded pax writer (worker pool, serializer, streaming large files)
 - `src/neotape_*.cpp` — NeoTape format, spool writer, inspector, planner, and reader tools
 - `include/neotape/bounded_buffer.hpp` — thread-safe bounded buffer used by mt-pax
@@ -41,19 +39,6 @@ the build.
 - `3rdparty/` — git submodules (BLAKE3, crc32c, mt-st). Init with `git submodule update --init --recursive`
 - `docs/RFC_Draft.md` — format spec; `docs/ROADMAP.md` — implementation phases; `docs/mt-pax.md` — mt-pax architecture
 - No test framework, no CI, no test scripts yet
-
-## pax CLI
-
-```
-bin/pax -f <out-file|-> [-v|-vv] [-x] [-C <dir>] <path> [path...]
-```
-
-- `-f` output (`-` = stdout)
-- `-v` / `-vv` verbosity
-- `-x` one file system
-- `-C <dir>` chdir before walking
-- stderr for diagnostics/prompts; stdout for pure payload bytes
-- BLAKE3 hash of output printed to stderr on completion
 
 ## mt-pax CLI
 
