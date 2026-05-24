@@ -567,7 +567,8 @@ void write_archive_end(WriterState &state) {
     append_manifest_file(state, path);
 }
 
-void write_stream_payload(WriterState &state, FILE *input, bool split_slices) {
+[[maybe_unused]] void write_stream_payload(WriterState &state, FILE *input,
+                                           bool split_slices) {
     size_t frame_payload_capacity =
         state.opts.volume_block_size - neotape::fixed_header_size;
     vector<uint8_t> buffer(frame_payload_capacity);
@@ -745,13 +746,35 @@ void write_spool_archive(const Options &opts) {
             fail_errno(string("open ") + opts.input);
     }
 
-    SpoolArchiveSink sink(opts);
-    write_stream_payload(sink.state(), input,
-                         opts.payload_profile == "raw" && opts.slice_size_set);
+    mt::TapeWriterOptions tape_opts;
+    tape_opts.device = opts.output_dir.string();
+    tape_opts.archive_name = opts.archive_name;
+    tape_opts.volume_block_size = opts.volume_block_size;
+    tape_opts.payload_profile = opts.payload_profile;
+    tape_opts.init_mode = true;
+
+    mt::SpoolTapeDevice dev(opts.output_dir, true);
+    auto produce = [&](mt::TapeChunkWriter writer) {
+        size_t frame_payload_capacity =
+            opts.volume_block_size - neotape::fixed_header_size;
+        vector<uint8_t> buffer(frame_payload_capacity);
+        for (;;) {
+            size_t n = std::fread(buffer.data(), 1, buffer.size(), input);
+            if (n > 0)
+                writer(buffer.data(), n, false);
+            if (n != buffer.size()) {
+                if (std::ferror(input))
+                    fail_errno("read input");
+                break;
+            }
+        }
+        writer(nullptr, 0, true);
+    };
+    mt::write_tape_archive_from_chunks_to_device(dev, tape_opts, produce);
+
     if (input != stdin && std::fclose(input) != 0)
         fail_errno(string("close ") +
                    (opts.input.empty() ? "input" : opts.input));
-    sink.finish();
 }
 
 void run_spool_pax_backup(const BackupOptions &backup) {
@@ -762,37 +785,47 @@ void run_spool_pax_backup(const BackupOptions &backup) {
     opts.virtual_tape_size = read_spool_virtual_tape_size(opts.output_dir);
     opts.payload_profile = "pax";
 
-    SpoolArchiveSink sink(std::move(opts));
-    neotape::PaxWriterOptions pax;
-    pax.output_name = "-";
-    pax.plan_path = backup.plan_path;
-    pax.chdir_dir = backup.chdir_dir;
-    for (const auto &source : backup.sources)
-        pax.sources.push_back(source.string());
+    mt::TapeWriterOptions tape_opts;
+    tape_opts.device = opts.output_dir.string();
+    tape_opts.archive_name = opts.archive_name;
+    tape_opts.volume_block_size = opts.volume_block_size;
+    tape_opts.payload_profile = "pax";
+    tape_opts.init_mode = true;
 
-    bool slice_open = false;
-    neotape::PaxWriterCallbacks callbacks;
-    callbacks.begin_slice = [&](uint64_t) {
+    auto produce = [&](mt::TapeChunkWriter writer) {
+        neotape::PaxWriterOptions pax;
+        pax.output_name = "-";
+        pax.plan_path = backup.plan_path;
+        pax.chdir_dir = backup.chdir_dir;
+        for (const auto &source : backup.sources)
+            pax.sources.push_back(source.string());
+
+        bool slice_open = false;
+        neotape::PaxWriterCallbacks callbacks;
+        callbacks.begin_slice = [&](uint64_t) {
+            if (slice_open)
+                throw std::runtime_error("pax writer began a slice before "
+                                         "ending the previous slice");
+            slice_open = true;
+        };
+        callbacks.write_chunk = [&](neotape::PaxChunk chunk) {
+            if (!slice_open)
+                callbacks.begin_slice(chunk.slice);
+            auto *data = reinterpret_cast<const uint8_t *>(chunk.bytes.data());
+            writer(data, chunk.bytes.size(), false);
+        };
+        callbacks.end_slice = [&](uint64_t) {
+            writer(nullptr, 0, true);
+            slice_open = false;
+        };
+
+        neotape::write_pax(pax, std::move(callbacks));
         if (slice_open)
-            throw std::runtime_error(
-                "pax writer began a slice before ending the previous slice");
-        slice_open = true;
-    };
-    callbacks.write_chunk = [&](neotape::PaxChunk chunk) {
-        if (!slice_open)
-            callbacks.begin_slice(chunk.slice);
-        auto *data = reinterpret_cast<const uint8_t *>(chunk.bytes.data());
-        sink.write_payload(data, chunk.bytes.size(), false);
-    };
-    callbacks.end_slice = [&](uint64_t) {
-        sink.end_slice();
-        slice_open = false;
+            throw std::runtime_error("pax writer ended with an open slice");
     };
 
-    neotape::write_pax(pax, std::move(callbacks));
-    if (slice_open)
-        throw std::runtime_error("pax writer ended with an open slice");
-    sink.finish();
+    mt::SpoolTapeDevice dev(opts.output_dir, true);
+    mt::write_tape_archive_from_chunks_to_device(dev, tape_opts, produce);
 }
 
 void run_tape_pax_backup(const BackupOptions &backup) {

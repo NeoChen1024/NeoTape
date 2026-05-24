@@ -122,6 +122,27 @@ void init_spool(const Options &opts) {
     if (!out)
         fail(format("open manifest: {}", std::strerror(errno)));
     out << manifest.dump(2) << "\n";
+
+    mt::SpoolTapeDevice dev(root, true);
+    dev.set_block_size(65536);
+    neotape::MediumHeader mh;
+    mh.medium_uuid = neotape::make_uuid_v4();
+    mh.medium_label = opts.label;
+    mh.initialized_at_utc = neotape::utc_timestamp_now();
+    mh.medium_header_block_size = 65536;
+    mh.medium_header_block_count = 1;
+    mh.created_by_implementation = "NeoTape init phase6-mvp";
+
+    auto bytes = neotape::serialize_medium_header(mh);
+    std::vector<uint8_t> record(mh.medium_header_block_size, 0);
+    std::memcpy(record.data(), bytes.data(), bytes.size());
+    ssize_t n = ::write(dev.fd(), record.data(), record.size());
+    if (n < 0)
+        fail(format("write medium header: {}", std::strerror(errno)));
+    if (static_cast<std::size_t>(n) != record.size())
+        fail("short write on medium header");
+    dev.write_filemark();
+
     std::cerr << format("neotape init: initialized spool {}\n", root.string());
 }
 

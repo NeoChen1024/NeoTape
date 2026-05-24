@@ -6,6 +6,7 @@
 
 #include <blake3.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -230,17 +231,17 @@ void append_pax_eoa_if_needed(const string &output) {
 
 class SpoolOrchestrator {
     fs::path root_;
-    uint64_t next_seq_ = 1;
+    bool consumed_ = false;
 
   public:
     explicit SpoolOrchestrator(const fs::path &root) : root_(root) {}
+    const fs::path &root() const { return root_; }
 
     std::unique_ptr<neotape::SpoolVolumeReader> next_volume() {
-        auto dir = root_ / format("tape-{:06}", next_seq_);
-        if (!fs::is_directory(dir))
+        if (consumed_)
             return nullptr;
-        ++next_seq_;
-        return std::make_unique<neotape::SpoolVolumeReader>(dir);
+        consumed_ = true;
+        return std::make_unique<neotape::SpoolVolumeReader>(root_);
     }
 };
 
@@ -365,45 +366,76 @@ struct ArchiveEntry {
     int volume_count = 0;
 };
 
+bool parse_spool_tape_file_num(const fs::path &path, uint64_t &num) {
+    static constexpr string_view prefix = "tape-file-";
+    static constexpr string_view ext = ".nts";
+    auto name = path.filename().string();
+    if (name.size() <= prefix.size() + ext.size() ||
+        name.rfind(prefix, 0) != 0 ||
+        name.substr(name.size() - ext.size()) != ext)
+        return false;
+    auto dot = name.find('.', prefix.size());
+    if (dot == string::npos)
+        return false;
+    string num_str = name.substr(prefix.size(), dot - prefix.size());
+    char *end = nullptr;
+    num = std::strtoull(num_str.c_str(), &end, 10);
+    return end != nullptr && *end == '\0';
+}
+
+std::vector<fs::path> scan_spool_tape_files(const fs::path &root) {
+    std::vector<std::pair<uint64_t, fs::path>> indexed;
+    for (const auto &entry : fs::directory_iterator(root)) {
+        if (!entry.is_regular_file())
+            continue;
+        uint64_t num = 0;
+        if (parse_spool_tape_file_num(entry.path(), num))
+            indexed.emplace_back(num, entry.path());
+    }
+    std::ranges::sort(indexed, {}, &std::pair<uint64_t, fs::path>::first);
+
+    std::vector<fs::path> files;
+    files.reserve(indexed.size());
+    for (auto &item : indexed)
+        files.push_back(std::move(item.second));
+    return files;
+}
+
+std::vector<uint8_t> read_fixed_header_prefix(const fs::path &path) {
+    std::FILE *file = std::fopen(path.c_str(), "rb");
+    if (file == nullptr)
+        throw std::runtime_error(
+            format("open {}: {}", path.string(), std::strerror(errno)));
+    std::vector<uint8_t> bytes(neotape::fixed_header_size);
+    if (std::fread(bytes.data(), 1, bytes.size(), file) != bytes.size()) {
+        std::fclose(file);
+        throw std::runtime_error(format("short read from {}", path.string()));
+    }
+    std::fclose(file);
+    return bytes;
+}
+
 std::vector<ArchiveEntry> collect_archives(SpoolOrchestrator &orch) {
     std::vector<ArchiveEntry> entries;
     std::optional<ArchiveEntry> current;
-    std::vector<uint8_t> record;
 
-    while (auto vol = orch.next_volume()) {
-        auto &vh = vol->volume_header();
-        string vol_uuid = vh.archive_uuid;
-
-        if (!current || current->uuid != vol_uuid) {
+    for (const auto &path : scan_spool_tape_files(orch.root())) {
+        auto bytes = read_fixed_header_prefix(path);
+        auto parsed = neotape::parse_fixed_header(bytes.data(), bytes.size());
+        if (parsed.volume) {
             if (current)
                 entries.push_back(std::move(*current));
             current.emplace();
-            current->uuid = vol_uuid;
-            current->name = vh.archive_name;
+            current->uuid = parsed.volume->archive_uuid;
+            current->name = parsed.volume->archive_name;
             current->profile =
-                neotape::payload_profile_name(vh.payload_profile);
-            current->block_size = vh.volume_block_size;
-        }
-
-        ++current->volume_count;
-
-        bool saw_end = false;
-        while (vol->next_file()) {
-            while (vol->read_record(record)) {
-                auto parsed =
-                    neotape::parse_fixed_header(record.data(), record.size());
-                if (parsed.frame)
-                    ++current->total_frames;
-                if (parsed.archive_end) {
-                    saw_end = true;
-                    break;
-                }
-            }
-            if (saw_end)
-                break;
-        }
-
-        if (saw_end) {
+                neotape::payload_profile_name(parsed.volume->payload_profile);
+            current->block_size = parsed.volume->volume_block_size;
+            ++current->volume_count;
+        } else if (parsed.frame) {
+            if (current)
+                ++current->total_frames;
+        } else if (parsed.archive_end && current) {
             current->status = "clean";
             entries.push_back(std::move(*current));
             current.reset();

@@ -33,7 +33,7 @@ void SpoolVolumeReader::scan_files() {
     file_idx_ = 0;
 
     static constexpr std::string_view prefix = "tape-file-";
-    static constexpr std::string_view ext = ".ntf";
+    static constexpr std::string_view ext = ".nts";
 
     std::vector<std::pair<uint64_t, fs::path>> indexed;
 

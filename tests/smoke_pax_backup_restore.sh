@@ -5,6 +5,7 @@ root=/tmp/neotape-pax-smoke-root
 spool=/tmp/neotape-pax-smoke.spool
 archive=/tmp/neotape-pax-smoke.tar
 out=/tmp/neotape-pax-smoke-out
+list_json=/tmp/neotape-pax-smoke-list.json
 planned_spool=/tmp/neotape-pax-planned-smoke.spool
 planned_archive=/tmp/neotape-pax-planned-smoke.tar
 planned_out=/tmp/neotape-pax-planned-smoke-out
@@ -14,7 +15,7 @@ missing_in=/tmp/neotape-missing-volume.in
 missing_out=/tmp/neotape-missing-volume.out
 missing_err=/tmp/neotape-missing-volume.err
 
-rm -rf "$root" "$spool" "$archive" "$out" "$planned_spool" \
+rm -rf "$root" "$spool" "$archive" "$out" "$list_json" "$planned_spool" \
     "$planned_archive" "$planned_out" "$plan" "$missing_spool" \
     "$missing_in" "$missing_out" "$missing_err"
 mkdir -p "$root/src/dir" "$out"
@@ -23,8 +24,20 @@ printf 'planned pax\n' > "$root/src/dir/planned.txt"
 
 bin/neotape init "spool:$spool" --label PAX --virtual-tape-size 64M >/dev/null
 bin/neotape backup --target "spool:$spool" -C "$root" src --name pax-smoke >/dev/null
+test -f "$spool/tape-file-000000.medium-header.nts"
+test -f "$spool/tape-file-000001.volume-header.nts"
+test -f "$spool/tape-file-000002.slice-000001.nts"
+test -f "$spool/tape-file-000003.archive-end.nts"
+if test -d "$spool/tape-000001"; then
+    printf 'spool backend must use single-root .nts layout, found tape-000001 directory\n' >&2
+    exit 1
+fi
 bin/neotape restore --source "spool:$spool" --output "$archive" >/dev/null
 test -s "$archive"
+bin/neotape backup --target "spool:$spool" -C "$root" src --name pax-smoke-2 >/dev/null
+bin/neotape list --source "spool:$spool" --json > "$list_json"
+grep -q '"name": "pax-smoke"' "$list_json"
+grep -q '"name": "pax-smoke-2"' "$list_json"
 
 if command -v bsdtar >/dev/null 2>&1; then
     bsdtar -xpf "$archive" -C "$out"
@@ -47,7 +60,7 @@ dd if=/dev/zero of="$missing_in" bs=1024 count=20 2>/dev/null
 bin/neotape init "spool:$missing_spool" --label MISS --virtual-tape-size 12K >/dev/null
 bin/neotape write --target "spool:$missing_spool" --input "$missing_in" \
     --volume-block-size 4096 --name missing-volume >/dev/null
-rm -rf "$missing_spool/tape-000002"
+rm -f "$missing_spool/tape-file-000003.archive-end.nts"
 if bin/neotape read --source "spool:$missing_spool" --output "$missing_out" \
     --control=none 2>"$missing_err"; then
     printf 'expected read with missing continuation volume to fail\n' >&2
