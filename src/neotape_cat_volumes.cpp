@@ -650,13 +650,8 @@ int neotape_restore_main(int argc, char **argv) {
         opts.output = raw.output;
         opts.control = raw.control;
         if (raw.source.kind == "tape") {
-            if (fs::is_directory(raw.source.locator)) {
-                mt::SpoolTapeDevice device(raw.source.locator, false);
-                run_tape_device_restore(opts, device);
-            } else {
-                mt::TapeDevice device(raw.source.locator, false);
-                run_tape_device_restore(opts, device);
-            }
+            mt::TapeDevice device(raw.source.locator, false);
+            run_tape_device_restore(opts, device);
         } else {
             opts.spool_dir = raw.source.locator;
             run_cat_volumes(opts);

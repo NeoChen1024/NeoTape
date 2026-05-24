@@ -867,13 +867,7 @@ void run_tape_pax_backup(const BackupOptions &backup) {
             throw std::runtime_error("pax writer ended with an open slice");
     };
 
-    if (fs::is_directory(backup.target.locator)) {
-        opts.init_if_blank = true;
-        mt::SpoolTapeDevice dev(backup.target.locator, true);
-        mt::write_tape_archive_from_chunks_to_device(dev, opts, produce);
-    } else {
-        mt::write_tape_archive_from_chunks(opts, produce);
-    }
+    mt::write_tape_archive_from_chunks(opts, produce);
 }
 
 void run_writer(Options opts) {

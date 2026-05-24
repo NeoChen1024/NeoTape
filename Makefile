@@ -99,16 +99,12 @@ test: $(BINDIR)/test_tape $(BINDIR)/test_cli $(BINDIR)/neotape
 	$(BINDIR)/test_cli
 	sh tests/smoke_pax_backup_restore.sh
 	sh tests/smoke_tape_backup_wiring.sh
-	sh tests/smoke_file_backed_tape_roundtrip.sh
 
 test_pax_cli: $(BINDIR)/neotape
 	sh tests/smoke_pax_backup_restore.sh
 
 test_tape_backup_wiring: $(BINDIR)/neotape
 	sh tests/smoke_tape_backup_wiring.sh
-
-test_file_backed_tape: $(BINDIR)/test_tape $(BINDIR)/neotape
-	sh tests/smoke_file_backed_tape_roundtrip.sh
 
 $(BINDIR)/% : src/%.c Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
