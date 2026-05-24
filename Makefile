@@ -19,6 +19,7 @@ NAV_OBJ  = src/neotape_tape_navigator.o
 TAPE_WRITER_OBJ = src/neotape_tape_writer.o
 CLI_OBJ = src/neotape_cli.o
 COMMAND_STUBS_OBJ = src/neotape_command_stubs.o
+INIT_CMD_OBJ = src/neotape_init.cmd.o
 
 include 3rdparty/blake3.mk
 include 3rdparty/crc32c.mk
@@ -46,11 +47,14 @@ $(BINDIR) $(LIBDIR) $(BUILDDIR) $(BUILDDIR)/blake3 $(BUILDDIR)/crc32c:
 src/%.o : src/%.cpp Makefile
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+src/neotape_init.cmd.o : src/neotape_init.cpp Makefile
+	$(CXX) $(CXXFLAGS) -DNEOTAPE_NO_STANDALONE_MAIN -c $< -o $@
+
 $(BINDIR)/mt-pax : src/mt-pax.cpp $(PAX_WRITER_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(PAX_WRITER_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape : src/neotape.cpp $(CLI_OBJ) $(COMMAND_STUBS_OBJ) Makefile | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) $(COMMAND_STUBS_OBJ) -o $@
+$(BINDIR)/neotape : src/neotape.cpp $(CLI_OBJ) $(INIT_CMD_OBJ) $(COMMAND_STUBS_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) $(INIT_CMD_OBJ) $(COMMAND_STUBS_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
 $(FORMAT_GEN_OBJ): $(GENERATED_CPP) $(GENERATED_HPP) Makefile
 	$(CXX) $(CXXFLAGS) -c $(GENERATED_CPP) -o $@
@@ -68,8 +72,8 @@ $(BINDIR)/neotape-cat-volumes : src/neotape_cat_volumes.cpp src/neotape_reader.o
 	$(CXX) $(CXXFLAGS) $< src/neotape_reader.o $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
 # neotape-init
-$(BINDIR)/neotape-init : src/neotape_init.cpp $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/neotape-init : src/neotape_init.cpp $(CLI_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
 # Test binary
 $(BINDIR)/test_tape : tests/test_tape.cpp $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)

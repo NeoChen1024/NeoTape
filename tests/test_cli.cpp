@@ -60,6 +60,12 @@ void test_dispatcher_argv_shape_documented() {
             "dispatcher smoke uses real subcommand text");
 }
 
+void test_spool_locator_for_init() {
+    auto loc = neotape::parse_locator("spool:/tmp/archive.spool");
+    require(loc.kind == "spool", "init spool locator kind");
+    require(loc.locator == "/tmp/archive.spool", "init spool locator body");
+}
+
 } // namespace
 
 int main() {
@@ -67,5 +73,6 @@ int main() {
     test_locator_rejects_invalid();
     test_control_policy_parse();
     test_dispatcher_argv_shape_documented();
+    test_spool_locator_for_init();
     return 0;
 }
