@@ -1,3 +1,4 @@
+#include "neotape/cli.hpp"
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
 #include "neotape/reader.hpp"
@@ -74,6 +75,13 @@ struct Options {
     bool prompt = false;
 };
 
+struct RawReadOptions {
+    neotape::Locator source;
+    string output = "-";
+    string archive_selector;
+    neotape::ControlPolicy control = neotape::ControlPolicy::auto_prompt;
+};
+
 [[noreturn]] void fail(const string &msg) {
     std::cerr << format("neotape-cat-volumes: {}\n", msg);
     std::exit(1);
@@ -130,6 +138,58 @@ Options parse_args(int argc, char **argv) {
 
     if (!fs::is_directory(opts.spool_dir))
         fail(format("not a directory: {}", opts.spool_dir));
+    return opts;
+}
+
+void raw_read_usage() {
+    std::cerr << "usage: neotape read --source <locator> --output <file|-> "
+                 "[--archive <index|uuid>] [--control=auto|none]\n";
+}
+
+RawReadOptions parse_raw_read_args(int argc, char **argv) {
+    static const struct option long_opts[] = {
+        {"source", required_argument, nullptr, 's'},
+        {"output", required_argument, nullptr, 'o'},
+        {"archive", required_argument, nullptr, 'a'},
+        {"control", required_argument, nullptr, 'c'},
+        {"help", no_argument, nullptr, 'h'},
+        {nullptr, 0, nullptr, 0}};
+
+    RawReadOptions opts;
+    bool saw_source = false;
+    int c;
+    optind = 1;
+    while ((c = getopt_long(argc, argv, "", long_opts, nullptr)) != -1) {
+        switch (c) {
+        case 's':
+            opts.source = neotape::parse_locator(optarg);
+            saw_source = true;
+            break;
+        case 'o':
+            opts.output = optarg;
+            break;
+        case 'a':
+            opts.archive_selector = optarg;
+            break;
+        case 'c':
+            opts.control = neotape::parse_control_policy(optarg);
+            break;
+        case 'h':
+            raw_read_usage();
+            std::exit(0);
+        case '?':
+            std::exit(2);
+        }
+    }
+
+    if (!saw_source)
+        fail("read requires --source <locator>");
+    if (optind != argc)
+        fail("read does not accept positional arguments");
+    if (opts.source.kind != "spool")
+        fail("read currently supports spool: sources");
+    if (!opts.archive_selector.empty() && opts.archive_selector != "1")
+        fail("read currently supports only the first archive");
     return opts;
 }
 
@@ -398,6 +458,20 @@ int neotape_cat_volumes_legacy_main(int argc, char **argv) {
         return 0;
     } catch (const std::exception &e) {
         fail(e.what());
+    }
+}
+
+int neotape_read_main(int argc, char **argv) {
+    try {
+        auto raw = parse_raw_read_args(argc, argv);
+        Options opts;
+        opts.spool_dir = raw.source.locator;
+        opts.output = raw.output;
+        run_cat_volumes(opts);
+        return 0;
+    } catch (const std::exception &e) {
+        std::cerr << format("neotape read: {}\n", e.what());
+        return 1;
     }
 }
 

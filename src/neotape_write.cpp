@@ -1,3 +1,4 @@
+#include "neotape/cli.hpp"
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
 #include "neotape/tape_writer.hpp"
@@ -42,6 +43,14 @@ struct Options {
     bool init_if_blank = false;
     bool force_append = false;
     string payload_profile = "raw";
+};
+
+struct RawWriteOptions {
+    neotape::Locator target;
+    string input = "-";
+    string archive_name = "raw";
+    uint32_t volume_block_size = 4 * 1024 * 1024;
+    neotape::ControlPolicy control = neotape::ControlPolicy::auto_prompt;
 };
 
 struct WriterState {
@@ -193,6 +202,65 @@ Options parse_args(int argc, char **argv) {
             static_cast<uint64_t>(opts.volume_block_size) * 2)
         fail("virtual volume size must fit at least a volume header and one "
              "record");
+    return opts;
+}
+
+void raw_write_usage() {
+    std::cerr
+        << "usage: neotape write --target <locator> --input <file|-> "
+           "[--name <name>] [--volume-block-size <bytes>] "
+           "[--control=auto|none]\n";
+}
+
+RawWriteOptions parse_raw_write_args(int argc, char **argv) {
+    static const struct option long_opts[] = {
+        {"target", required_argument, nullptr, 't'},
+        {"input", required_argument, nullptr, 'i'},
+        {"name", required_argument, nullptr, 'n'},
+        {"volume-block-size", required_argument, nullptr, 'b'},
+        {"control", required_argument, nullptr, 'c'},
+        {"help", no_argument, nullptr, 'h'},
+        {nullptr, 0, nullptr, 0}};
+
+    RawWriteOptions opts;
+    bool saw_target = false;
+    int c;
+    optind = 1;
+    while ((c = getopt_long(argc, argv, "", long_opts, nullptr)) != -1) {
+        switch (c) {
+        case 't':
+            opts.target = neotape::parse_locator(optarg);
+            saw_target = true;
+            break;
+        case 'i':
+            opts.input = optarg;
+            break;
+        case 'n':
+            opts.archive_name = optarg;
+            break;
+        case 'b':
+            opts.volume_block_size = static_cast<uint32_t>(
+                neotape::parse_size(optarg, "volume block size"));
+            break;
+        case 'c':
+            opts.control = neotape::parse_control_policy(optarg);
+            break;
+        case 'h':
+            raw_write_usage();
+            std::exit(0);
+        case '?':
+            std::exit(2);
+        }
+    }
+
+    if (!saw_target)
+        fail("write requires --target <locator>");
+    if (optind != argc)
+        fail("write does not accept positional arguments");
+    if (opts.target.kind != "spool" && opts.target.kind != "tape")
+        fail("write target must be tape: or spool:");
+    if (!neotape::valid_block_size(opts.volume_block_size))
+        fail("volume block size must be between 4096 and 8388608 bytes");
     return opts;
 }
 
@@ -510,6 +578,18 @@ TapeDirInfo scan_tape_dir(const fs::path &dir) {
     return info;
 }
 
+uint64_t read_spool_virtual_tape_size(const fs::path &root) {
+    fs::path manifest_path = root / "manifest.json";
+    if (!fs::is_regular_file(manifest_path))
+        fail(format("spool target is not initialized: {}", root.string()));
+    std::ifstream in(manifest_path);
+    if (!in)
+        fail(format("open {}", manifest_path.string()));
+    nlohmann::json manifest;
+    in >> manifest;
+    return manifest.value("virtual_tape_size", 0ull);
+}
+
 void write_spool_archive(const Options &opts) {
     FILE *input = stdin;
     if (opts.input != "-") {
@@ -585,6 +665,28 @@ int neotape_write_legacy_main(int argc, char **argv) {
         return 0;
     } catch (const std::exception &e) {
         fail(e.what());
+    }
+}
+
+int neotape_write_main(int argc, char **argv) {
+    try {
+        auto raw = parse_raw_write_args(argc, argv);
+        Options opts;
+        opts.input = raw.input;
+        opts.archive_name = raw.archive_name;
+        opts.volume_block_size = raw.volume_block_size;
+        opts.payload_profile = "raw";
+        if (raw.target.kind == "spool") {
+            opts.output_dir = raw.target.locator;
+            opts.virtual_tape_size = read_spool_virtual_tape_size(opts.output_dir);
+        } else {
+            opts.tape_device = raw.target.locator;
+        }
+        run_writer(std::move(opts));
+        return 0;
+    } catch (const std::exception &e) {
+        std::cerr << format("neotape write: {}\n", e.what());
+        return 1;
     }
 }
 
