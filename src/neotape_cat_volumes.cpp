@@ -14,6 +14,7 @@
 #include <getopt.h>
 #include <iostream>
 #include <memory>
+#include <nlohmann-json/json.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -333,12 +334,14 @@ bool process_volume(neotape::VirtualTapeReader &vol, VolumeReadState &rs) {
 struct ArchiveEntry {
     string uuid;
     string name;
+    string profile;
+    string status = "incomplete";
     uint64_t block_size = 0;
     uint64_t total_frames = 0;
     int volume_count = 0;
 };
 
-void list_archives(SpoolOrchestrator &orch) {
+std::vector<ArchiveEntry> collect_archives(SpoolOrchestrator &orch) {
     std::vector<ArchiveEntry> entries;
     std::optional<ArchiveEntry> current;
     std::vector<uint8_t> record;
@@ -353,6 +356,7 @@ void list_archives(SpoolOrchestrator &orch) {
             current.emplace();
             current->uuid = vol_uuid;
             current->name = vh.archive_name;
+            current->profile = neotape::payload_profile_name(vh.payload_profile);
             current->block_size = vh.volume_block_size;
         }
 
@@ -375,6 +379,7 @@ void list_archives(SpoolOrchestrator &orch) {
         }
 
         if (saw_end) {
+            current->status = "clean";
             entries.push_back(std::move(*current));
             current.reset();
         }
@@ -383,20 +388,87 @@ void list_archives(SpoolOrchestrator &orch) {
     if (current)
         entries.push_back(std::move(*current));
 
+    return entries;
+}
+
+void print_archives_human(const std::vector<ArchiveEntry> &entries) {
     if (entries.empty()) {
         std::cout << "(no archives found)\n";
         return;
     }
 
-    std::cout << format("{:<36}  {:<16}  {:>7}  {:>12}\n", "UUID", "NAME",
-                        "VOLUMES", "SIZE");
-    std::cout << string(80, '-') << '\n';
-    for (auto &e : entries) {
+    std::cout << format("{:<5}  {:<36}  {:<16}  {:<7}  {:>7}  {:>12}  {:<10}\n",
+                        "INDEX", "UUID", "NAME", "PROFILE", "VOLUMES",
+                        "SIZE", "STATUS");
+    std::cout << string(106, '-') << '\n';
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const auto &e = entries[i];
         auto size_bytes = e.block_size * e.total_frames;
         std::cout << format(
-            "{:<36}  {:<16}  {:>7}  {:>12}\n", e.uuid, e.name, e.volume_count,
-            neotape::humanize_number(static_cast<size_t>(size_bytes)));
+            "{:<5}  {:<36}  {:<16}  {:<7}  {:>7}  {:>12}  {:<10}\n", i + 1,
+            e.uuid, e.name, e.profile, e.volume_count,
+            neotape::humanize_number(static_cast<size_t>(size_bytes)),
+            e.status);
     }
+}
+
+void print_archives_json(const std::vector<ArchiveEntry> &entries) {
+    nlohmann::json out = nlohmann::json::array();
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const auto &e = entries[i];
+        out.push_back({{"index", i + 1},
+                       {"uuid", e.uuid},
+                       {"name", e.name},
+                       {"profile", e.profile},
+                       {"volumes", e.volume_count},
+                       {"status", e.status}});
+    }
+    std::cout << out.dump(2) << "\n";
+}
+
+void list_archives(SpoolOrchestrator &orch) {
+    print_archives_human(collect_archives(orch));
+}
+
+struct ListOptions {
+    neotape::Locator source;
+    bool json = false;
+};
+
+ListOptions parse_list_args(int argc, char **argv) {
+    static const struct option long_opts[] = {
+        {"source", required_argument, nullptr, 's'},
+        {"json", no_argument, nullptr, 'j'},
+        {"help", no_argument, nullptr, 'h'},
+        {nullptr, 0, nullptr, 0}};
+
+    ListOptions opts;
+    bool saw_source = false;
+    int c;
+    optind = 1;
+    while ((c = getopt_long(argc, argv, "", long_opts, nullptr)) != -1) {
+        switch (c) {
+        case 's':
+            opts.source = neotape::parse_locator(optarg);
+            saw_source = true;
+            break;
+        case 'j':
+            opts.json = true;
+            break;
+        case 'h':
+            std::cerr << "usage: neotape list --source <locator> [--json]\n";
+            std::exit(0);
+        case '?':
+            std::exit(2);
+        }
+    }
+    if (!saw_source)
+        fail("list requires --source <locator>");
+    if (optind != argc)
+        fail("list does not accept positional arguments");
+    if (opts.source.kind != "spool")
+        fail("list currently supports spool: sources");
+    return opts;
 }
 
 void run_cat_volumes(const Options &opts) {
@@ -471,6 +543,22 @@ int neotape_read_main(int argc, char **argv) {
         return 0;
     } catch (const std::exception &e) {
         std::cerr << format("neotape read: {}\n", e.what());
+        return 1;
+    }
+}
+
+int neotape_list_main(int argc, char **argv) {
+    try {
+        auto opts = parse_list_args(argc, argv);
+        SpoolOrchestrator orch(opts.source.locator);
+        auto entries = collect_archives(orch);
+        if (opts.json)
+            print_archives_json(entries);
+        else
+            print_archives_human(entries);
+        return 0;
+    } catch (const std::exception &e) {
+        std::cerr << format("neotape list: {}\n", e.what());
         return 1;
     }
 }
