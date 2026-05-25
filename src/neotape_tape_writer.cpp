@@ -1,3 +1,4 @@
+#include "neotape/cli.hpp"
 #include "neotape/format.hpp"
 #include "neotape/tape.hpp"
 #include "neotape/tape_navigator.hpp"
@@ -12,6 +13,8 @@
 #include <cstring>
 #include <format>
 #include <iostream>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unistd.h>
@@ -29,6 +32,7 @@ namespace {
 struct WriterState {
     TapeWriterOptions opts;
     TapeDevice *dev = nullptr;
+    std::unique_ptr<TapeDevice> owned_dev;
     string archive_uuid;
     uint64_t volume_seq_num = 0;
     uint64_t logical_slice_seq_num = 0;
@@ -68,17 +72,33 @@ bool write_tape_record(TapeDevice &dev, const neotape::HeaderBytes &header,
     return true;
 }
 
-void prompt_next_volume(uint64_t volume_seq_num) {
-    std::cerr << format("End of tape reached, volume_seq_num={}\n",
-                        volume_seq_num);
-    std::cerr << "Insert next volume and press Enter: ";
-    FILE *tty = std::fopen("/dev/tty", "r");
-    if (tty) {
-        int c;
-        while ((c = std::fgetc(tty)) != EOF && c != '\n') {
-        }
-        std::fclose(tty);
+void handle_volume_change(WriterState &state, uint64_t expected_volume_seq_num) {
+    neotape::require_prompt_allowed(state.opts.control);
+
+    neotape::VolumePromptRequest req;
+    req.archive_uuid = state.archive_uuid;
+    req.expected_volume = expected_volume_seq_num;
+    req.current_locator = neotape::Locator{"tape", state.opts.device};
+    req.write_mode = true;
+
+    auto result = neotape::prompt_for_volume_change(req);
+    if (result.choice == neotape::VolumePromptChoice::abort)
+        throw std::runtime_error("volume change aborted by user");
+    if (result.choice == neotape::VolumePromptChoice::change_locator) {
+        if (!result.replacement_locator ||
+            result.replacement_locator->kind != "tape")
+            throw std::runtime_error("replacement locator must be tape:<device>");
+        state.opts.device = result.replacement_locator->locator;
+        state.owned_dev = std::make_unique<TapeDevice>(state.opts.device, true);
+        state.dev = state.owned_dev.get();
+        state.dev->configure_preferred_variable_block_mode(
+            state.opts.volume_block_size, "neotape-write archive records",
+            std::cerr);
+        state.dev->rewind();
+        return;
     }
+    if (result.choice != neotape::VolumePromptChoice::continue_current)
+        throw std::runtime_error("unsupported volume prompt choice");
 }
 
 // ====================== Volume + Frame Writers ===================
@@ -99,7 +119,7 @@ void write_volume_header(WriterState &state) {
     auto bytes = neotape::serialize_volume_header(vh);
     while (!write_tape_record(*state.dev, bytes, nullptr,
                               state.opts.volume_block_size)) {
-        prompt_next_volume(state.volume_seq_num);
+        handle_volume_change(state, state.volume_seq_num);
     }
     state.dev->write_filemark();
     state.slice_open = false;
@@ -151,7 +171,7 @@ void write_content_frame(WriterState &state, const vector<uint8_t> &payload,
     auto bytes = neotape::serialize_frame_header(fh);
     while (!write_tape_record(*state.dev, bytes, &payload,
                               state.opts.volume_block_size)) {
-        prompt_next_volume(state.volume_seq_num);
+        handle_volume_change(state, state.volume_seq_num + 1);
         bool saved_slice_open = state.slice_open;
         uint64_t saved_logical_slice_seq_num = state.logical_slice_seq_num;
         write_volume_header(state);
@@ -179,7 +199,7 @@ void write_archive_end(WriterState &state) {
     auto bytes = neotape::serialize_archive_end_header(ae);
     while (!write_tape_record(*state.dev, bytes, nullptr,
                               state.opts.volume_block_size)) {
-        prompt_next_volume(state.volume_seq_num);
+        handle_volume_change(state, state.volume_seq_num + 1);
         write_volume_header(state);
     }
     state.dev->write_filemark();
@@ -235,11 +255,10 @@ void write_stream_payload(WriterState &state, FILE *input, bool split_slices) {
 
 void initialize_for_write(WriterState &state, TapeDevice &dev,
                           const TapeWriterOptions &opts) {
-    dev.configure_preferred_variable_block_mode(
-        opts.volume_block_size, "neotape-write archive records", std::cerr);
-
     state.opts = opts;
     state.dev = &dev;
+    state.dev->configure_preferred_variable_block_mode(
+        opts.volume_block_size, "neotape-write archive records", std::cerr);
 
     if (opts.init_mode) {
         dev.rewind();

@@ -47,6 +47,7 @@ struct Options {
     bool init_if_blank = false;
     bool force_append = false;
     string payload_profile = "raw";
+    neotape::ControlPolicy control = neotape::ControlPolicy::auto_prompt;
 };
 
 struct RawWriteOptions {
@@ -790,6 +791,7 @@ void run_spool_pax_backup(const BackupOptions &backup) {
     tape_opts.archive_name = opts.archive_name;
     tape_opts.volume_block_size = opts.volume_block_size;
     tape_opts.payload_profile = "pax";
+    tape_opts.control = backup.control;
     tape_opts.init_mode = true;
 
     auto produce = [&](mt::TapeChunkWriter writer) {
@@ -834,6 +836,7 @@ void run_tape_pax_backup(const BackupOptions &backup) {
     opts.archive_name = backup.archive_name;
     opts.volume_block_size = backup.volume_block_size;
     opts.payload_profile = "pax";
+    opts.control = backup.control;
 
     auto produce = [&](mt::TapeChunkWriter writer) {
         neotape::PaxWriterOptions pax;
@@ -883,6 +886,7 @@ void run_writer(Options opts) {
         tape_opts.init_if_blank = opts.init_if_blank;
         tape_opts.force_append = opts.force_append;
         tape_opts.payload_profile = opts.payload_profile;
+        tape_opts.control = opts.control;
         mt::write_tape_archive(tape_opts);
     } else {
         write_spool_archive(opts);
@@ -909,6 +913,7 @@ int neotape_write_main(int argc, char **argv) {
         opts.archive_name = raw.archive_name;
         opts.volume_block_size = raw.volume_block_size;
         opts.payload_profile = "raw";
+        opts.control = raw.control;
         if (raw.target.kind == "spool") {
             opts.output_dir = raw.target.locator;
             opts.virtual_tape_size =

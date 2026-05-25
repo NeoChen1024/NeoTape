@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <cstdio>
 #include <cstdlib>
+#include <fcntl.h>
 #include <sstream>
 #include <unistd.h>
 #include <utility>
@@ -72,6 +73,30 @@ protected:
 private:
     bool fail_variable_ = false;
     std::vector<std::pair<int, int>> ops_;
+};
+
+class FullTapeDevice final : public mt::TapeDevice {
+public:
+    FullTapeDevice() : TapeDevice(-1, "/dev/full", true) {
+        fd_ = ::open("/dev/full", O_WRONLY | O_CLOEXEC);
+    }
+
+    ~FullTapeDevice() override {
+        if (fd_ >= 0)
+            ::close(fd_);
+    }
+
+    int fd() const noexcept override { return fd_; }
+
+protected:
+    void do_mtop(int op, int) override {
+        if (op == mt::MTSETBLK || op == mt::MTREW || op == mt::MTWEOF)
+            return;
+        throw mt::Error(device_path(), "mtop", ENOTSUP);
+    }
+
+private:
+    int fd_ = -1;
 };
 
 } // namespace
@@ -229,6 +254,8 @@ int main() {
         opts.volume_block_size = 4096;
         opts.init_mode = true;
         opts.payload_profile = "pax";
+        CHECK(opts.control == neotape::ControlPolicy::auto_prompt,
+              "tape writer defaults to auto control policy");
 
         const uint8_t payload[] = {'a', 'b', 'c'};
         mt::write_tape_archive_from_chunks_to_device(
@@ -272,6 +299,30 @@ int main() {
               "file-backed tape reader parses archive end");
 
         fs::remove_all(root);
+    }
+
+    // --- Test 10: writer honors --control=none on impossible write ---
+    {
+        FullTapeDevice dev;
+        CHECK(dev.fd() >= 0, "opened /dev/full for failing writer test");
+
+        mt::TapeWriterOptions opts;
+        opts.device = "/dev/full";
+        opts.archive_name = "no-prompt";
+        opts.volume_block_size = 4096;
+        opts.payload_profile = "pax";
+        opts.init_mode = true;
+        opts.control = neotape::ControlPolicy::none;
+
+        bool threw = false;
+        try {
+            mt::write_tape_archive_from_chunks_to_device(
+                dev, opts, [](mt::TapeChunkWriter) {});
+        } catch (const std::exception &e) {
+            threw = std::string(e.what()).find("volume change required") !=
+                    std::string::npos;
+        }
+        CHECK(threw, "writer control=none fails instead of prompting");
     }
 
     fprintf(stderr, "\n%d failure(s)\n", failures);

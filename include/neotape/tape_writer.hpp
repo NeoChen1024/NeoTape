@@ -1,5 +1,7 @@
 #pragma once
 
+#include "neotape/cli.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -23,6 +25,7 @@ struct TapeWriterOptions {
     bool init_if_blank = false;
     bool force_append = false;
     std::string payload_profile = "raw";
+    neotape::ControlPolicy control = neotape::ControlPolicy::auto_prompt;
 };
 
 void write_tape_archive(const TapeWriterOptions &opts);

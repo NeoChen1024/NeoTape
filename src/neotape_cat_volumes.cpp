@@ -2,6 +2,7 @@
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
 #include "neotape/reader.hpp"
+#include "neotape/restore_validation.hpp"
 #include "neotape/tape.hpp"
 
 #include <blake3.h>
@@ -249,25 +250,31 @@ class SpoolOrchestrator {
 
 struct VolumeReadState {
     OutputSink *sink;
-    uint64_t expected_global_frame_seq_num = 1;
-    uint64_t expected_logical_slice_seq_num = 1;
+    neotape::RestoreValidationState validation;
     blake3_hasher slice_hasher;
-    uint64_t current_slice_size = 0;
-    bool slice_open = false;
 };
 
 // ====================== Volume Processing =========================
 
-bool process_volume(neotape::VirtualTapeReader &vol, VolumeReadState &rs) {
+bool process_volume(neotape::VirtualTapeReader &vol, VolumeReadState &rs,
+                    const neotape::VolumeHeader &volume_header) {
     std::vector<uint8_t> record;
+    neotape::accept_restore_volume_header(volume_header, rs.validation);
 
     while (vol.next_file()) {
         while (vol.read_record(record)) {
             auto parsed =
                 neotape::parse_fixed_header(record.data(), record.size());
 
+            if (parsed.volume) {
+                neotape::accept_restore_volume_header(*parsed.volume,
+                                                       rs.validation);
+                continue;
+            }
+
             if (parsed.frame) {
                 auto &f = *parsed.frame;
+                neotape::validate_restore_frame_header(f, rs.validation);
 
                 if (f.frame_content_type ==
                     neotape::FrameContentType::slice_content) {
@@ -275,29 +282,16 @@ bool process_volume(neotape::VirtualTapeReader &vol, VolumeReadState &rs) {
                     bool end = (f.flags & neotape::frame_flag_end) != 0;
 
                     if (start) {
-                        if (rs.slice_open)
+                        if (rs.validation.slice_open)
                             fail(format("new slice {} starts before previous "
                                         "slice ended",
                                         f.logical_slice_seq_num));
-                        if (f.logical_slice_seq_num !=
-                            rs.expected_logical_slice_seq_num)
-                            fail(format("expected slice {}, got slice {}",
-                                        rs.expected_logical_slice_seq_num,
-                                        f.logical_slice_seq_num));
                         blake3_hasher_init(&rs.slice_hasher);
-                        rs.current_slice_size = 0;
-                        rs.slice_open = true;
                     }
-                    if (!rs.slice_open)
+                    if (!rs.validation.slice_open && !start)
                         fail(format(
                             "content frame outside slice at global frame {}",
                             f.global_frame_seq_num));
-
-                    if (f.global_frame_seq_num !=
-                        rs.expected_global_frame_seq_num)
-                        fail(format("expected global frame {}, got {}",
-                                    rs.expected_global_frame_seq_num,
-                                    f.global_frame_seq_num));
 
                     auto payload_offset = neotape::fixed_header_size;
                     auto payload_size =
@@ -309,7 +303,6 @@ bool process_volume(neotape::VirtualTapeReader &vol, VolumeReadState &rs) {
                     blake3_hasher_update(&rs.slice_hasher,
                                          record.data() + payload_offset,
                                          payload_size);
-                    rs.current_slice_size += payload_size;
 
                     if (end) {
                         neotape::Hash slice_hash{};
@@ -317,35 +310,25 @@ bool process_volume(neotape::VirtualTapeReader &vol, VolumeReadState &rs) {
                                                slice_hash.data(),
                                                slice_hash.size());
 
-                        if (f.slice_content_size != rs.current_slice_size)
+                        uint64_t slice_size = rs.validation.current_slice_size +
+                                              f.frame_payload_size;
+                        if (f.slice_content_size != slice_size)
                             fail(format(
                                 "slice {} size mismatch: declared {} actual {}",
                                 f.logical_slice_seq_num, f.slice_content_size,
-                                rs.current_slice_size));
+                                slice_size));
                         if (f.slice_content_blake3 != slice_hash)
                             fail(format("slice {} BLAKE3 mismatch",
                                         f.logical_slice_seq_num));
-
-                        rs.slice_open = false;
-                        ++rs.expected_logical_slice_seq_num;
                     }
                 }
 
-                ++rs.expected_global_frame_seq_num;
+                neotape::note_restore_frame_accepted(f, rs.validation);
             }
 
             if (parsed.archive_end) {
                 auto &ae = *parsed.archive_end;
-                if (rs.slice_open)
-                    fail("archive ended with open slice");
-                if (!(ae.flags & neotape::archive_end_flag_clean_end))
-                    fail("archive end missing CLEAN_END flag");
-                if (ae.last_global_frame_seq_num + 1 !=
-                    rs.expected_global_frame_seq_num)
-                    fail(format("archive end frame seq mismatch: declared {} "
-                                "expected {}",
-                                ae.last_global_frame_seq_num,
-                                rs.expected_global_frame_seq_num - 1));
+                neotape::validate_restore_archive_end(ae, rs.validation);
                 return true;
             }
         }
@@ -543,7 +526,7 @@ void run_cat_volumes(const Options &opts) {
     bool found_archive_end = false;
 
     while (auto vol = orch.next_volume()) {
-        found_archive_end = process_volume(*vol, rs);
+        found_archive_end = process_volume(*vol, rs, vol->volume_header());
         if (found_archive_end)
             break;
 
@@ -575,27 +558,48 @@ void run_cat_volumes(const Options &opts) {
 
     std::cerr << format(
         "neotape-cat-volumes: ok volumes={} slices={} frames={}\n",
-        total_volumes, rs.expected_logical_slice_seq_num - 1,
-        rs.expected_global_frame_seq_num - 1);
+        total_volumes, rs.validation.expected_logical_slice_seq_num - 1,
+        rs.validation.expected_global_frame_seq_num - 1);
 }
 
-void run_tape_device_restore(const Options &opts, mt::TapeDevice &device) {
-    neotape::TapeDeviceVolumeReader vol(device);
+void run_tape_device_restore(const Options &opts, const string &locator) {
+    auto device = std::make_unique<mt::TapeDevice>(locator, false);
     auto sink = create_sink(opts);
     VolumeReadState rs{};
     rs.sink = sink.get();
 
-    bool found_archive_end = process_volume(vol, rs);
-    if (!found_archive_end) {
+    bool found_archive_end = false;
+    while (true) {
+        neotape::TapeDeviceVolumeReader vol(*device);
+        found_archive_end = process_volume(vol, rs, vol.volume_header());
+        if (found_archive_end)
+            break;
+        if (rs.validation.slice_open)
+            fail("archive incomplete: volume ended with open slice");
+
         neotape::require_prompt_allowed(opts.control);
-        fail("archive incomplete: no Archive End Header found");
+        neotape::VolumePromptRequest req;
+        req.archive_uuid = rs.validation.archive_uuid;
+        req.expected_volume = rs.validation.expected_volume_seq_num;
+        req.current_locator = neotape::Locator{"tape", device->device_path()};
+        req.write_mode = false;
+        auto result = neotape::prompt_for_volume_change(req);
+        if (result.choice == neotape::VolumePromptChoice::abort)
+            fail("volume change aborted by user");
+        if (result.choice == neotape::VolumePromptChoice::change_locator) {
+            if (!result.replacement_locator ||
+                result.replacement_locator->kind != "tape")
+                fail("replacement locator must be tape:<device>");
+            device = std::make_unique<mt::TapeDevice>(
+                result.replacement_locator->locator, false);
+        }
     }
 
     sink->flush();
     std::cerr << format(
         "neotape-cat-volumes: ok volumes=1 slices={} frames={}\n",
-        rs.expected_logical_slice_seq_num - 1,
-        rs.expected_global_frame_seq_num - 1);
+        rs.validation.expected_logical_slice_seq_num - 1,
+        rs.validation.expected_global_frame_seq_num - 1);
 }
 
 } // namespace
@@ -650,8 +654,7 @@ int neotape_restore_main(int argc, char **argv) {
         opts.output = raw.output;
         opts.control = raw.control;
         if (raw.source.kind == "tape") {
-            mt::TapeDevice device(raw.source.locator, false);
-            run_tape_device_restore(opts, device);
+            run_tape_device_restore(opts, raw.source.locator);
         } else {
             opts.spool_dir = raw.source.locator;
             run_cat_volumes(opts);
