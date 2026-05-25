@@ -212,17 +212,43 @@ public:
         if (::write(fd(), record.data(), record.size()) !=
             static_cast<ssize_t>(record.size()))
             throw std::runtime_error("write reader-spacing volume header");
+
+        slice_offset_ =
+            static_cast<off_t>(start_with_medium_ ? volume_offset_ : 0) +
+            static_cast<off_t>(record.size());
+        neotape::FrameHeader fh;
+        fh.volume_block_size = 4096;
+        fh.archive_uuid = vh.archive_uuid;
+        fh.archive_name = vh.archive_name;
+        fh.volume_seq_num = 1;
+        fh.logical_slice_seq_num = 1;
+        fh.global_frame_seq_num = 1;
+        fh.frame_seq_num_within_slice = 1;
+        fh.flags = neotape::frame_flag_start | neotape::frame_flag_end;
+        fh.frame_payload_size = 0;
+        auto frame_bytes = neotape::serialize_frame_header(fh);
+        std::vector<uint8_t> frame_record(vh.volume_block_size, 0);
+        std::memcpy(frame_record.data(), frame_bytes.data(), frame_bytes.size());
+        if (::write(fd(), frame_record.data(), frame_record.size()) !=
+            static_cast<ssize_t>(frame_record.size()))
+            throw std::runtime_error("write reader-spacing frame header");
         if (::lseek(fd(), 0, SEEK_SET) < 0)
             throw std::runtime_error("rewind reader-spacing volume header");
     }
 
     int last_op() const noexcept { return last_op_; }
+    int fsf_count() const noexcept { return fsf_count_; }
 
 protected:
     void do_mtop(int op, int) override {
         last_op_ = op;
-        if (op == mt::MTFSF && start_with_medium_) {
-            if (::lseek(fd(), volume_offset_, SEEK_SET) < 0)
+        if (op == mt::MTFSF)
+            ++fsf_count_;
+        if (op == mt::MTFSF) {
+            off_t target = start_with_medium_ && fsf_count_ == 1
+                               ? volume_offset_
+                               : slice_offset_;
+            if (::lseek(fd(), target, SEEK_SET) < 0)
                 throw mt::Error(device_path(), "lseek", errno);
         }
     }
@@ -238,8 +264,10 @@ private:
     }
 
     int last_op_ = -1;
+    int fsf_count_ = 0;
     bool start_with_medium_ = false;
     off_t volume_offset_ = 0;
+    off_t slice_offset_ = 0;
 };
 
 class BaseFdFullTapeDevice final : public mt::TapeDevice {
@@ -537,7 +565,26 @@ int main() {
               "tape device volume reader uses MTFSF to enter next file");
     }
 
-    // --- Test 10c: tape restore reader skips one leading medium header ---
+    // --- Test 10c: tape restore reader does not skip after filemark read ---
+    {
+        ReaderSpacingTapeDevice dev;
+        neotape::TapeDeviceVolumeReader reader(dev);
+        std::vector<uint8_t> record;
+
+        CHECK(reader.next_file(),
+              "tape device volume reader enters first content file");
+        CHECK(reader.read_record(record),
+              "tape device volume reader reads first content record");
+        CHECK(!reader.read_record(record),
+              "tape device volume reader observes filemark after content record");
+        int fsf_after_filemark = dev.fsf_count();
+        CHECK(reader.next_file(),
+              "tape device volume reader advances after consumed filemark");
+        CHECK(dev.fsf_count() == fsf_after_filemark,
+              "tape device volume reader does not MTFSF after filemark read");
+    }
+
+    // --- Test 10d: tape restore reader skips one leading medium header ---
     {
         ReaderSpacingTapeDevice dev(true);
         neotape::TapeDeviceVolumeReader reader(dev);

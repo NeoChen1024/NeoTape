@@ -75,7 +75,9 @@ class TapeDeviceVolumeReader final : public VirtualTapeReader {
     VolumeHeader volume_header_;
     uint32_t block_size_ = 0;
     uint64_t tape_file_num_ = 0;
+    uint64_t records_in_current_file_ = 0;
     bool exhausted_ = false;
+    bool positioned_after_filemark_ = false;
 };
 
 } // namespace neotape

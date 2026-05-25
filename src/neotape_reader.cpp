@@ -229,6 +229,12 @@ TapeDeviceVolumeReader::TapeDeviceVolumeReader(mt::TapeDevice &device)
 bool TapeDeviceVolumeReader::next_file() {
     if (exhausted_)
         return false;
+    if (positioned_after_filemark_) {
+        positioned_after_filemark_ = false;
+        records_in_current_file_ = 0;
+        ++tape_file_num_;
+        return true;
+    }
     try {
         device_.space_fwd();
     } catch (const mt::Error &) {
@@ -240,6 +246,7 @@ bool TapeDeviceVolumeReader::next_file() {
         return false;
     }
     ++tape_file_num_;
+    records_in_current_file_ = 0;
     return true;
 }
 
@@ -250,6 +257,11 @@ bool TapeDeviceVolumeReader::read_record(std::vector<uint8_t> &out) {
     ssize_t n = ::read(device_.fd(), out.data(), out.size());
     if (n == 0) {
         out.clear();
+        if (records_in_current_file_ == 0) {
+            exhausted_ = true;
+        } else {
+            positioned_after_filemark_ = true;
+        }
         return false;
     }
     if (n < 0)
@@ -259,6 +271,7 @@ bool TapeDeviceVolumeReader::read_record(std::vector<uint8_t> &out) {
         throw std::runtime_error(
             std::format("short read at tape file {}: expected {} bytes, got {}",
                         tape_file_num_, block_size_, n));
+    ++records_in_current_file_;
     return true;
 }
 
