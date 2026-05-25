@@ -1,8 +1,9 @@
 // Basic verification of TapeDevice helpers and spool backend behavior.
 // Run: make test_tape && bin/test_tape
 
-#include "neotape/tape_navigator.hpp"
 #include "neotape/format.hpp"
+#include "neotape/reader.hpp"
+#include "neotape/tape_navigator.hpp"
 #include "neotape/tape_ioctl.h"
 #include "neotape/tape_writer.hpp"
 
@@ -171,6 +172,74 @@ protected:
 
 private:
     int fd_ = -1;
+};
+
+class ReaderSpacingTapeDevice final : public mt::TapeDevice {
+public:
+    explicit ReaderSpacingTapeDevice(bool start_with_medium = false)
+        : TapeDevice(make_fd(), "/dev/test-reader-spacing", false),
+          start_with_medium_(start_with_medium) {
+        if (start_with_medium_) {
+            neotape::MediumHeader mh;
+            mh.medium_uuid = "11111111-2222-3333-4444-555555555555";
+            mh.medium_label = "reader-spacing";
+            mh.initialized_at_utc = "2026-05-25T00:00:00Z";
+            mh.medium_header_block_size = 4096;
+            mh.medium_header_block_count = 1;
+            mh.created_by_implementation = "test";
+
+            auto medium_bytes = neotape::serialize_medium_header(mh);
+            std::vector<uint8_t> medium_record(mh.medium_header_block_size, 0);
+            std::memcpy(medium_record.data(), medium_bytes.data(),
+                        medium_bytes.size());
+            if (::write(fd(), medium_record.data(), medium_record.size()) !=
+                static_cast<ssize_t>(medium_record.size()))
+                throw std::runtime_error("write reader-spacing medium header");
+            volume_offset_ = static_cast<off_t>(medium_record.size());
+        }
+
+        neotape::VolumeHeader vh;
+        vh.volume_block_size = 4096;
+        vh.archive_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        vh.archive_name = "reader-spacing";
+        vh.volume_seq_num = 1;
+        vh.payload_profile = neotape::PayloadProfile::pax;
+        vh.volume_write_at_utc = "2026-05-25T00:00:00Z";
+
+        auto bytes = neotape::serialize_volume_header(vh);
+        std::vector<uint8_t> record(vh.volume_block_size, 0);
+        std::memcpy(record.data(), bytes.data(), bytes.size());
+        if (::write(fd(), record.data(), record.size()) !=
+            static_cast<ssize_t>(record.size()))
+            throw std::runtime_error("write reader-spacing volume header");
+        if (::lseek(fd(), 0, SEEK_SET) < 0)
+            throw std::runtime_error("rewind reader-spacing volume header");
+    }
+
+    int last_op() const noexcept { return last_op_; }
+
+protected:
+    void do_mtop(int op, int) override {
+        last_op_ = op;
+        if (op == mt::MTFSF && start_with_medium_) {
+            if (::lseek(fd(), volume_offset_, SEEK_SET) < 0)
+                throw mt::Error(device_path(), "lseek", errno);
+        }
+    }
+
+private:
+    static int make_fd() {
+        char path[] = "/tmp/neotape-reader-spacing-test-XXXXXX";
+        int fd = ::mkstemp(path);
+        if (fd < 0)
+            throw std::runtime_error("mkstemp reader-spacing test");
+        ::unlink(path);
+        return fd;
+    }
+
+    int last_op_ = -1;
+    bool start_with_medium_ = false;
+    off_t volume_offset_ = 0;
 };
 
 class BaseFdFullTapeDevice final : public mt::TapeDevice {
@@ -400,6 +469,39 @@ int main() {
         fs::remove_all(root);
     }
 
+    // --- Test 9b: navigator reports archive after volume header before clean end ---
+    {
+        namespace fs = std::filesystem;
+
+        fs::path root = fs::temp_directory_path() / "neotape-tape-incomplete-list-test";
+        fs::remove_all(root);
+        fs::create_directories(root);
+
+        mt::SpoolTapeDevice dev(root, true);
+        neotape::VolumeHeader vh;
+        vh.volume_block_size = 4096;
+        vh.archive_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        vh.archive_name = "incomplete";
+        vh.volume_seq_num = 1;
+        vh.payload_profile = neotape::PayloadProfile::pax;
+        vh.volume_write_at_utc = "2026-05-25T00:00:00Z";
+        auto bytes = neotape::serialize_volume_header(vh);
+        ssize_t n = ::write(dev.fd(), bytes.data(), bytes.size());
+        CHECK(n == static_cast<ssize_t>(bytes.size()),
+              "incomplete archive test writes volume header");
+        dev.write_filemark();
+
+        mt::SpoolTapeDevice reader(root, false);
+        mt::nav::TapeNavigator nav(reader);
+        auto archives = nav.scan_archive_instances();
+        CHECK(archives.size() == 1,
+              "tape navigator lists archive after volume header before archive end");
+        CHECK(!archives.empty() && !archives[0].complete,
+              "tape navigator marks archive without archive end incomplete");
+
+        fs::remove_all(root);
+    }
+
     // --- Test 10: writer honors --control=none on impossible write ---
     {
         FullTapeDevice dev;
@@ -422,6 +524,28 @@ int main() {
                     std::string::npos;
         }
         CHECK(threw, "writer control=none fails instead of prompting");
+    }
+
+    // --- Test 10b: tape restore reader advances over the current filemark ---
+    {
+        ReaderSpacingTapeDevice dev;
+        neotape::TapeDeviceVolumeReader reader(dev);
+
+        CHECK(reader.next_file(),
+              "tape device volume reader advances to next tape file");
+        CHECK(dev.last_op() == mt::MTFSF,
+              "tape device volume reader uses MTFSF to enter next file");
+    }
+
+    // --- Test 10c: tape restore reader skips one leading medium header ---
+    {
+        ReaderSpacingTapeDevice dev(true);
+        neotape::TapeDeviceVolumeReader reader(dev);
+
+        CHECK(reader.volume_seq_num() == 1,
+              "tape device volume reader finds volume header after medium header");
+        CHECK(dev.last_op() == mt::MTFSF,
+              "tape device volume reader skips medium header with MTFSF");
     }
 
     // --- Test 11: writer closes tape fd before volume-change prompt path ---

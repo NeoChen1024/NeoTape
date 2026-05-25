@@ -26,6 +26,7 @@ struct TapeWriterOptions {
     bool force_append = false;
     std::string payload_profile = "raw";
     neotape::ControlPolicy control = neotape::ControlPolicy::auto_prompt;
+    std::function<void(bool)> status_pause;
 };
 
 void write_tape_archive(const TapeWriterOptions &opts);

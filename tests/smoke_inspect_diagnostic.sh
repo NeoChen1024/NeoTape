@@ -143,6 +143,9 @@ grep -Eq 'summary: .*errors=[1-9][0-9]*.*end=no' "$bad_end_out"
 
 cp -R "$spool" "$missing_end_spool"
 rm "$missing_end_spool/tape-file-000003.archive-end.nts"
-expect_exit_1 bin/neotape-inspect "spool:$missing_end_spool" > "$missing_end_out"
-grep -q 'summary: error reason="missing Archive End Header"' "$missing_end_out"
-grep -Eq 'summary: .*errors=[1-9][0-9]*.*end=no' "$missing_end_out"
+bin/neotape-inspect "spool:$missing_end_spool" > "$missing_end_out"
+if grep -q 'missing Archive End Header' "$missing_end_out"; then
+    printf 'missing archive end should not be an inspect error\n' >&2
+    exit 1
+fi
+grep -Eq 'summary: .*errors=0.*end=no' "$missing_end_out"

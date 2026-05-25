@@ -76,8 +76,8 @@ $(BINDIR)/neotape-inspect : src/neotape_inspect.cpp $(CLI_OBJ) $(TAPE_OBJ) $(FOR
 	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) $(TAPE_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) -o $@ $(LDLIBS)
 
 # Test binary
-$(BINDIR)/test_tape : tests/test_tape.cpp $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) $(CLI_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) $(CLI_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/test_tape : tests/test_tape.cpp $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) src/neotape_reader.o $(TAPE_WRITER_OBJ) $(CLI_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) src/neotape_reader.o $(TAPE_WRITER_OBJ) $(CLI_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
 $(BINDIR)/test_cli : tests/test_cli.cpp $(CLI_OBJ) Makefile | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) -o $@

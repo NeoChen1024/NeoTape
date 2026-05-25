@@ -83,7 +83,21 @@ void handle_volume_change(WriterState &state,
     state.dev->close();
     neotape::require_prompt_allowed(state.opts.control);
 
-    auto result = neotape::prompt_for_volume_change(req);
+    if (state.opts.status_pause)
+        state.opts.status_pause(true);
+    auto resume_status = [&] {
+        if (state.opts.status_pause)
+            state.opts.status_pause(false);
+    };
+
+    neotape::VolumePromptResult result;
+    try {
+        result = neotape::prompt_for_volume_change(req);
+        resume_status();
+    } catch (...) {
+        resume_status();
+        throw;
+    }
     if (result.choice == neotape::VolumePromptChoice::abort)
         throw std::runtime_error("volume change aborted by user");
     if (result.choice == neotape::VolumePromptChoice::change_locator) {

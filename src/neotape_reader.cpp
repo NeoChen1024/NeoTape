@@ -198,6 +198,24 @@ TapeDeviceVolumeReader::TapeDeviceVolumeReader(mt::TapeDevice &device)
 
     buf.resize(static_cast<std::size_t>(n));
     auto parsed = parse_fixed_header(buf.data(), buf.size());
+    if (parsed.medium) {
+        device_.space_fwd();
+        buf.assign(8 * 1024 * 1024, 0);
+        n = ::read(device_.fd(), buf.data(), buf.size());
+        if (n < 0)
+            throw std::runtime_error(std::format(
+                "read volume header after medium header: {}",
+                std::strerror(errno)));
+        if (static_cast<std::size_t>(n) < fixed_header_size)
+            throw std::runtime_error(
+                "short read from tape volume header after medium header");
+        buf.resize(static_cast<std::size_t>(n));
+        parsed = parse_fixed_header(buf.data(), buf.size());
+        if (!parsed.volume)
+            throw std::runtime_error(std::format(
+                "expected volume header after medium header, got {}",
+                header_type_name(parsed.type)));
+    }
     if (!parsed.volume)
         throw std::runtime_error(std::format("expected volume header, got {}",
                                              header_type_name(parsed.type)));
@@ -212,7 +230,7 @@ bool TapeDeviceVolumeReader::next_file() {
     if (exhausted_)
         return false;
     try {
-        device_.space_fwd_filemark();
+        device_.space_fwd();
     } catch (const mt::Error &) {
         exhausted_ = true;
         return false;

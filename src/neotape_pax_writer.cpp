@@ -138,6 +138,19 @@ string stat_count_rate(uint64_t items_per_second) {
                   static_cast<double>(items_per_second) / (1000.0 * 1000.0));
 }
 
+void print_pax_progress(uint64_t in_rate, uint64_t out_rate, uint64_t file_rate,
+                        uint64_t current_slice, uint64_t current_out,
+                        size_t buffer_percent) {
+    // carridge return to overwrite the previous line, but only if we're
+    // not on the first line
+    cerr << format("\rin @ {:>6}/s, out @ {:>6}/s, files @ {:>6}/s, "
+                   "slice {:>6}, {:>6} total, buffer {:3}% full  ",
+                   stat_rate(in_rate), stat_rate(out_rate),
+                   stat_count_rate(file_rate), current_slice,
+                   neotape::humanize_number(static_cast<size_t>(current_out)),
+                   buffer_percent);
+}
+
 // ====================== Diagnostics ==========================
 
 [[noreturn]] void fail_archive(const char *context, archive *a) {
@@ -735,6 +748,8 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
         callbacks.write_chunk = [](PaxChunk) {};
     if (!callbacks.end_slice)
         callbacks.end_slice = [](uint64_t) {};
+    if (!callbacks.progress_paused)
+        callbacks.progress_paused = [] { return false; };
 
     if (!opts.plan_path.has_value())
         throw std::runtime_error("planned pax archive requires a plan path");
@@ -765,23 +780,49 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
 
     std::optional<uint64_t> current_slice;
     std::atomic<uint64_t> emitted_slices{0};
-
-    auto print_planned_progress = [&] {
-        cerr << format("\rplanned entries={} in={} out={} slices={}  ",
-                       stats.walked_entries.load(std::memory_order_relaxed),
-                       neotape::humanize_number(static_cast<size_t>(
-                           stats.input_bytes.load(std::memory_order_relaxed))),
-                       neotape::humanize_number(static_cast<size_t>(
-                           stats.output_bytes.load(std::memory_order_relaxed))),
-                       emitted_slices.load(std::memory_order_relaxed));
-    };
+    std::atomic<uint64_t> current_slice_seq{0};
 
     std::thread stats_thread([&] {
+        using clock = std::chrono::steady_clock;
+        uint64_t last_in = 0;
+        uint64_t last_out = 0;
+        uint64_t last_files = 0;
+        auto last_time = clock::now();
+
         while (!stats.done.load(std::memory_order_relaxed)) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
             if (stats.done.load(std::memory_order_relaxed))
                 break;
-            print_planned_progress();
+            if (callbacks.progress_paused())
+                continue;
+            auto now = clock::now();
+            double seconds =
+                std::chrono::duration<double>(now - last_time).count();
+            if (seconds <= 0.0)
+                seconds = 1.0;
+
+            uint64_t current_in =
+                stats.input_bytes.load(std::memory_order_relaxed);
+            uint64_t current_out =
+                stats.output_bytes.load(std::memory_order_relaxed);
+            uint64_t current_files =
+                stats.walked_entries.load(std::memory_order_relaxed);
+            uint64_t in_rate =
+                static_cast<uint64_t>((current_in - last_in) / seconds);
+            uint64_t out_rate =
+                static_cast<uint64_t>((current_out - last_out) / seconds);
+            uint64_t file_rate =
+                static_cast<uint64_t>((current_files - last_files) / seconds);
+
+            print_pax_progress(
+                in_rate, out_rate, file_rate,
+                current_slice_seq.load(std::memory_order_relaxed), current_out,
+                0);
+
+            last_in = current_in;
+            last_out = current_out;
+            last_files = current_files;
+            last_time = now;
         }
     });
 
@@ -835,7 +876,9 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
                 callbacks.end_slice(*current_slice);
             current_slice = planned.slice;
             callbacks.begin_slice(*current_slice);
-            emitted_slices.fetch_add(1, std::memory_order_relaxed);
+            current_slice_seq.store(
+                emitted_slices.fetch_add(1, std::memory_order_relaxed) + 1,
+                std::memory_order_relaxed);
         }
 
         archive_entry *entry = planned_entry_from_path(disk, planned.path);
@@ -864,7 +907,9 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
     stats.done.store(true, std::memory_order_relaxed);
     if (stats_thread.joinable())
         stats_thread.join();
-    print_planned_progress();
+    print_pax_progress(0, 0, 0,
+                       current_slice_seq.load(std::memory_order_relaxed),
+                       stats.output_bytes.load(std::memory_order_relaxed), 0);
     cerr << "\n";
 
     std::array<uint8_t, BLAKE3_OUT_LEN> hash{};
@@ -894,6 +939,8 @@ PaxWriteResult write_pax_archive(const Options &opts,
         callbacks.write_chunk = [](PaxChunk) {};
     if (!callbacks.end_slice)
         callbacks.end_slice = [](uint64_t) {};
+    if (!callbacks.progress_paused)
+        callbacks.progress_paused = [] { return false; };
     callbacks.begin_slice(0);
     uint64_t emitted_slice_count = 1;
 
@@ -920,6 +967,8 @@ PaxWriteResult write_pax_archive(const Options &opts,
             std::this_thread::sleep_for(std::chrono::seconds(1));
             if (stats.done.load(std::memory_order_relaxed))
                 break;
+            if (callbacks.progress_paused())
+                continue;
             auto now = clock::now();
             double seconds =
                 std::chrono::duration<double>(now - last_time).count();
@@ -945,15 +994,8 @@ PaxWriteResult write_pax_archive(const Options &opts,
                     ? 0
                     : std::min<size_t>(100, buffered * 100 / capacity);
 
-            // carridge return to overwrite the previous line, but only if we're
-            // not on the first line
-            cerr << format(
-                "\rin @ {:>6}/s, out @ {:>6}/s, files @ {:>6}/s, "
-                "{:>6} total, buffer {:3}% full  ",
-                stat_rate(in_rate), stat_rate(out_rate),
-                stat_count_rate(file_rate),
-                neotape::humanize_number(static_cast<size_t>(current_out)),
-                percent);
+            print_pax_progress(in_rate, out_rate, file_rate,
+                               emitted_slice_count, current_out, percent);
 
             last_in = current_in;
             last_out = current_out;

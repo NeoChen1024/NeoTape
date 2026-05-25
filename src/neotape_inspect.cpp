@@ -824,8 +824,6 @@ int main(int argc, char **argv) {
             inspect_tape(opts, state, diag);
         else
             inspect_spool(opts, state, diag);
-        if (!state.archive_uuid.empty() && !state.saw_archive_end_record)
-            report_error(diag, "summary", "missing Archive End Header");
         print_summary(state, diag);
         return diag.errors == 0 ? 0 : 1;
     } catch (const std::exception &e) {

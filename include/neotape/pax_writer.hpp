@@ -32,6 +32,7 @@ struct PaxWriterCallbacks {
     std::function<void(uint64_t)> begin_slice;
     std::function<void(PaxChunk)> write_chunk;
     std::function<void(uint64_t)> end_slice;
+    std::function<bool()> progress_paused;
 };
 
 struct PaxWriteResult {

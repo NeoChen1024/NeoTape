@@ -51,7 +51,11 @@ bin/neotape plan -C "$root" -o "$plan" --slice-size 4096 src >/dev/null
 bin/neotape init "spool:$planned_spool" --label PAXPLAN --virtual-tape-size 64M >/dev/null
 bin/neotape backup --target "spool:$planned_spool" -p "$plan" \
     --name pax-planned -P 25 -B 8M -T 2 >/dev/null 2>"$planned_backup_err"
-grep -q 'planned entries=' "$planned_backup_err"
+grep -q 'in @ .* out @ .* files @ .* slice .* total, buffer' "$planned_backup_err"
+if grep -q 'planned entries=' "$planned_backup_err"; then
+    printf 'planned backup used legacy progress format\n' >&2
+    exit 1
+fi
 planned_first_slice_size=$(stat -c %s "$planned_spool/tape-file-000002.slice-000001.nts")
 if test "$planned_first_slice_size" -ne 4194304; then
     printf 'planned backup wrote extra frame data: first slice size=%s\n' \

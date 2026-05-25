@@ -7,6 +7,7 @@
 
 #include <blake3.h>
 
+#include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -699,6 +700,12 @@ void run_spool_pax_backup(const BackupOptions &backup) {
     tape_opts.payload_profile = "pax";
     tape_opts.control = backup.control;
     tape_opts.init_mode = true;
+    std::atomic<bool> progress_paused{false};
+    tape_opts.status_pause = [&](bool paused) {
+        progress_paused.store(paused, std::memory_order_relaxed);
+        if (paused)
+            std::cerr << "\n";
+    };
 
     auto produce = [&](mt::TapeChunkWriter writer) {
         neotape::PaxWriterOptions pax;
@@ -748,6 +755,9 @@ void run_spool_pax_backup(const BackupOptions &backup) {
         callbacks.end_slice = [&](uint64_t) {
             flush_pending(true);
             slice_open = false;
+        };
+        callbacks.progress_paused = [&] {
+            return progress_paused.load(std::memory_order_relaxed);
         };
 
         neotape::write_pax(pax, std::move(callbacks));
@@ -766,6 +776,12 @@ void run_tape_pax_backup(const BackupOptions &backup) {
     opts.volume_block_size = backup.volume_block_size;
     opts.payload_profile = "pax";
     opts.control = backup.control;
+    std::atomic<bool> progress_paused{false};
+    opts.status_pause = [&](bool paused) {
+        progress_paused.store(paused, std::memory_order_relaxed);
+        if (paused)
+            std::cerr << "\n";
+    };
 
     auto produce = [&](mt::TapeChunkWriter writer) {
         neotape::PaxWriterOptions pax;
@@ -815,6 +831,9 @@ void run_tape_pax_backup(const BackupOptions &backup) {
         callbacks.end_slice = [&](uint64_t) {
             flush_pending(true);
             slice_open = false;
+        };
+        callbacks.progress_paused = [&] {
+            return progress_paused.load(std::memory_order_relaxed);
         };
 
         neotape::write_pax(pax, std::move(callbacks));

@@ -171,6 +171,7 @@ continuous_callbacks(const string &output, FILE *&out_file, bool &close_file) {
                     fail_errno("write output");
             },
         .end_slice = [](uint64_t) {},
+        .progress_paused = [] { return false; },
     };
 }
 
@@ -198,6 +199,7 @@ neotape::PaxWriterCallbacks slice_callbacks(const string &prefix,
                     fail_errno("close slice output");
                 out_file = nullptr;
             },
+        .progress_paused = [] { return false; },
     };
 }
 
