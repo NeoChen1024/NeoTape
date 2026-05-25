@@ -13,7 +13,7 @@ The implementation lives in `src/neotape_pax_writer.cpp` and is exposed through
 command-line output modes onto library callbacks.
 
 The library emits slice lifecycle events and pax byte chunks. Unplanned source
-walking emits one logical slice. Planned mode consumes `neotape-plan` metadata,
+walking emits one logical slice. Planned mode consumes `neotape plan` metadata,
 honors `/chdir/<path>` directives, and opens/closes slices according to the
 plan's slice numbers. The debug slice files written by the CLI contain raw pax
 payload bytes and intentionally omit pax End-of-Archive markers.

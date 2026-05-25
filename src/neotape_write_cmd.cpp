@@ -92,135 +92,12 @@ struct WriterState {
 // ====================== Diagnostics & CLI ========================
 
 [[noreturn]] void fail(const string &message) {
-    std::cerr << format("neotape-write: {}\n", message);
+    std::cerr << format("neotape write: {}\n", message);
     std::exit(1);
 }
 
 [[noreturn]] void fail_errno(const string &context) {
     fail(format("{}: {}", context, std::strerror(errno)));
-}
-
-void usage(const char *prog) {
-    std::cerr << format(
-        "usage: {} -f <tape-device> [-i <input>] [options]\n"
-        "       {} --target=spool -o <dir> [-i <input>] [options]\n"
-        "\n"
-        "Tape options:\n"
-        "  -f <device>       Tape device path (implies tape mode)\n"
-        "  --init            Write from BOT (overwrites)\n"
-        "  --init-if-blank   Only init if tape is blank\n"
-        "  --force-append    Append even without valid tail\n"
-        "\n"
-        "Spool options:\n"
-        "  -o <dir>          Spool output directory\n"
-        "\n"
-        "Common options:\n"
-        "  -i <input>        Payload input file (default: stdin)\n"
-        "  --payload-profile <profile>  raw (default) or pax\n"
-        "  --archive-name <name>\n"
-        "  --volume-block-size <bytes>\n"
-        "  --slice-size <bytes>\n"
-        "  --virtual-tape-size <bytes>\n"
-        "\n"
-        "For --payload-profile=pax, provide source paths as positional args.\n",
-        prog, prog);
-}
-
-Options parse_args(int argc, char **argv) {
-    static const struct option long_opts[] = {
-        {"target", required_argument, nullptr, 't'},
-        {"archive-name", required_argument, nullptr, 'n'},
-        {"volume-block-size", required_argument, nullptr, 'b'},
-        {"slice-size", required_argument, nullptr, 's'},
-        {"virtual-tape-size", required_argument, nullptr, 'z'},
-        {"payload-profile", required_argument, nullptr, 259},
-        {"init", no_argument, nullptr, 256},
-        {"init-if-blank", no_argument, nullptr, 257},
-        {"force-append", no_argument, nullptr, 258},
-        {"help", no_argument, nullptr, 'h'},
-        {nullptr, 0, nullptr, 0}};
-
-    Options opts;
-    bool saw_target = false;
-
-    int c;
-    while ((c = getopt_long(argc, argv, "f:i:o:h", long_opts, nullptr)) != -1) {
-        switch (c) {
-        case 't':
-            if (string_view(optarg) != "spool")
-                fail("only --target=spool is supported");
-            saw_target = true;
-            break;
-        case 'f':
-            opts.tape_device = optarg;
-            break;
-        case 'i':
-            opts.input = optarg;
-            break;
-        case 'o':
-            opts.output_dir = optarg;
-            break;
-        case 'n':
-            opts.archive_name = optarg;
-            break;
-        case 'b':
-            opts.volume_block_size = static_cast<uint32_t>(
-                neotape::parse_size(optarg, "volume block size"));
-            break;
-        case 's':
-            opts.slice_size = neotape::parse_size(optarg, "slice size");
-            opts.slice_size_set = true;
-            break;
-        case 'z':
-            opts.virtual_tape_size =
-                neotape::parse_size(optarg, "virtual volume size");
-            break;
-        case 'h':
-            usage(argv[0]);
-            std::exit(0);
-        case 256:
-            opts.init_mode = true;
-            break;
-        case 257:
-            opts.init_if_blank = true;
-            break;
-        case 258:
-            opts.force_append = true;
-            break;
-        case 259:
-            opts.payload_profile = optarg;
-            break;
-        case '?':
-            std::exit(2);
-        }
-    }
-
-    if (optind < argc && opts.input == "-")
-        opts.input = argv[optind];
-
-    if (opts.payload_profile != "raw" && opts.payload_profile != "pax")
-        fail("unsupported payload profile (use raw or pax)");
-
-    if (!saw_target && opts.output_dir.empty() && opts.tape_device.empty())
-        fail("specify -f <device> (tape) or --target=spool -o <dir>");
-    if (!opts.tape_device.empty() && !opts.output_dir.empty())
-        fail("specify either -f (tape) or -o (spool), not both");
-    if (!opts.tape_device.empty() && opts.virtual_tape_size > 0)
-        fail("--virtual-tape-size is for spool mode only");
-    if (saw_target && !opts.output_dir.empty())
-        opts.tape_device.clear();
-    if (!neotape::valid_block_size(opts.volume_block_size))
-        fail("volume block size must be between 4096 and 8388608 bytes");
-    if (opts.slice_size_set && opts.slice_size == 0)
-        fail("slice size must be greater than zero");
-    if (opts.slice_size_set && opts.slice_size < opts.volume_block_size)
-        fail("slice size must be at least one volume block");
-    if (opts.virtual_tape_size != 0 &&
-        opts.virtual_tape_size <
-            static_cast<uint64_t>(opts.volume_block_size) * 2)
-        fail("virtual volume size must fit at least a volume header and one "
-             "record");
-    return opts;
 }
 
 void raw_write_usage() {
@@ -970,16 +847,6 @@ void run_writer(Options opts) {
 
 } // namespace
 
-int neotape_write_legacy_main(int argc, char **argv) {
-    try {
-        Options opts = parse_args(argc, argv);
-        run_writer(std::move(opts));
-        return 0;
-    } catch (const std::exception &e) {
-        fail(e.what());
-    }
-}
-
 int neotape_write_main(int argc, char **argv) {
     try {
         auto raw = parse_raw_write_args(argc, argv);
@@ -1017,9 +884,3 @@ int neotape_backup_main(int argc, char **argv) {
         return 1;
     }
 }
-
-#ifndef NEOTAPE_NO_STANDALONE_MAIN
-int main(int argc, char **argv) {
-    return neotape_write_legacy_main(argc, argv);
-}
-#endif

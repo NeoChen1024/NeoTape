@@ -259,7 +259,7 @@ $(FORMAT_GEN_OBJ): $(GENERATED_CPP) $(GENERATED_HPP) Makefile | $(BUILDDIR)
 The generated object is linked into all tools that use format objects:
 
 ```makefile
-$(BINDIR)/neotape-write : ... $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) ...
+$(BINDIR)/neotape : ... $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) ...
 ```
 
 Run manually:

@@ -75,12 +75,12 @@ struct ScanTotals {
 // ====================== Diagnostics & CLI ========================
 
 [[noreturn]] void fail(const string &message) {
-    std::cerr << format("neotape-plan: {}\n", message);
+    std::cerr << format("neotape plan: {}\n", message);
     std::exit(1);
 }
 
 void warn(const string &message) {
-    std::cerr << format("neotape-plan: warning: {}\n", message);
+    std::cerr << format("neotape plan: warning: {}\n", message);
 }
 
 void usage(const char *prog) {
@@ -686,7 +686,3 @@ int neotape_plan_main(int argc, char **argv) {
 
     return 0;
 }
-
-#ifndef NEOTAPE_NO_STANDALONE_MAIN
-int main(int argc, char **argv) { return neotape_plan_main(argc, argv); }
-#endif

@@ -47,7 +47,7 @@ Implementation-specific content from this draft is extracted to
 
 NeoTape 是一種針對 LTO 磁帶設計的 seekable multi-volume length-framed payload transport container。它將整體備份切分為多個 logical slices；每個 logical slice 是 writer 在串流過程中決定關閉的一段 payload bytes；最後一個 Frame Header（帶 `END` flag）記錄該 slice 的 slice_content_size 與 slice_content_blake3。每個 logical slice 對應一個主要 LTO tape file，內含一個或多個 length-framed Frames；每個 Frame 前置 NeoTape Frame Header，其中明確記錄 frame_payload_size，之後接續該 Frame 的 payload byte range。filemark 位於 slice boundary，而不是每個 Frame boundary，因此磁帶機原生 file seek 能力定位到可完整驗證的 slice，同時避免在整卷磁帶上建立過多 filemarks。
 
-NeoTape 的讀取工具 neotape-cat-volumes 會讀取多卷磁帶、驗證 volume / Frame Headers、處理 End of Tape continuation，並依 payload profile 將多個 logical slices 重組輸出至 stdout。Minimal reader 只需要依 length fields 串接 payload bytes；對 NeoTape/PAX payload profile，下游可以直接使用 bsdtar -xpf - 還原。
+NeoTape 的讀取工具 `neotape restore` 會讀取多卷磁帶、驗證 volume / Frame Headers、處理 End of Tape continuation，並依 payload profile 將多個 logical slices 重組輸出至 stdout。Minimal reader 只需要依 length fields 串接 payload bytes；對 NeoTape/PAX payload profile，下游可以直接使用 bsdtar -xpf - 還原。
 
 # 1. Introduction
 
@@ -78,7 +78,7 @@ NeoTape 的設計目標如下：
 
 1. NeoTape/PAX payload profile compatibility：v0.1 推薦的 NeoTape/PAX payload profile 應與 libarchive/bsdtar 的 POSIX pax 格式相容。
 2. Length-framed payload container：NeoTape core is payload-format agnostic. Frame and slice boundaries are determined by explicit length fields in NeoTape headers, not by parsing pax/tar EOA or any payload-internal marker.
-3. Restore simplicity：最小還原工具 neotape-cat-volumes 只負責磁帶 transport、multi-volume sequencing 與 length-framed payload concatenation；payload 解讀由 payload profile 或下游工具處理。
+3. Restore simplicity：最小還原工具 `neotape restore` 只負責磁帶 transport、multi-volume sequencing 與 length-framed payload concatenation；payload 解讀由 payload profile 或下游工具處理。
 4. LTO-native seekability：使用 LTO filemark 作為 volume、logical slice、archive end 等 coarse-grained boundary，使磁帶能快速 seek 到完整可驗證的 slice，而不是為每個 internal Frame 建立 filemark。
 5. Target backend abstraction：NeoTape writer SHOULD support multiple backing stores for the same logical format, including direct sequential tape device output and ordinary filesystem spool output. Filesystem spool output is useful for debugging, test fixtures, offline archive preparation, staging while the tape drive is busy, and deterministic reproduction of volume/Frame layout.
 6. Multi-volume continuation：支援 logical slice 與單一檔案跨卷延續，不受單卷磁帶容量限制。
@@ -203,7 +203,7 @@ archive-<archive_uuid>/
     tape-file-000001.volume-header.ntf
     ...
 
-Filesystem spool mode MUST preserve the same logical record order as tape mode. It MUST NOT require a different reader algorithm for archive correctness. A reader MAY treat spool files as a virtual tape: file boundaries stand in for filemarks, and tape directories stand in for media or archive volumes. The same neotape-cat-volumes logical reader SHOULD be able to accept either a tape device path or a spool directory path, with the target adapter providing read-record, next-file, next-volume, and EOT/volume-limit events.
+Filesystem spool mode MUST preserve the same logical record order as tape mode. It MUST NOT require a different reader algorithm for archive correctness. A reader MAY treat spool files as a virtual tape: file boundaries stand in for filemarks, and tape directories stand in for media or archive volumes. The same `neotape read` / `neotape restore` logical reader SHOULD be able to accept either a tape device path or a spool directory path, with the target adapter providing read-record, next-file, next-volume, and EOT/volume-limit events.
 
 Because ordinary filesystems do not provide physical EOT, a spool writer MAY accept a manual or configured volume capacity limit such as --virtual-tape-size. When the next committed header, Frame payload, SLICE_METADATA Frame, or Archive End Header would exceed the configured volume capacity, the writer MUST perform the same logical transition it would perform on EOT: close the current tape at the last valid boundary, create the next tape directory, write its volume header, and continue or drop the incomplete SLICE_METADATA Frames; the final SLICE_CONTENT Frame with END has already been committed.
 
@@ -234,7 +234,7 @@ The actual slice_content_size is not known when the logical slice begins. It is 
 
 NeoTape core does not require payload bytes to be pax, nor does it use payload-internal end markers for framing. A payload profile defines how those bytes should be interpreted. The NeoTape/PAX payload profile remains the recommended v0.1 backup profile because it preserves bsdtar/libarchive compatibility.
 
-For NeoTape/PAX payload profile, neotape-cat-volumes MAY treat the length-framed slice payloads as ranges of one larger pax stream. On-tape logical slices do not need to be independently valid pax archives and do not need slice-local pax EOA markers. Any pax finalization needed for bsdtar compatibility is a profile-specific stdout policy, not the NeoTape core slice boundary rule.
+For NeoTape/PAX payload profile, `neotape restore` MAY treat the length-framed slice payloads as ranges of one larger pax stream. On-tape logical slices do not need to be independently valid pax archives and do not need slice-local pax EOA markers. Any pax finalization needed for bsdtar compatibility is a profile-specific stdout policy, not the NeoTape core slice boundary rule.
 
 因此，磁帶上的每個 slice 都可作為錯誤恢復與重新同步單位；下游工具是否需要知道 slice 的存在由 payload profile 決定。
 
@@ -457,11 +457,11 @@ DONE
 ERROR
   在無法恢復的 target backend I/O error、metadata mismatch、source read error 或 payload profile fatal error 時進入。
 
-# 16\. Reader / neotape-cat-volumes Model
+# 16\. Reader / `neotape restore` Model
 
 > Extracted to: `docs/spec/09-reader-state-machine.md`.
 
-neotape-cat-volumes 是最小還原工具。它的職責：
+`neotape restore` 是最小還原工具。它的職責：
 
 * 讀取 volume header
 * 在使用者策略允許時，若 volume header 損壞、UUID 不符或 volume_seq_num 不符，掃描後續 tape files 尋找下一個候選 volume header
@@ -479,11 +479,11 @@ neotape-cat-volumes 是最小還原工具。它的職責：
 
 # NeoTape/PAX payload profile example:
 
-  neotape-cat-volumes /dev/nst0 | bsdtar -xpf - --acls --xattrs
+  neotape restore --source tape:/dev/nst0 | bsdtar -xpf - --acls --xattrs
 
 若要先落地檢查：
 
-  neotape-cat-volumes /dev/nst0 > archive.pax
+  neotape restore --source tape:/dev/nst0 > archive.pax
   bsdtar \-tvf archive.pax
 
 # 17\. Reader State Machine
@@ -563,7 +563,7 @@ Read error：
 > Control modes and error policy flags are documented in
 > `docs/spec/10-error-handling.md` (Error Handling).
 
-neotape-cat-volumes 的 stdout 必須只輸出 payload bytes；對 NeoTape/PAX payload profile，stdout 是 pax bytes。互動控制不得使用 stdout。
+`neotape read` / `neotape restore` 的 stdout 必須只輸出 payload bytes；對 NeoTape/PAX payload profile，stdout 是 pax bytes。互動控制不得使用 stdout。
 
 LTO 磁帶機不一定有穩定可用的磁帶 eject / insert 偵測功能，這部分還得繼續研究。
 
@@ -611,7 +611,7 @@ Slice/Frame 設計提供以下恢復能力：
 
 Medium Header 提供的恢復能力：
 
-* 每卷 volume header metadata bundle 可內嵌 neotape-cat-volumes source code 與格式說明，提升長期可恢復性。
+* 每卷 volume header metadata bundle 可內嵌 `neotape restore` source code 與格式說明，提升長期可恢復性。
 * \- END Frame Headers provide per-slice BLAKE3 verification. SLICE_METADATA Frames may carry optional slice-local metadata, allowing fast audit, salvage, and partial restore planning without treating catalog data as authoritative archive metadata.
 * 
 * # 22\. Security Considerations
@@ -663,7 +663,7 @@ File 2: Continuation of slice 2 tape file: Frame Header slice = 2 Frame = 2 (`EN
 File 3: Slice 3 tape file: Frame Header slice = 3 Frame = 1 (`END`), frame_payload_size = complete slice 3 size; payload = complete final slice payload bytes, slice_content_size = ..., slice_content_blake3 = ..., optional SLICE_METADATA Frames
 File 4: Archive End Header, clean_end = true, last_slice_seq_num = 3
 
-neotape-cat-volumes stdout for NeoTape/PAX payload profile:
+`neotape restore` stdout for NeoTape/PAX payload profile:
 
 slice 1 payload bytes
 slice 2 payload bytes
@@ -671,7 +671,7 @@ slice 3 payload bytes
 
 No NeoTape header bytes (Frame Headers, SLICE_METADATA) are emitted to stdout. On-tape logical slices do not need to contain pax EOA markers; pax stream finalization, if needed, is a NeoTape/PAX payload profile output policy.
 
-# Appendix B. Minimal neotape-cat-volumes Responsibilities
+# Appendix B. Minimal `neotape restore` Responsibilities
 
 A minimal implementation may avoid libarchive entirely. It only needs:
 
@@ -696,22 +696,22 @@ selected payload profile.
 > Extracted to: `docs/spec/appendix-cli.md`.
 
 Restore NeoTape/PAX payload profile interactively:
-  neotape-cat-volumes --payload-profile=pax --control=auto /dev/nst0 | bsdtar -xpf - --acls --xattrs
+  neotape restore --source tape:/dev/nst0 --control=auto | bsdtar -xpf - --acls --xattrs
 
 Restore without interaction:
-  neotape-cat-volumes --control=none --on-eot=fail --on-mismatch=fail /dev/nst0 > payload.out
+  neotape restore --source tape:/dev/nst0 --control=none > payload.out
 
 Create filesystem spool output with a virtual volume size:
-  neotape-write --target=spool -o ./archive.spool --virtual-tape-size=12T /source/tree
+  neotape backup --target spool:./archive.spool --virtual-tape-size=12T /source/tree
 
 Replay prepared spool to tape:
   neotape-spool-to-tape ./archive.spool /dev/nst0
 
 Inspect volume metadata:
-  neotape-cat-volumes --inspect-volume /dev/nst0
+  neotape inspect --source tape:/dev/nst0
 
 Salvage mode:
-  neotape-cat-volumes \--salvage \--control=tty /dev/nst0 \> salvage.out
+  neotape restore \--source tape:/dev/nst0 \--control=tty \> salvage.out
 
 # Appendix D. Open Questions
 

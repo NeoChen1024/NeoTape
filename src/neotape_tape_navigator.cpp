@@ -81,6 +81,8 @@ std::vector<ArchiveBoundary> TapeNavigator::scan_archive_instances() {
 
     for (;;) {
         auto header = read_current_header();
+        if (!header)
+            break;
 
         try {
             dev_.space_fwd(1);
@@ -88,9 +90,6 @@ std::vector<ArchiveBoundary> TapeNavigator::scan_archive_instances() {
         } catch (const Error &) {
             break;
         }
-
-        if (!header)
-            continue;
 
         if (header->type == neotape::HeaderType::volume) {
             current_volume = header->volume;
@@ -102,10 +101,18 @@ std::vector<ArchiveBoundary> TapeNavigator::scan_archive_instances() {
                 b.end_fileno = current_fileno;
                 b.volume_header = *current_volume;
                 b.end_header = *header->archive_end;
+                b.complete = true;
                 archives.push_back(b);
                 current_volume.reset();
             }
         }
+    }
+
+    if (current_volume) {
+        ArchiveBoundary b;
+        b.volume_fileno = volume_fileno;
+        b.volume_header = *current_volume;
+        archives.push_back(b);
     }
 
     return archives;

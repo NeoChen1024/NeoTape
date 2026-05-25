@@ -89,62 +89,8 @@ struct RawReadOptions {
 };
 
 [[noreturn]] void fail(const string &msg) {
-    std::cerr << format("neotape-cat-volumes: {}\n", msg);
+    std::cerr << format("neotape read: {}\n", msg);
     std::exit(1);
-}
-
-void usage(const char *prog) {
-    std::cerr << format(
-        "usage:\n"
-        "  {} [options] <spool-dir>\n"
-        "  {} --list [options] <spool-dir>\n"
-        "\n"
-        "options:\n"
-        "  -o <path>        Output path (default: stdout; FIFO supported)\n"
-        "  --prompt         Prompt between volumes\n"
-        "  --list           List archives instead of extracting\n"
-        "  -h, --help\n",
-        prog, prog);
-}
-
-Options parse_args(int argc, char **argv) {
-    static const struct option long_opts[] = {
-        {"output", required_argument, nullptr, 'o'},
-        {"prompt", no_argument, nullptr, 256},
-        {"list", no_argument, nullptr, 257},
-        {"help", no_argument, nullptr, 'h'},
-        {nullptr, 0, nullptr, 0}};
-
-    Options opts;
-    int c;
-    while ((c = getopt_long(argc, argv, "o:h", long_opts, nullptr)) != -1) {
-        switch (c) {
-        case 'o':
-            opts.output = optarg;
-            break;
-        case 256:
-            opts.prompt = true;
-            break;
-        case 257:
-            opts.list_mode = true;
-            break;
-        case 'h':
-            usage(argv[0]);
-            std::exit(0);
-        case '?':
-            std::exit(2);
-        }
-    }
-
-    if (optind >= argc) {
-        usage(argv[0]);
-        std::exit(2);
-    }
-    opts.spool_dir = argv[optind++];
-
-    if (!fs::is_directory(opts.spool_dir))
-        fail(format("not a directory: {}", opts.spool_dir));
-    return opts;
 }
 
 void raw_read_usage() {
@@ -443,9 +389,11 @@ std::vector<ArchiveEntry> collect_archives_from_tape_boundaries(
         entry.name = boundary.volume_header.archive_name;
         entry.profile = neotape::payload_profile_name(
             boundary.volume_header.payload_profile);
-        entry.status = "clean";
+        entry.status = boundary.complete ? "clean" : "incomplete";
         entry.block_size = boundary.volume_header.volume_block_size;
-        entry.total_frames = boundary.end_header.last_global_frame_seq_num;
+        entry.total_frames = boundary.complete
+                                 ? boundary.end_header.last_global_frame_seq_num
+                                 : 0;
         entry.volume_count = 1;
         entries.push_back(std::move(entry));
     }
@@ -553,7 +501,7 @@ void run_cat_volumes(const Options &opts) {
 
         if (opts.prompt) {
             sink->flush();
-            std::cerr << format("neotape-cat-volumes: end of tape-{:06}, ",
+            std::cerr << format("neotape read: end of tape-{:06}, ",
                                 vol->volume_seq_num());
             std::cerr << "mount next volume and press Enter [q to quit]: ";
             std::string line;
@@ -578,7 +526,7 @@ void run_cat_volumes(const Options &opts) {
     }
 
     std::cerr << format(
-        "neotape-cat-volumes: ok volumes={} slices={} frames={}\n",
+        "neotape read: ok volumes={} slices={} frames={}\n",
         total_volumes, rs.validation.expected_logical_slice_seq_num - 1,
         rs.validation.expected_global_frame_seq_num - 1);
 }
@@ -623,24 +571,12 @@ void run_tape_device_restore(const Options &opts, const string &locator) {
 
     sink->flush();
     std::cerr << format(
-        "neotape-cat-volumes: ok volumes=1 slices={} frames={}\n",
+        "neotape restore: ok volumes=1 slices={} frames={}\n",
         rs.validation.expected_logical_slice_seq_num - 1,
         rs.validation.expected_global_frame_seq_num - 1);
 }
 
 } // namespace
-
-// ====================== Main ======================================
-
-int neotape_cat_volumes_legacy_main(int argc, char **argv) {
-    try {
-        auto opts = parse_args(argc, argv);
-        run_cat_volumes(opts);
-        return 0;
-    } catch (const std::exception &e) {
-        fail(e.what());
-    }
-}
 
 int neotape_read_main(int argc, char **argv) {
     try {
@@ -700,9 +636,3 @@ int neotape_restore_main(int argc, char **argv) {
         return 1;
     }
 }
-
-#ifndef NEOTAPE_NO_STANDALONE_MAIN
-int main(int argc, char **argv) {
-    return neotape_cat_volumes_legacy_main(argc, argv);
-}
-#endif

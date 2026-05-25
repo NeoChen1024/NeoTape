@@ -33,6 +33,7 @@ struct ArchiveBoundary {
     uint64_t end_fileno;
     neotape::VolumeHeader volume_header;
     neotape::ArchiveEndHeader end_header;
+    bool complete = false;
 };
 
 class TapeNavigator {

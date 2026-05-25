@@ -2,7 +2,7 @@
 
 Status: draft.
 
-The `neotape-plan` tool emits a machine-readable metadata stream describing
+The `neotape plan` command emits a machine-readable metadata stream describing
 how source filesystem trees should be packed into slices. Downstream tools
 consume this stream to produce pax slices that match the plan.
 

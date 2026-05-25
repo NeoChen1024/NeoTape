@@ -26,7 +26,7 @@ The writer MAY split the continuous pax byte stream into NeoTape logical slices 
 
 ### Reader Behavior
 
-The reader (`neotape-cat-volumes --payload-profile=pax`) emits concatenated pax bytes to stdout. The output is a valid pax stream that `bsdtar -xpf -` can restore.
+The reader (`neotape restore`) emits concatenated pax bytes to stdout. The output is a valid pax stream that `bsdtar -xpf -` can restore.
 
 If the last logical slice does not end with pax EOA (two zero-filled 512-byte blocks), a profile-aware output tool MAY append EOA before piping to bsdtar for clean compatibility. Core reader behaviour is to emit the concatenated payload bytes as-is.
 
@@ -70,7 +70,7 @@ The writer reads an external manifest or file list to discover source files and 
 
 Each payload profile must define:
 
-1. **stdout semantics** — what bytes `neotape-cat-volumes` emits for this profile.
+1. **stdout semantics** — what bytes `neotape read` / `neotape restore` emits for this profile.
 2. **Source ingestion** — how the writer produces payload bytes for this profile.
 3. **EOA/finalization** — whether the output stream needs a profile-specific end marker.
 4. **Independent restorability** — whether individual slices can be independently restored by external tools.

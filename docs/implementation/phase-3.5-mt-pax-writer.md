@@ -128,7 +128,7 @@ normal pax end marker that bsdtar expects.
 
 Because NeoTape core uses length-framed payload transport (Frame Header
 `frame_payload_size`, slice-level BLAKE3), the EOA status of the pax byte
-stream is irrelevant at the transport layer. The reader (`neotape-cat-volumes`)
+stream is irrelevant at the transport layer. The reader (`neotape restore`)
 follows NeoTape length fields to extract payload ranges and passes the
 concatenated pax bytes to the downstream payload profile (e.g. bsdtar).
 

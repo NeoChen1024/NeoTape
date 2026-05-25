@@ -74,13 +74,13 @@ Inputs may include:
 Example conceptual commands:
 
 ```sh
-neotape-cat-volumes /mnt/disc1 /mnt/disc2 /mnt/disc3 | bsdtar -xpf -
+neotape restore --source spool:/mnt/disc1 | bsdtar -xpf -
 ```
 
 or:
 
 ```sh
-neotape-cat-volumes --removable --expected-volumes=3
+neotape restore --source spool:/mnt/disc1 --control=auto
 ```
 
 The reader should validate each supplied volume before consuming payload bytes.

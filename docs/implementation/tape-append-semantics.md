@@ -52,7 +52,7 @@ Normal tape-device archive writing should append a new archive instance after th
 Example conceptual command:
 
 ```sh
-neotape-write --target=tape /dev/nst0 --payload-profile=pax ./source
+neotape backup --target tape:/dev/nst0 ./source
 ```
 
 The writer should not assume that the current device position is safe. Before writing, it should perform append preflight.
@@ -134,7 +134,7 @@ The safer default is to fail and ask for explicit initialization.
 Example conceptual command:
 
 ```sh
-neotape-write --target=tape --init-if-blank /dev/nst0 --payload-profile=pax ./source
+neotape backup --target tape:/dev/nst0 --init-if-blank ./source
 ```
 
 ## Incomplete Tail Handling

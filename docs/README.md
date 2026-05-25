@@ -42,7 +42,7 @@ docs/
     appendix-layout-examples.md Single-volume, multi-volume, multi-archive layouts
     appendix-cli.md             CLI usage examples for all tools
     open-questions.md           Unresolved design choices and open questions
-    plan-metadata.md            Plan metadata format (neotape-plan)
+    plan-metadata.md            Plan metadata format (`neotape plan`)
 
   implementation/               Implementation-specific notes
     phase-1-header-layout.md    Byte-offset decisions, serializer/parser design

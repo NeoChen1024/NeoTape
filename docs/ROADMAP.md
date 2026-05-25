@@ -24,7 +24,7 @@ Current implementation snapshot:
   unit tests. Public `tape:` locators are real tape devices only; the old
   `tape:<dir>` file-backed CLI fallback has been removed. Real tape read/write
   validation and recovery behavior are not complete.
-- Phase 8 has a minimal Medium Header serializer/parser and `neotape-init`
+- Phase 8 has a minimal Medium Header serializer/parser and `neotape init`
   prototype. The self-description metadata bundle is not implemented.
 
 # Roadmap Principles
@@ -109,7 +109,7 @@ is currently minimal and does not yet include every validation field listed
 below.
 
 Deliverables:  
-- neotape-write --target=spool.  
+- `neotape write --target=spool`.
 - Deterministic spool directory layout.  
 - Single-root `.nts` tape-file object creation for medium header, volume header,
   slice files, and archive end header.
@@ -133,9 +133,9 @@ Spec feedback expected:
 
 # Phase 3: Minimal Reader for Spool Archives: MVP DONE
 
-Goal: implement neotape-cat-volumes against the virtual tape abstraction.
+Goal: implement `neotape read` / `neotape restore` against the virtual tape abstraction.
 
-Implementation status: `neotape-cat-volumes` can read spool volumes in sequence,
+Implementation status: `neotape read` and `neotape restore` can read spool volumes in sequence,
 emit raw payload bytes, validate final slice size/hash, and validate Archive End
 Header sequencing. The corruption and missing-object fixtures listed below are
 not yet automated.
@@ -150,7 +150,7 @@ Deliverables:
 - stdout payload emission for raw profile.
 
 Validation:  
-- raw input -> spool archive -> neotape-cat-volumes -> byte-identical output.  
+- raw input -> spool archive -> `neotape read` -> byte-identical output.
 - Multi-volume virtual EOT fixture.  
 - Corrupt header fixture.  
 - Corrupt payload fixture.  
@@ -174,14 +174,14 @@ paths, does not reuse the Phase 0 tree walker as the source profile, keeps the
 whole pax stream in memory, and still needs automated regression coverage.
 
 Deliverables:  
-- neotape-write --payload-profile=pax for file trees, reusing the Phase 0 pax writer path.  
+- `neotape backup` / `neotape write --payload-profile=pax` for file trees, reusing the Phase 0 pax writer path.
 - Initial source reader profile: simple tree walker, with metadata prefetch or parallel file reads deferred until measurement shows a need.  
 - Continuous pax stream generation through the NeoTape writer pipeline.  
 - Slice boundaries chosen by writer policy, preferably at pax member boundaries when practical but not required by core.  
-- neotape-cat-volumes --payload-profile=pax emits pax bytes to stdout.
+- `neotape restore` emits pax bytes to stdout.
 
 Validation:  
-- neotape-cat-volumes archive.spool | bsdtar -xpf - restores test trees.  
+- `neotape restore --source spool:<dir> | bsdtar -xpf -` restores test trees.
 - Tests for xattrs, ACLs, symlinks, hardlinks, sparse files, long paths, and device nodes where supported by platform policy.  
 - Confirm that on-tape slice boundaries do not require slice-local pax EOA.
 
@@ -283,14 +283,14 @@ Goal: define the immutable BOT Medium Header and recovery bundle.
 Spec draft: [docs/spec/01-medium-header.md](spec/01-medium-header.md)
 
 Implementation status: a minimal Medium Header layout is implemented in the
-format layer and `neotape-init` can write one to a tape device. The metadata
+format layer and `neotape init` can write one to a tape device. The metadata
 bundle, embedded docs/source package, and virtual-medium validation are not
 implemented.
 
 Deliverables:  
 - Medium Header binary/ASCII prefix.  
 - Medium metadata bundle format using restricted ar-style flat member container.  
-- Embedded FORMAT-SPEC, RESTORE, README, and optional minimal neotape-cat-volumes source package.  
+- Embedded FORMAT-SPEC, RESTORE, README, and optional minimal `neotape restore` source package.
 - Medium initialization tool.
 
 Validation:  

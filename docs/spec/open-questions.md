@@ -108,7 +108,7 @@ speed up listing but violates the "no mutable state in Medium Header" rule.
 
 ### Minimal Reader Embedding
 
-Should the minimal reader (`neotape-cat-volumes`) be compact enough to embed in
+Should the minimal reader (`neotape restore`) be compact enough to embed in
 the Medium Header metadata bundle as source code? What platform assumptions
 would such a reader make?
 

@@ -62,7 +62,7 @@ The ordered payload byte stream carried by `SLICE_CONTENT` Frames for one
 logical slice.
 
 Slice content is the only per-slice byte stream emitted by normal payload
-readers such as `neotape-cat-volumes`.
+readers such as `neotape restore`.
 
 ### Slice Metadata
 

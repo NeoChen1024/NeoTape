@@ -31,7 +31,7 @@ Each Frame has a `frame_content_type`:
 | `SLICE_CONTENT` | Opaque payload bytes belonging to the logical slice byte stream.  |
 | `SLICE_METADATA` | Advisory metadata bytes associated with a logical slice.         |
 
-A normal payload reader (e.g. `neotape-cat-volumes`) MUST emit only `SLICE_CONTENT` Frame payload bytes. It MUST NOT emit `SLICE_METADATA` bytes to stdout.
+A normal payload reader (e.g. `neotape restore`) MUST emit only `SLICE_CONTENT` Frame payload bytes. It MUST NOT emit `SLICE_METADATA` bytes to stdout.
 
 ## START and END Flags
 

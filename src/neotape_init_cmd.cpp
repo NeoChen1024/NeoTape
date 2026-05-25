@@ -27,7 +27,7 @@ using std::string;
 constexpr std::size_t tape_probe_read_size = 8 * 1024 * 1024;
 
 [[noreturn]] void fail(const string &msg) {
-    std::cerr << format("neotape-init: {}\n", msg);
+    std::cerr << format("neotape init: {}\n", msg);
     std::exit(1);
 }
 
@@ -149,7 +149,7 @@ void init_spool(const Options &opts) {
 void init_tape(const Options &opts) {
     mt::TapeDevice dev(opts.target.locator, true);
     dev.configure_preferred_variable_block_mode(
-        65536, "neotape-init medium header", std::cerr);
+        65536, "neotape init medium header", std::cerr);
 
     // Check if already initialized
     dev.rewind();
@@ -208,7 +208,3 @@ int neotape_init_main(int argc, char **argv) {
         fail(e.what());
     }
 }
-
-#ifndef NEOTAPE_NO_STANDALONE_MAIN
-int main(int argc, char **argv) { return neotape_init_main(argc, argv); }
-#endif

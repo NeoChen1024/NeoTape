@@ -125,7 +125,7 @@ Frame content type is explicit:
 | `SLICE_CONTENT`  | Opaque bytes belonging to the logical slice content byte stream. |
 | `SLICE_METADATA` | Advisory metadata bytes associated with a logical slice.         |
 
-A normal payload reader, such as `neotape-cat-volumes`, MUST emit only
+A normal payload reader, such as `neotape restore`, MUST emit only
 `SLICE_CONTENT` Frame payload bytes. It MUST NOT emit `SLICE_METADATA` bytes to
 stdout.
 
@@ -170,7 +170,7 @@ restricted ar archive conforming to the ar subset format defined in
 
 `SLICE_METADATA` Frames are NeoTape transport metadata associated with a logical
 slice. They are not part of the payload stream and MUST NOT be emitted to stdout
-by `neotape-cat-volumes`.
+by `neotape restore`.
 
 `SLICE_METADATA` Frames are advisory. A reader MUST NOT reject a logical slice or
 archive solely because of missing, truncated, or corrupt `SLICE_METADATA` Frames,

@@ -4,7 +4,7 @@ Status: extracted from RFC_Draft.md §§16–17; normative.
 
 ## Reader Model
 
-`neotape-cat-volumes` is the minimal restore tool. Its responsibilities:
+`neotape restore` is the minimal restore tool. Its responsibilities:
 
 - Read and validate Volume Headers.
 - By policy, scan forward through tape files to find the next candidate Volume Header (useful on multi-archive media).
@@ -91,8 +91,8 @@ EOT_BEFORE_END ──> prompt/retry ──> READ_VOLUME_HEADER
 
 ```sh
 # Interactive restore with NeoTape/PAX profile:
-neotape-cat-volumes --payload-profile=pax --control=auto /dev/nst0 | bsdtar -xpf - --acls --xattrs
+neotape restore --source tape:/dev/nst0 --control=auto | bsdtar -xpf - --acls --xattrs
 
 # Non-interactive, fail on mismatch:
-neotape-cat-volumes --control=none --on-eot=fail --on-mismatch=fail /dev/nst0 > payload.out
+neotape restore --source tape:/dev/nst0 --control=none > payload.out
 ```

@@ -90,7 +90,7 @@ LDLIBS = -larchive -lb3sum -lcrc32c -lpthread
 ```
 
 The `-lpthread` dependency is for mt-pax (multi-threaded pax writer) and
-neotape-plan (worker pool).
+`neotape plan` (worker pool).
 
 ## Source Layout
 

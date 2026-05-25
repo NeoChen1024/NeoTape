@@ -46,7 +46,7 @@ struct WriterState {
 // ====================== Helpers ==================================
 
 [[noreturn]] void fail(const string &msg) {
-    std::cerr << format("neotape-write: {}\n", msg);
+    std::cerr << format("neotape write: {}\n", msg);
     std::exit(1);
 }
 
@@ -95,7 +95,7 @@ void handle_volume_change(WriterState &state,
         state.owned_dev = std::make_unique<TapeDevice>(state.opts.device, true);
         state.dev = state.owned_dev.get();
         state.dev->configure_preferred_variable_block_mode(
-            state.opts.volume_block_size, "neotape-write archive records",
+            state.opts.volume_block_size, "neotape write archive records",
             std::cerr);
         state.dev->rewind();
         return;
@@ -105,7 +105,7 @@ void handle_volume_change(WriterState &state,
 
     state.dev->reopen();
     state.dev->configure_preferred_variable_block_mode(
-        state.opts.volume_block_size, "neotape-write archive records",
+        state.opts.volume_block_size, "neotape write archive records",
         std::cerr);
     state.dev->rewind();
 }
@@ -267,7 +267,7 @@ void initialize_for_write(WriterState &state, TapeDevice &dev,
     state.opts = opts;
     state.dev = &dev;
     state.dev->configure_preferred_variable_block_mode(
-        opts.volume_block_size, "neotape-write archive records", std::cerr);
+        opts.volume_block_size, "neotape write archive records", std::cerr);
 
     if (opts.init_mode) {
         dev.rewind();

@@ -64,7 +64,7 @@ File 4:   Archive End Header (clean_end, last_slice_seq_num=3)
 filemark
 ```
 
-Output of `neotape-cat-volumes` for NeoTape/PAX:
+Output of `neotape restore` for NeoTape/PAX:
 
 ```
 slice 1 payload bytes (contiguous pax entries)
