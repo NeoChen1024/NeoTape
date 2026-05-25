@@ -105,6 +105,8 @@ class TapeDevice {
     // fd() is virtual — see declaration near bottom of class
     const std::string &device_path() const noexcept { return device_path_; }
     bool is_read_write() const noexcept { return read_write_; }
+    void close();
+    void reopen();
 
     // -- positioning ---------------------------------------------------
 

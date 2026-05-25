@@ -276,6 +276,10 @@ void mark_link_target_as_utf8(archive_entry *entry) {
         archive_entry_update_hardlink_utf8(entry, h);
 }
 
+void copy_pathname_utf8(archive_entry *entry, const string &path) {
+    archive_entry_copy_pathname(entry, path.c_str());
+}
+
 string entry_owner_name(archive_entry *entry) {
     if (const char *n = archive_entry_uname(entry); n != nullptr)
         return n;
@@ -345,14 +349,14 @@ archive_entry *planned_entry_from_path(archive *disk, const string &path) {
     archive_entry *entry = archive_entry_new();
     if (!entry)
         throw std::runtime_error("cannot allocate entry");
-    archive_entry_set_pathname_utf8(entry, path.c_str());
+    copy_pathname_utf8(entry, path);
     archive_entry_copy_sourcepath(entry, path.c_str());
     int r = archive_read_disk_entry_from_file(disk, entry, -1, nullptr);
     if (r == ARCHIVE_FATAL)
         fail_archive("read filesystem", disk);
     if (r < ARCHIVE_OK)
         warn_archive("read filesystem", disk);
-    archive_entry_set_pathname_utf8(entry, path.c_str());
+    copy_pathname_utf8(entry, path);
     archive_entry_copy_sourcepath(entry, path.c_str());
     mark_link_target_as_utf8(entry);
     return entry;
@@ -723,6 +727,8 @@ void serializer_main(vector<WorkerSlot> &slots, BBSink &bb1_sink,
 
 PaxWriteResult write_planned_pax_archive(const Options &opts,
                                          PaxWriterCallbacks callbacks) {
+    ensure_utf8_ctype_locale_impl();
+
     if (!callbacks.begin_slice)
         callbacks.begin_slice = [](uint64_t) {};
     if (!callbacks.write_chunk)
@@ -758,7 +764,26 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
     archive_write_free(tmp);
 
     std::optional<uint64_t> current_slice;
-    uint64_t emitted_slices = 0;
+    std::atomic<uint64_t> emitted_slices{0};
+
+    auto print_planned_progress = [&] {
+        cerr << format("\rplanned entries={} in={} out={} slices={}  ",
+                       stats.walked_entries.load(std::memory_order_relaxed),
+                       neotape::humanize_number(static_cast<size_t>(
+                           stats.input_bytes.load(std::memory_order_relaxed))),
+                       neotape::humanize_number(static_cast<size_t>(
+                           stats.output_bytes.load(std::memory_order_relaxed))),
+                       emitted_slices.load(std::memory_order_relaxed));
+    };
+
+    std::thread stats_thread([&] {
+        while (!stats.done.load(std::memory_order_relaxed)) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (stats.done.load(std::memory_order_relaxed))
+                break;
+            print_planned_progress();
+        }
+    });
 
     auto emit_entry = [&](archive_entry *entry, uint64_t slice) {
         if (!entry)
@@ -810,7 +835,7 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
                 callbacks.end_slice(*current_slice);
             current_slice = planned.slice;
             callbacks.begin_slice(*current_slice);
-            ++emitted_slices;
+            emitted_slices.fetch_add(1, std::memory_order_relaxed);
         }
 
         archive_entry *entry = planned_entry_from_path(disk, planned.path);
@@ -836,6 +861,11 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
 
     archive_entry_linkresolver_free(resolver);
     archive_read_free(disk);
+    stats.done.store(true, std::memory_order_relaxed);
+    if (stats_thread.joinable())
+        stats_thread.join();
+    print_planned_progress();
+    cerr << "\n";
 
     std::array<uint8_t, BLAKE3_OUT_LEN> hash{};
     blake3_hasher_finalize(&hasher, hash.data(), hash.size());
@@ -846,13 +876,15 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
         .input_bytes = stats.input_bytes.load(std::memory_order_relaxed),
         .output_bytes = stats.output_bytes.load(std::memory_order_relaxed),
         .walked_entries = stats.walked_entries.load(std::memory_order_relaxed),
-        .slices = emitted_slices,
+        .slices = emitted_slices.load(std::memory_order_relaxed),
         .blake3_hex = hex,
     };
 }
 
 PaxWriteResult write_pax_archive(const Options &opts,
                                  PaxWriterCallbacks callbacks) {
+    ensure_utf8_ctype_locale_impl();
+
     if (opts.plan_path.has_value())
         return write_planned_pax_archive(opts, std::move(callbacks));
 
@@ -1127,7 +1159,7 @@ PaxWriteResult write_pax_archive(const Options &opts,
             const char *src = archive_entry_sourcepath(entry);
             if (src) {
                 string ap = neotape::archive_path_for_source(spec, src);
-                archive_entry_set_pathname_utf8(entry, ap.c_str());
+                copy_pathname_utf8(entry, ap);
             }
             mark_link_target_as_utf8(entry);
 

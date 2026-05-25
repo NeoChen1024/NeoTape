@@ -72,14 +72,16 @@ bool write_tape_record(TapeDevice &dev, const neotape::HeaderBytes &header,
     return true;
 }
 
-void handle_volume_change(WriterState &state, uint64_t expected_volume_seq_num) {
-    neotape::require_prompt_allowed(state.opts.control);
-
+void handle_volume_change(WriterState &state,
+                          uint64_t expected_volume_seq_num) {
     neotape::VolumePromptRequest req;
     req.archive_uuid = state.archive_uuid;
     req.expected_volume = expected_volume_seq_num;
     req.current_locator = neotape::Locator{"tape", state.opts.device};
     req.write_mode = true;
+
+    state.dev->close();
+    neotape::require_prompt_allowed(state.opts.control);
 
     auto result = neotape::prompt_for_volume_change(req);
     if (result.choice == neotape::VolumePromptChoice::abort)
@@ -87,7 +89,8 @@ void handle_volume_change(WriterState &state, uint64_t expected_volume_seq_num) 
     if (result.choice == neotape::VolumePromptChoice::change_locator) {
         if (!result.replacement_locator ||
             result.replacement_locator->kind != "tape")
-            throw std::runtime_error("replacement locator must be tape:<device>");
+            throw std::runtime_error(
+                "replacement locator must be tape:<device>");
         state.opts.device = result.replacement_locator->locator;
         state.owned_dev = std::make_unique<TapeDevice>(state.opts.device, true);
         state.dev = state.owned_dev.get();
@@ -99,6 +102,12 @@ void handle_volume_change(WriterState &state, uint64_t expected_volume_seq_num) 
     }
     if (result.choice != neotape::VolumePromptChoice::continue_current)
         throw std::runtime_error("unsupported volume prompt choice");
+
+    state.dev->reopen();
+    state.dev->configure_preferred_variable_block_mode(
+        state.opts.volume_block_size, "neotape-write archive records",
+        std::cerr);
+    state.dev->rewind();
 }
 
 // ====================== Volume + Frame Writers ===================

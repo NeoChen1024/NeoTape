@@ -166,6 +166,7 @@ void init_tape(const Options &opts) {
             // Not a valid NeoTape header — proceed with init
         }
     }
+    dev.rewind();
 
     // Write Medium Header
     neotape::MediumHeader mh;

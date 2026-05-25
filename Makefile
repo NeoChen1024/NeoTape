@@ -2,8 +2,8 @@ CC	= cc
 CXX	= c++
 .DEFAULT_GOAL := all
 INCS	= -Iinclude -Itests -Llib -I/usr/local/include -Lusr/local/lib
-CFLAGS	= -O3 -flto -g -Wall -Wextra -pipe -fPIE -fPIC -std=c17 -march=native -pedantic $(INCS)
-CXXFLAGS= -O3 -flto -g -Wall -Wextra -pipe -fPIE -fPIC -std=c++20 -march=native -pedantic $(INCS)
+CFLAGS	= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c17 -march=native -pedantic $(INCS)
+CXXFLAGS= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c++20 -march=native -pedantic $(INCS)
 LDLIBS	= lib/libb3sum.a lib/libcrc32c.a -larchive
 EXE	= bin/mt-pax bin/neotape bin/neotape-write bin/neotape-inspect bin/neotape-plan bin/neotape-cat-volumes bin/test_tape bin/test_cli bin/test_restore_validation bin/neotape-init
 BINDIR	= bin
@@ -41,7 +41,7 @@ CLANG_TIDY_FILES = $(filter-out src/neotape_format_generated.cpp, $(wildcard src
 $(GENERATED_HPP) $(GENERATED_CPP): $(GENERATOR) scripts/neotape_header_defs.py
 	python3 $(GENERATOR)
 
-.PHONY: all clean countline format test test_pax_cli test_tape_backup_wiring test_file_backed_tape generate tidy
+.PHONY: all clean countline format test test_pax_cli test_tape_backup_wiring test_inspect_diagnostic test_file_backed_tape generate tidy
 
 all: ${EXE}
 
@@ -75,14 +75,14 @@ $(FORMAT_GEN_OBJ): $(GENERATED_CPP) $(GENERATED_HPP) Makefile
 $(BINDIR)/neotape-write : src/neotape_write.cpp $(CLI_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) $(PAX_WRITER_OBJ) $(BOUNDEDBUF_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(TAPE_WRITER_OBJ) $(PAX_WRITER_OBJ) $(BOUNDEDBUF_OBJ) -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-inspect : src/neotape_inspect.cpp $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/neotape-inspect : src/neotape_inspect.cpp $(CLI_OBJ) $(TAPE_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) $(TAPE_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) -o $@ $(LDLIBS)
 
 $(BINDIR)/neotape-plan : src/neotape_plan.cpp $(COMMON_OBJ) Makefile | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(COMMON_OBJ) -o $@
 
-$(BINDIR)/neotape-cat-volumes : src/neotape_cat_volumes.cpp $(CLI_OBJ) src/neotape_reader.o $(RESTORE_VALIDATION_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) src/neotape_reader.o $(RESTORE_VALIDATION_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/neotape-cat-volumes : src/neotape_cat_volumes.cpp $(CLI_OBJ) src/neotape_reader.o $(RESTORE_VALIDATION_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(CLI_OBJ) src/neotape_reader.o $(RESTORE_VALIDATION_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(NAV_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
 # neotape-init
 $(BINDIR)/neotape-init : src/neotape_init.cpp $(CLI_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(TAPE_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
@@ -98,12 +98,13 @@ $(BINDIR)/test_cli : tests/test_cli.cpp $(CLI_OBJ) Makefile | $(BINDIR)
 $(BINDIR)/test_restore_validation : tests/test_restore_validation.cpp $(RESTORE_VALIDATION_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(RESTORE_VALIDATION_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
-test: $(BINDIR)/test_tape $(BINDIR)/test_cli $(BINDIR)/test_restore_validation $(BINDIR)/neotape
+test: $(BINDIR)/test_tape $(BINDIR)/test_cli $(BINDIR)/test_restore_validation $(BINDIR)/neotape $(BINDIR)/neotape-inspect
 	$(BINDIR)/test_tape
 	$(BINDIR)/test_cli
 	$(BINDIR)/test_restore_validation
 	sh tests/smoke_restore_validation.sh
 	sh tests/smoke_pax_backup_restore.sh
+	sh tests/smoke_inspect_diagnostic.sh
 	sh tests/smoke_tape_backup_wiring.sh
 
 test_pax_cli: $(BINDIR)/neotape
@@ -111,6 +112,9 @@ test_pax_cli: $(BINDIR)/neotape
 
 test_tape_backup_wiring: $(BINDIR)/neotape
 	sh tests/smoke_tape_backup_wiring.sh
+
+test_inspect_diagnostic: $(BINDIR)/neotape $(BINDIR)/neotape-inspect
+	sh tests/smoke_inspect_diagnostic.sh
 
 $(BINDIR)/% : src/%.c Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)

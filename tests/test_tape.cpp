@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fcntl.h>
+#include <stdexcept>
+#include <string>
 #include <sstream>
 #include <unistd.h>
 #include <utility>
@@ -51,6 +53,78 @@ protected:
 private:
     bool at_blank_eod_ = false;
     bool eio_after_eod_ = false;
+};
+
+class MediumOnlyTapeDevice final : public mt::TapeDevice {
+public:
+    MediumOnlyTapeDevice() : TapeDevice(make_fd(), "/dev/test-medium-only", true) {
+        neotape::MediumHeader mh;
+        mh.medium_uuid = "11111111-2222-3333-4444-555555555555";
+        mh.medium_label = "empty-medium";
+        mh.initialized_at_utc = "2026-05-25T00:00:00Z";
+        mh.medium_header_block_size = 4096;
+        mh.medium_header_block_count = 1;
+        mh.created_by_implementation = "test";
+
+        auto bytes = neotape::serialize_medium_header(mh);
+        std::vector<uint8_t> record(mh.medium_header_block_size, 0);
+        std::memcpy(record.data(), bytes.data(), bytes.size());
+        if (::write(fd(), record.data(), record.size()) !=
+            static_cast<ssize_t>(record.size()))
+            throw std::runtime_error("write medium-only test record");
+        if (::lseek(fd(), 0, SEEK_SET) < 0)
+            throw std::runtime_error("rewind medium-only test record");
+    }
+
+protected:
+    void do_mtop(int op, int count) override {
+        if (op == mt::MTEOM) {
+            at_eod_ = true;
+            file_no_ = 1;
+            if (::lseek(fd(), 0, SEEK_END) < 0)
+                throw mt::Error(device_path(), "lseek", errno);
+            return;
+        }
+        if (op == mt::MTBSFM) {
+            if (count > 1)
+                throw mt::Error(device_path(), "filemark spacing", EIO);
+            at_eod_ = false;
+            file_no_ = 0;
+            if (::lseek(fd(), 0, SEEK_SET) < 0)
+                throw mt::Error(device_path(), "lseek", errno);
+            return;
+        }
+        if (op == mt::MTREW) {
+            at_eod_ = false;
+            file_no_ = 0;
+            if (::lseek(fd(), 0, SEEK_SET) < 0)
+                throw mt::Error(device_path(), "lseek", errno);
+            return;
+        }
+        throw mt::Error(device_path(), "mtop", ENOTSUP);
+    }
+
+    mt::Status do_status() override {
+        long gstat = mt::GMT_ONLINE;
+        if (file_no_ == 0 && !at_eod_)
+            gstat |= mt::GMT_BOT;
+        if (at_eod_)
+            gstat |= mt::GMT_EOD | mt::GMT_EOF;
+        return mt::Status(0, 0, 0, gstat, 0, file_no_, at_eod_ ? -1 : 0);
+    }
+
+private:
+    static int make_fd() {
+        char path[] = "/tmp/neotape-medium-only-test-XXXXXX";
+        int fd = ::mkstemp(path);
+        if (fd < 0)
+            throw std::runtime_error("mkstemp medium-only test");
+        ::unlink(path);
+        return fd;
+    }
+
+    bool at_eod_ = false;
+    int file_no_ = 0;
 };
 
 class BlockModeTapeDevice final : public mt::TapeDevice {
@@ -97,6 +171,21 @@ protected:
 
 private:
     int fd_ = -1;
+};
+
+class BaseFdFullTapeDevice final : public mt::TapeDevice {
+public:
+    BaseFdFullTapeDevice()
+        : TapeDevice(::open("/dev/full", O_WRONLY | O_CLOEXEC), "/dev/full",
+                     true) {
+    }
+
+protected:
+    void do_mtop(int op, int) override {
+        if (op == mt::MTSETBLK || op == mt::MTREW || op == mt::MTWEOF)
+            return;
+        throw mt::Error(device_path(), "mtop", ENOTSUP);
+    }
 };
 
 } // namespace
@@ -166,7 +255,17 @@ int main() {
                dev.ops()[1] == std::pair<int, int>{mt::MTSETBLK, 1048576}),
               "fixed block fallback tries MTSETBLK 0 then fixed size");
         CHECK(warnings.str().find("falling back to fixed block mode") != std::string::npos,
-              "fixed block fallback emits warning");
+               "fixed block fallback emits warning");
+    }
+
+    // --- Test 0d: initialized empty tape is appendable ---
+    {
+        MediumOnlyTapeDevice dev;
+        mt::nav::TapeNavigator nav(dev);
+        auto result = nav.locate_append_position();
+
+        CHECK(result.ok && !result.last_header,
+              "medium-header-only tape is accepted for first archive append");
     }
 
     // --- Test 8: spool backend writes the new single-root .nts layout ---
@@ -323,6 +422,32 @@ int main() {
                     std::string::npos;
         }
         CHECK(threw, "writer control=none fails instead of prompting");
+    }
+
+    // --- Test 11: writer closes tape fd before volume-change prompt path ---
+    {
+        BaseFdFullTapeDevice dev;
+        CHECK(dev.fd() >= 0, "opened base fd /dev/full for close-before-prompt test");
+
+        mt::TapeWriterOptions opts;
+        opts.device = "/dev/full";
+        opts.archive_name = "close-before-prompt";
+        opts.volume_block_size = 4096;
+        opts.payload_profile = "pax";
+        opts.init_mode = true;
+        opts.control = neotape::ControlPolicy::none;
+
+        bool threw = false;
+        try {
+            mt::write_tape_archive_from_chunks_to_device(
+                dev, opts, [](mt::TapeChunkWriter) {});
+        } catch (const std::exception &e) {
+            threw = std::string(e.what()).find("volume change required") !=
+                    std::string::npos;
+        }
+        CHECK(threw, "close-before-prompt test reached volume-change path");
+        CHECK(dev.fd() < 0,
+              "writer closes current tape device before volume-change prompt");
     }
 
     fprintf(stderr, "\n%d failure(s)\n", failures);

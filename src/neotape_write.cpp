@@ -66,6 +66,9 @@ struct BackupOptions {
     std::optional<string> chdir_dir;
     std::optional<fs::path> plan_path;
     vector<fs::path> sources;
+    size_t output_buf_size = 64UL * 1024 * 1024;
+    unsigned buffer_percent = 0;
+    unsigned io_thread = 1;
 };
 
 struct WriterState {
@@ -283,7 +286,9 @@ void backup_usage() {
                  "[path ...]\n"
                  "       neotape backup --target <locator> -p <plan>\n"
                  "       [--name <name>] [--volume-block-size <bytes>] "
-                 "[--control=auto|none]\n";
+                 "[--control=auto|none]\n"
+                 "       [-P <buffer-percent>] [-B <bytes>] [-T <N>] "
+                 "[--output-buffer-size <bytes>] [--io-thread <N>]\n";
 }
 
 BackupOptions parse_backup_args(int argc, char **argv) {
@@ -294,6 +299,9 @@ BackupOptions parse_backup_args(int argc, char **argv) {
         {"control", required_argument, nullptr, 'c'},
         {"plan", required_argument, nullptr, 'p'},
         {"directory", required_argument, nullptr, 'C'},
+        {"buffer-percent", required_argument, nullptr, 'P'},
+        {"output-buffer-size", required_argument, nullptr, 'B'},
+        {"io-thread", required_argument, nullptr, 'T'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
@@ -302,7 +310,8 @@ BackupOptions parse_backup_args(int argc, char **argv) {
     bool saw_chdir = false;
     int c;
     optind = 1;
-    while ((c = getopt_long(argc, argv, "C:p:", long_opts, nullptr)) != -1) {
+    while ((c = getopt_long(argc, argv, "C:p:P:B:T:", long_opts, nullptr)) !=
+           -1) {
         switch (c) {
         case 't':
             opts.target = neotape::parse_locator(optarg);
@@ -327,6 +336,26 @@ BackupOptions parse_backup_args(int argc, char **argv) {
             saw_chdir = true;
             opts.chdir_dir = optarg;
             break;
+        case 'P': {
+            char *end = nullptr;
+            unsigned long n = std::strtoul(optarg, &end, 10);
+            if (end == optarg || *end != '\0' || n > 100)
+                fail("-P requires a percent from 0 to 100");
+            opts.buffer_percent = static_cast<unsigned>(n);
+            break;
+        }
+        case 'B':
+            opts.output_buf_size = static_cast<size_t>(
+                neotape::parse_size(optarg, "output buffer size"));
+            break;
+        case 'T': {
+            char *end = nullptr;
+            unsigned long n = std::strtoul(optarg, &end, 10);
+            if (end == optarg || *end != '\0')
+                fail("--io-thread requires a number");
+            opts.io_thread = static_cast<unsigned>(n);
+            break;
+        }
         case 'h':
             backup_usage();
             std::exit(0);
@@ -799,10 +828,24 @@ void run_spool_pax_backup(const BackupOptions &backup) {
         pax.output_name = "-";
         pax.plan_path = backup.plan_path;
         pax.chdir_dir = backup.chdir_dir;
+        pax.output_buf_size = backup.output_buf_size;
+        pax.buffer_percent = backup.buffer_percent;
+        pax.io_thread = backup.io_thread;
         for (const auto &source : backup.sources)
             pax.sources.push_back(source.string());
 
         bool slice_open = false;
+        vector<uint8_t> pending_chunk;
+        size_t frame_payload_capacity =
+            backup.volume_block_size - neotape::fixed_header_size;
+        auto flush_pending = [&](bool end_slice) {
+            if (pending_chunk.empty()) {
+                writer(nullptr, 0, end_slice);
+                return;
+            }
+            writer(pending_chunk.data(), pending_chunk.size(), end_slice);
+            pending_chunk.clear();
+        };
         neotape::PaxWriterCallbacks callbacks;
         callbacks.begin_slice = [&](uint64_t) {
             if (slice_open)
@@ -814,10 +857,19 @@ void run_spool_pax_backup(const BackupOptions &backup) {
             if (!slice_open)
                 callbacks.begin_slice(chunk.slice);
             auto *data = reinterpret_cast<const uint8_t *>(chunk.bytes.data());
-            writer(data, chunk.bytes.size(), false);
+            size_t offset = 0;
+            while (offset < chunk.bytes.size()) {
+                if (pending_chunk.size() == frame_payload_capacity)
+                    flush_pending(false);
+                size_t room = frame_payload_capacity - pending_chunk.size();
+                size_t take = std::min(room, chunk.bytes.size() - offset);
+                pending_chunk.insert(pending_chunk.end(), data + offset,
+                                     data + offset + take);
+                offset += take;
+            }
         };
         callbacks.end_slice = [&](uint64_t) {
-            writer(nullptr, 0, true);
+            flush_pending(true);
             slice_open = false;
         };
 
@@ -843,10 +895,24 @@ void run_tape_pax_backup(const BackupOptions &backup) {
         pax.output_name = "-";
         pax.plan_path = backup.plan_path;
         pax.chdir_dir = backup.chdir_dir;
+        pax.output_buf_size = backup.output_buf_size;
+        pax.buffer_percent = backup.buffer_percent;
+        pax.io_thread = backup.io_thread;
         for (const auto &source : backup.sources)
             pax.sources.push_back(source.string());
 
         bool slice_open = false;
+        vector<uint8_t> pending_chunk;
+        size_t frame_payload_capacity =
+            backup.volume_block_size - neotape::fixed_header_size;
+        auto flush_pending = [&](bool end_slice) {
+            if (pending_chunk.empty()) {
+                writer(nullptr, 0, end_slice);
+                return;
+            }
+            writer(pending_chunk.data(), pending_chunk.size(), end_slice);
+            pending_chunk.clear();
+        };
         neotape::PaxWriterCallbacks callbacks;
         callbacks.begin_slice = [&](uint64_t) {
             if (slice_open)
@@ -858,10 +924,19 @@ void run_tape_pax_backup(const BackupOptions &backup) {
             if (!slice_open)
                 callbacks.begin_slice(chunk.slice);
             auto *data = reinterpret_cast<const uint8_t *>(chunk.bytes.data());
-            writer(data, chunk.bytes.size(), false);
+            size_t offset = 0;
+            while (offset < chunk.bytes.size()) {
+                if (pending_chunk.size() == frame_payload_capacity)
+                    flush_pending(false);
+                size_t room = frame_payload_capacity - pending_chunk.size();
+                size_t take = std::min(room, chunk.bytes.size() - offset);
+                pending_chunk.insert(pending_chunk.end(), data + offset,
+                                     data + offset + take);
+                offset += take;
+            }
         };
         callbacks.end_slice = [&](uint64_t) {
-            writer(nullptr, 0, true);
+            flush_pending(true);
             slice_open = false;
         };
 

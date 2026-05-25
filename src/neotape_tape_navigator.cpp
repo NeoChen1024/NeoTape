@@ -39,6 +39,15 @@ AppendResult TapeNavigator::locate_append_position(AppendPolicy policy) {
     try {
         dev_.space_bwd_filemark(2);
     } catch (const Error &) {
+        try {
+            dev_.rewind();
+            auto header = read_current_header();
+            if (header && header->type == neotape::HeaderType::medium) {
+                dev_.space_to_eod();
+                return {true, TapeCondition::has_valid_tail, std::nullopt};
+            }
+        } catch (const Error &) {
+        }
         return {false, TapeCondition::has_corrupt_tail, std::nullopt};
     }
 

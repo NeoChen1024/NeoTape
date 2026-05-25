@@ -245,6 +245,21 @@ TapeDevice &TapeDevice::operator=(TapeDevice &&other) noexcept {
     return *this;
 }
 
+void TapeDevice::close() {
+    if (fd_ >= 0) {
+        ::close(fd_);
+        fd_ = -1;
+    }
+}
+
+void TapeDevice::reopen() {
+    close();
+    int oflags = read_write_ ? O_RDWR : O_RDONLY;
+    fd_ = ::open(device_path_.c_str(), oflags | O_NONBLOCK);
+    if (fd_ < 0)
+        throw Error(device_path_, "open", errno);
+}
+
 // -- low-level ioctl dispatch ------------------------------------------
 
 void TapeDevice::do_mtop(int op, int count) {
