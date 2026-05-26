@@ -285,6 +285,34 @@ bool process_volume(neotape::VirtualTapeReader &vol, VolumeReadState &rs,
     return false;
 }
 
+neotape::Locator request_next_volume(const Options &opts, OutputSink &sink,
+                                     const neotape::Locator &current,
+                                     const VolumeReadState &rs) {
+    sink.flush();
+    neotape::require_prompt_allowed(opts.control);
+
+    neotape::VolumePromptRequest req;
+    req.archive_uuid = rs.validation.archive_uuid;
+    req.expected_volume = rs.validation.expected_volume_seq_num;
+    req.current_locator = current;
+    req.write_mode = false;
+
+    auto result = neotape::prompt_for_volume_change(req);
+    if (result.choice == neotape::VolumePromptChoice::abort)
+        fail("volume change aborted by user");
+    if (result.choice == neotape::VolumePromptChoice::change_locator) {
+        if (!result.replacement_locator)
+            fail("replacement locator required");
+        if (result.replacement_locator->kind != current.kind)
+            fail(format("replacement locator must be {}:<locator>",
+                        current.kind));
+        return *result.replacement_locator;
+    }
+    if (result.choice != neotape::VolumePromptChoice::continue_current)
+        fail("unsupported volume prompt choice");
+    return current;
+}
+
 // ====================== List Archives =============================
 
 struct ArchiveEntry {
@@ -481,49 +509,35 @@ ListOptions parse_list_args(int argc, char **argv) {
 }
 
 void run_cat_volumes(const Options &opts) {
-    SpoolOrchestrator orch(opts.spool_dir);
-
-    if (opts.list_mode) {
-        list_archives(orch);
-        return;
-    }
-
+    neotape::Locator current{"spool", opts.spool_dir};
     auto sink = create_sink(opts);
     VolumeReadState rs{};
     rs.sink = sink.get();
+    uint64_t total_volumes = 0;
 
-    bool found_archive_end = false;
+    while (true) {
+        SpoolOrchestrator orch(current.locator);
 
-    while (auto vol = orch.next_volume()) {
-        found_archive_end = process_volume(*vol, rs, vol->volume_header());
+        if (opts.list_mode) {
+            list_archives(orch);
+            return;
+        }
+
+        auto vol = orch.next_volume();
+        if (!vol)
+            fail("no volume found in spool source");
+        ++total_volumes;
+
+        bool found_archive_end = process_volume(*vol, rs, vol->volume_header());
         if (found_archive_end)
             break;
+        if (rs.validation.slice_open)
+            fail("archive incomplete: volume ended with open slice");
 
-        if (opts.prompt) {
-            sink->flush();
-            std::cerr << format("neotape read: end of tape-{:06}, ",
-                                vol->volume_seq_num());
-            std::cerr << "mount next volume and press Enter [q to quit]: ";
-            std::string line;
-            std::getline(std::cin, line);
-            if (line == "q")
-                fail("aborted by user");
-        }
-    }
-
-    if (!found_archive_end) {
-        neotape::require_prompt_allowed(opts.control);
-        fail("archive incomplete: no Archive End Header found");
+        current = request_next_volume(opts, *sink, current, rs);
     }
 
     sink->flush();
-
-    uint64_t total_volumes = 0;
-    {
-        SpoolOrchestrator count_orch(opts.spool_dir);
-        while (count_orch.next_volume())
-            ++total_volumes;
-    }
 
     std::cerr << format(
         "neotape read: ok volumes={} slices={} frames={}\n",
@@ -532,46 +546,32 @@ void run_cat_volumes(const Options &opts) {
 }
 
 void run_tape_device_restore(const Options &opts, const string &locator) {
-    auto device = std::make_unique<mt::TapeDevice>(locator, false);
+    neotape::Locator current{"tape", locator};
     auto sink = create_sink(opts);
     VolumeReadState rs{};
     rs.sink = sink.get();
+    uint64_t total_volumes = 0;
 
-    bool found_archive_end = false;
     while (true) {
+        auto device = std::make_unique<mt::TapeDevice>(current.locator, false);
         {
             neotape::TapeDeviceVolumeReader vol(*device);
-            found_archive_end = process_volume(vol, rs, vol.volume_header());
+            ++total_volumes;
+            bool found_archive_end = process_volume(vol, rs, vol.volume_header());
             if (found_archive_end)
                 break;
             if (rs.validation.slice_open)
                 fail("archive incomplete: volume ended with open slice");
         }
 
-        neotape::VolumePromptRequest req;
-        req.archive_uuid = rs.validation.archive_uuid;
-        req.expected_volume = rs.validation.expected_volume_seq_num;
-        req.current_locator = neotape::Locator{"tape", device->device_path()};
-        req.write_mode = false;
         device->close();
-        neotape::require_prompt_allowed(opts.control);
-        auto result = neotape::prompt_for_volume_change(req);
-        if (result.choice == neotape::VolumePromptChoice::abort)
-            fail("volume change aborted by user");
-        if (result.choice == neotape::VolumePromptChoice::change_locator) {
-            if (!result.replacement_locator ||
-                result.replacement_locator->kind != "tape")
-                fail("replacement locator must be tape:<device>");
-            device = std::make_unique<mt::TapeDevice>(
-                result.replacement_locator->locator, false);
-        } else {
-            device->reopen();
-        }
+        current = request_next_volume(opts, *sink, current, rs);
     }
 
     sink->flush();
     std::cerr << format(
-        "neotape restore: ok volumes=1 slices={} frames={}\n",
+        "neotape restore: ok volumes={} slices={} frames={}\n",
+        total_volumes,
         rs.validation.expected_logical_slice_seq_num - 1,
         rs.validation.expected_global_frame_seq_num - 1);
 }
@@ -580,12 +580,16 @@ void run_tape_device_restore(const Options &opts, const string &locator) {
 
 int neotape_read_main(int argc, char **argv) {
     try {
-        auto raw = parse_raw_read_args(argc, argv);
+        auto raw = parse_raw_read_args(argc, argv, true);
         Options opts;
-        opts.spool_dir = raw.source.locator;
         opts.output = raw.output;
         opts.control = raw.control;
-        run_cat_volumes(opts);
+        if (raw.source.kind == "tape") {
+            run_tape_device_restore(opts, raw.source.locator);
+        } else {
+            opts.spool_dir = raw.source.locator;
+            run_cat_volumes(opts);
+        }
         return 0;
     } catch (const std::exception &e) {
         std::cerr << format("neotape read: {}\n", e.what());

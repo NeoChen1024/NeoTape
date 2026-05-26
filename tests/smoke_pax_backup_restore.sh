@@ -15,10 +15,13 @@ missing_spool=/tmp/neotape-missing-volume.spool
 missing_in=/tmp/neotape-missing-volume.in
 missing_out=/tmp/neotape-missing-volume.out
 missing_err=/tmp/neotape-missing-volume.err
+missing_restore_out=/tmp/neotape-missing-volume-restore.out
+missing_restore_err=/tmp/neotape-missing-volume-restore.err
 
 rm -rf "$root" "$spool" "$archive" "$out" "$list_json" "$planned_spool" \
     "$planned_archive" "$planned_out" "$plan" "$planned_backup_err" "$missing_spool" \
-    "$missing_in" "$missing_out" "$missing_err"
+    "$missing_in" "$missing_out" "$missing_err" "$missing_restore_out" \
+    "$missing_restore_err"
 mkdir -p "$root/src/dir" "$out"
 printf 'hello pax\n' > "$root/src/dir/file.txt"
 printf 'planned pax\n' > "$root/src/dir/planned.txt"
@@ -82,3 +85,9 @@ if bin/neotape read --source "spool:$missing_spool" --output "$missing_out" \
     exit 1
 fi
 grep -q 'volume change required but --control=none is set' "$missing_err"
+if bin/neotape restore --source "spool:$missing_spool" --output "$missing_restore_out" \
+    --control=none 2>"$missing_restore_err"; then
+    printf 'expected restore with missing continuation volume to fail\n' >&2
+    exit 1
+fi
+grep -q 'volume change required but --control=none is set' "$missing_restore_err"

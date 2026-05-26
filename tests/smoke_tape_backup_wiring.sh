@@ -27,6 +27,19 @@ fi
 
 grep -q "$dir" "$err"
 
+if bin/neotape read --source "tape:$dir" --output /tmp/neotape-tape-read-wiring.raw \
+    2>"$err"; then
+    printf 'expected tape read against a directory to fail\n' >&2
+    exit 1
+fi
+
+if grep -q 'read currently supports spool' "$err"; then
+    printf 'tape read is still blocked at CLI layer\n' >&2
+    exit 1
+fi
+
+grep -q "$dir" "$err"
+
 if bin/neotape restore --source "tape:$dir" --output /tmp/neotape-tape-backup-wiring.tar \
     2>"$err"; then
     printf 'expected tape restore against a directory to fail\n' >&2
