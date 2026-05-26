@@ -531,8 +531,6 @@ void run_cat_volumes(const Options &opts) {
         bool found_archive_end = process_volume(*vol, rs, vol->volume_header());
         if (found_archive_end)
             break;
-        if (rs.validation.slice_open)
-            fail("archive incomplete: volume ended with open slice");
 
         current = request_next_volume(opts, *sink, current, rs);
     }
@@ -560,8 +558,6 @@ void run_tape_device_restore(const Options &opts, const string &locator) {
             bool found_archive_end = process_volume(vol, rs, vol.volume_header());
             if (found_archive_end)
                 break;
-            if (rs.validation.slice_open)
-                fail("archive incomplete: volume ended with open slice");
         }
 
         device->close();

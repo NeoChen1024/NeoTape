@@ -17,11 +17,16 @@ missing_out=/tmp/neotape-missing-volume.out
 missing_err=/tmp/neotape-missing-volume.err
 missing_restore_out=/tmp/neotape-missing-volume-restore.out
 missing_restore_err=/tmp/neotape-missing-volume-restore.err
+open_slice_spool=/tmp/neotape-open-slice-volume.spool
+open_slice_in=/tmp/neotape-open-slice-volume.in
+open_slice_out=/tmp/neotape-open-slice-volume.out
+open_slice_err=/tmp/neotape-open-slice-volume.err
 
 rm -rf "$root" "$spool" "$archive" "$out" "$list_json" "$planned_spool" \
     "$planned_archive" "$planned_out" "$plan" "$planned_backup_err" "$missing_spool" \
     "$missing_in" "$missing_out" "$missing_err" "$missing_restore_out" \
-    "$missing_restore_err"
+    "$missing_restore_err" "$open_slice_spool" "$open_slice_in" \
+    "$open_slice_out" "$open_slice_err"
 mkdir -p "$root/src/dir" "$out"
 printf 'hello pax\n' > "$root/src/dir/file.txt"
 printf 'planned pax\n' > "$root/src/dir/planned.txt"
@@ -91,3 +96,24 @@ if bin/neotape restore --source "spool:$missing_spool" --output "$missing_restor
     exit 1
 fi
 grep -q 'volume change required but --control=none is set' "$missing_restore_err"
+
+dd if=/dev/zero of="$open_slice_in" bs=1024 count=20 2>/dev/null
+bin/neotape init "spool:$open_slice_spool" --label OPEN --virtual-tape-size 64M >/dev/null
+bin/neotape write --target "spool:$open_slice_spool" --input "$open_slice_in" \
+    --volume-block-size 4096 --name open-slice >/dev/null
+dd if="$open_slice_spool/tape-file-000002.slice-000001.nts" \
+    of="$open_slice_spool/tape-file-000002.slice-000001.nts.tmp" \
+    bs=4096 count=1 2>/dev/null
+mv "$open_slice_spool/tape-file-000002.slice-000001.nts.tmp" \
+    "$open_slice_spool/tape-file-000002.slice-000001.nts"
+rm -f "$open_slice_spool/tape-file-000003.archive-end.nts"
+if bin/neotape restore --source "spool:$open_slice_spool" --output "$open_slice_out" \
+    --control=none 2>"$open_slice_err"; then
+    printf 'expected restore with open slice continuation volume to fail\n' >&2
+    exit 1
+fi
+grep -q 'volume change required but --control=none is set' "$open_slice_err"
+if grep -q 'volume ended with open slice' "$open_slice_err"; then
+    printf 'open slice volume boundary bypassed volume changer\n' >&2
+    exit 1
+fi
