@@ -171,27 +171,30 @@ void write_content_frame(WriterState &state, const vector<uint8_t> &payload,
         blake3_hasher_finalize(&state.slice_hasher, slice_hash.data(),
                                slice_hash.size());
 
-    neotape::FrameHeader fh;
-    fh.volume_block_size = state.opts.volume_block_size;
-    fh.archive_uuid = state.archive_uuid;
-    fh.archive_name = state.opts.archive_name;
-    fh.volume_seq_num = state.volume_seq_num;
-    fh.logical_slice_seq_num = state.logical_slice_seq_num;
-    fh.global_frame_seq_num = state.global_frame_seq_num;
-    fh.frame_seq_num_within_slice = state.frame_seq_num_within_slice;
-    fh.frame_payload_size = payload.size();
-    fh.frame_payload_blake3 = payload_hash;
-    uint16_t flags = 0;
-    if (state.frame_seq_num_within_slice == 1)
-        flags |= neotape::frame_flag_start;
-    if (end) {
-        fh.slice_content_size = state.current_slice_size;
-        fh.slice_content_blake3 = slice_hash;
-        flags |= neotape::frame_flag_end;
-    }
-    fh.flags = flags;
+    auto make_header = [&] {
+        neotape::FrameHeader fh;
+        fh.volume_block_size = state.opts.volume_block_size;
+        fh.archive_uuid = state.archive_uuid;
+        fh.archive_name = state.opts.archive_name;
+        fh.volume_seq_num = state.volume_seq_num;
+        fh.logical_slice_seq_num = state.logical_slice_seq_num;
+        fh.global_frame_seq_num = state.global_frame_seq_num;
+        fh.frame_seq_num_within_slice = state.frame_seq_num_within_slice;
+        fh.frame_payload_size = payload.size();
+        fh.frame_payload_blake3 = payload_hash;
+        uint16_t flags = 0;
+        if (state.frame_seq_num_within_slice == 1)
+            flags |= neotape::frame_flag_start;
+        if (end) {
+            fh.slice_content_size = state.current_slice_size;
+            fh.slice_content_blake3 = slice_hash;
+            flags |= neotape::frame_flag_end;
+        }
+        fh.flags = flags;
+        return neotape::serialize_frame_header(fh);
+    };
 
-    auto bytes = neotape::serialize_frame_header(fh);
+    auto bytes = make_header();
     while (!write_tape_record(*state.dev, bytes, &payload,
                               state.opts.volume_block_size)) {
         handle_volume_change(state, state.volume_seq_num + 1);
@@ -200,6 +203,7 @@ void write_content_frame(WriterState &state, const vector<uint8_t> &payload,
         write_volume_header(state);
         state.slice_open = saved_slice_open;
         state.logical_slice_seq_num = saved_logical_slice_seq_num;
+        bytes = make_header();
     }
 
     if (end) {
@@ -209,21 +213,25 @@ void write_content_frame(WriterState &state, const vector<uint8_t> &payload,
 }
 
 void write_archive_end(WriterState &state) {
-    neotape::ArchiveEndHeader ae;
-    ae.volume_block_size = state.opts.volume_block_size;
-    ae.archive_uuid = state.archive_uuid;
-    ae.archive_name = state.opts.archive_name;
-    ae.volume_seq_num = state.volume_seq_num;
-    ae.last_logical_slice_seq_num = state.logical_slice_seq_num;
-    ae.last_global_frame_seq_num = state.global_frame_seq_num;
-    ae.created_by_implementation = "NeoTape reference writer phase6-mvp";
-    ae.archive_end_at_utc = neotape::utc_timestamp_now();
+    auto make_header = [&] {
+        neotape::ArchiveEndHeader ae;
+        ae.volume_block_size = state.opts.volume_block_size;
+        ae.archive_uuid = state.archive_uuid;
+        ae.archive_name = state.opts.archive_name;
+        ae.volume_seq_num = state.volume_seq_num;
+        ae.last_logical_slice_seq_num = state.logical_slice_seq_num;
+        ae.last_global_frame_seq_num = state.global_frame_seq_num;
+        ae.created_by_implementation = "NeoTape reference writer phase6-mvp";
+        ae.archive_end_at_utc = neotape::utc_timestamp_now();
+        return neotape::serialize_archive_end_header(ae);
+    };
 
-    auto bytes = neotape::serialize_archive_end_header(ae);
+    auto bytes = make_header();
     while (!write_tape_record(*state.dev, bytes, nullptr,
                               state.opts.volume_block_size)) {
         handle_volume_change(state, state.volume_seq_num + 1);
         write_volume_header(state);
+        bytes = make_header();
     }
     state.dev->write_filemark();
 }

@@ -11,9 +11,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fcntl.h>
+#include <pty.h>
 #include <stdexcept>
 #include <string>
 #include <sstream>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -284,6 +286,134 @@ protected:
         throw mt::Error(device_path(), "mtop", ENOTSUP);
     }
 };
+
+class RolloverTapeDevice final : public mt::TapeDevice {
+public:
+    RolloverTapeDevice() : TapeDevice(-1, "/dev/null", true) {
+        full_fd_ = ::open("/dev/full", O_WRONLY | O_CLOEXEC);
+        if (full_fd_ < 0)
+            throw std::runtime_error("open /dev/full");
+        open_next_file();
+    }
+
+    ~RolloverTapeDevice() override {
+        if (current_fd_ >= 0)
+            ::close(current_fd_);
+        if (full_fd_ >= 0)
+            ::close(full_fd_);
+        for (const auto &path : files_)
+            ::unlink(path.c_str());
+        if (!current_path_.empty())
+            ::unlink(current_path_.c_str());
+    }
+
+    int fd() const noexcept override {
+        if (fail_next_content_write_) {
+            fail_next_content_write_ = false;
+            return full_fd_;
+        }
+        return current_fd_;
+    }
+
+    const std::vector<std::string> &files() const noexcept { return files_; }
+
+protected:
+    void do_mtop(int op, int) override {
+        if (op == mt::MTSETBLK || op == mt::MTREW)
+            return;
+        if (op == mt::MTWEOF) {
+            finalize_current_file();
+            if (files_.size() == 1)
+                fail_next_content_write_ = true;
+            open_next_file();
+            return;
+        }
+        throw mt::Error(device_path(), "mtop", ENOTSUP);
+    }
+
+private:
+    void open_next_file() {
+        char tmpl[] = "/tmp/neotape-rollover-test-XXXXXX";
+        current_fd_ = ::mkstemp(tmpl);
+        if (current_fd_ < 0)
+            throw std::runtime_error("mkstemp rollover test");
+        current_path_ = tmpl;
+    }
+
+    void finalize_current_file() {
+        if (current_fd_ >= 0) {
+            if (::fsync(current_fd_) < 0)
+                throw std::runtime_error("fsync rollover test");
+            if (::close(current_fd_) < 0)
+                throw std::runtime_error("close rollover test");
+            current_fd_ = -1;
+        }
+        files_.push_back(current_path_);
+        current_path_.clear();
+    }
+
+    int current_fd_ = -1;
+    int full_fd_ = -1;
+    mutable bool fail_next_content_write_ = false;
+    std::string current_path_;
+    std::vector<std::string> files_;
+};
+
+int run_rollover_frame_volume_child() {
+    RolloverTapeDevice dev;
+    mt::TapeWriterOptions opts;
+    opts.device = "/dev/null";
+    opts.archive_name = "rollover-frame-volume";
+    opts.volume_block_size = 4096;
+    opts.payload_profile = "pax";
+    opts.init_mode = true;
+
+    const uint8_t payload[] = {'x'};
+    mt::write_tape_archive_from_chunks_to_device(
+        dev, opts, [&](mt::TapeChunkWriter writer) {
+            writer(payload, sizeof(payload), false);
+            writer(nullptr, 0, true);
+        });
+
+    if (dev.files().size() < 3)
+        return 2;
+
+    std::FILE *file = std::fopen(dev.files()[2].c_str(), "rb");
+    if (file == nullptr)
+        return 3;
+    std::vector<uint8_t> record(opts.volume_block_size);
+    size_t n = std::fread(record.data(), 1, record.size(), file);
+    std::fclose(file);
+    if (n != record.size())
+        return 4;
+    auto parsed = neotape::parse_fixed_header(record.data(), record.size());
+    if (!parsed.frame)
+        return 5;
+    return parsed.frame->volume_seq_num == 2 ? 0 : 6;
+}
+
+bool rollover_frame_volume_test_passes() {
+    int master_fd = -1;
+    pid_t pid = ::forkpty(&master_fd, nullptr, nullptr, nullptr);
+    if (pid < 0)
+        throw std::runtime_error("forkpty rollover test");
+    if (pid == 0) {
+        int rc = run_rollover_frame_volume_child();
+        std::_Exit(rc);
+    }
+
+    const char response[] = "c\n";
+    (void)::write(master_fd, response, sizeof(response) - 1);
+    char buf[256];
+    while (::read(master_fd, buf, sizeof(buf)) > 0) {
+    }
+    ::close(master_fd);
+
+    int status = 0;
+    if (::waitpid(pid, &status, 0) < 0)
+        throw std::runtime_error("waitpid rollover test");
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
 
 } // namespace
 
@@ -619,6 +749,12 @@ int main() {
         CHECK(threw, "close-before-prompt test reached volume-change path");
         CHECK(dev.fd() < 0,
               "writer closes current tape device before volume-change prompt");
+    }
+
+    // --- Test 12: writer regenerates frame headers after volume rollover ---
+    {
+        CHECK(rollover_frame_volume_test_passes(),
+              "writer retries rolled-over frame with new volume sequence");
     }
 
     fprintf(stderr, "\n%d failure(s)\n", failures);
