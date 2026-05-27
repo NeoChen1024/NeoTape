@@ -23,7 +23,7 @@ class VirtualTapeReader {
 
 class SpoolVolumeReader final : public VirtualTapeReader {
   public:
-    explicit SpoolVolumeReader(const std::filesystem::path &volume_dir);
+    explicit SpoolVolumeReader(const std::filesystem::path &root_dir);
     ~SpoolVolumeReader() override;
 
     SpoolVolumeReader(const SpoolVolumeReader &) = delete;
@@ -46,7 +46,7 @@ class SpoolVolumeReader final : public VirtualTapeReader {
     bool open_file(std::size_t index);
     void close_file();
 
-    std::filesystem::path volume_dir_;
+    std::filesystem::path root_dir_;
     std::vector<std::filesystem::path> tape_files_;
     std::size_t file_idx_ = 0;
 

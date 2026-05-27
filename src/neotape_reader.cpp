@@ -17,12 +17,12 @@ namespace neotape {
 namespace fs = std::filesystem;
 using std::size_t;
 
-SpoolVolumeReader::SpoolVolumeReader(const fs::path &volume_dir)
-    : volume_dir_(volume_dir) {
+SpoolVolumeReader::SpoolVolumeReader(const fs::path &root_dir)
+    : root_dir_(root_dir) {
     scan_files();
     if (tape_files_.empty())
         throw std::runtime_error(
-            std::format("no tape files in volume {}", volume_dir.string()));
+            std::format("no tape files in spool root {}", root_dir.string()));
     read_volume_header();
 }
 
@@ -37,7 +37,7 @@ void SpoolVolumeReader::scan_files() {
 
     std::vector<std::pair<uint64_t, fs::path>> indexed;
 
-    for (const auto &entry : fs::directory_iterator(volume_dir_)) {
+    for (const auto &entry : fs::directory_iterator(root_dir_)) {
         if (!entry.is_regular_file())
             continue;
         auto name = entry.path().filename().string();
@@ -138,7 +138,7 @@ void SpoolVolumeReader::read_volume_header() {
     }
 
     throw std::runtime_error(
-        std::format("no volume header found in {}", volume_dir_.string()));
+        std::format("no volume header found in spool root {}", root_dir_.string()));
 }
 
 void SpoolVolumeReader::close_file() {

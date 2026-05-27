@@ -136,26 +136,6 @@ Options parse_args(int argc, char **argv) {
     return opts;
 }
 
-vector<fs::path> sorted_dirs(const fs::path &root) {
-    vector<fs::path> dirs;
-    for (const auto &entry : fs::directory_iterator(root)) {
-        if (entry.is_directory())
-            dirs.push_back(entry.path());
-    }
-    std::ranges::sort(dirs);
-    return dirs;
-}
-
-vector<fs::path> sorted_files(const fs::path &root) {
-    vector<fs::path> files;
-    for (const auto &entry : fs::directory_iterator(root)) {
-        if (entry.is_regular_file())
-            files.push_back(entry.path());
-    }
-    std::ranges::sort(files);
-    return files;
-}
-
 vector<uint8_t> read_file_prefix(const fs::path &path, size_t max_bytes) {
     uintmax_t size = 0;
     try {
@@ -489,15 +469,6 @@ vector<fs::path> spool_tape_files(const fs::path &root) {
     for (const auto &entry : fs::directory_iterator(root)) {
         if (entry.is_regular_file() && tape_file_number(entry.path()))
             files.push_back(entry.path());
-    }
-    if (!files.empty()) {
-        sort_tape_files(files);
-        return files;
-    }
-
-    for (const fs::path &volume_dir : sorted_dirs(root)) {
-        for (const fs::path &file : sorted_files(volume_dir))
-            files.push_back(file);
     }
     sort_tape_files(files);
     return files;
