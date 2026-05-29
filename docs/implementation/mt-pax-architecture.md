@@ -4,7 +4,7 @@
 
 `mt-pax` is a multi-threaded Pax archive writer that parallelises file I/O
 for high-concurrency small-file workloads (e.g. ZFS).  It uses a
-producer-consumer pipeline with up to five distinct thread roles.
+channel-driven ordered pipeline with up to five distinct thread roles.
 
 ## Library Interface
 
@@ -30,147 +30,131 @@ Responsibilities:
 - Traverses source paths via `archive_read_disk`
 - Resolves hardlinks through `archive_entry_linkresolver`
 - Computes archive paths via `SourceSpec`
-- Dispatches each entry into one of three queues:
-  | Entry type                  | Destination                    |
-  | --------------------------- | ------------------------------ |
-  | Non-file (dir, symlink, …) | `bb0` (BlockingQueue)        |
-  | Small file (< 4 MiB)        | Worker slot via `idle_queue` |
-  | Large file (≥ 4 MiB)       | Large slot                     |
+- Dispatches each entry into the ordered pipeline through `PaxPipeline`:
+  | Entry type                  | Destination                             |
+  | --------------------------- | --------------------------------------- |
+  | Non-file (dir, symlink, …) | `order_queue` as `InlineBytes`         |
+  | Small file (< 4 MiB)       | `work_queue` + `order_queue` as `WorkerResult` |
+  | Large file (> 4 MiB)       | `order_queue` as `LargeEntry`           |
 - Non-file entries are serialised inline (the walker calls `serialize_entry`
-  itself) and the resulting bytes are pushed onto `bb0`.
-- Small files are handed to an idle worker via `assign_small` — the walker
-  pops a free slot from `idle_queue`, writes the `WorkItem` under the slot
-  mutex, marks the slot `BUSY`, and wakes the worker.
-- Large files are handed to the *large slot* (the last slot, index
-  `nworkers`): the walker waits for the slot to become `IDLE`, fills it,
-  marks it `BUSY`, and notifies the serializer.
+  itself) and enqueued as `InlineBytes`.
+- Small files: the walker first pushes a `WorkItem` onto `work_queue`, then
+  pushes a `WorkerResult` marker onto `order_queue`.
+- Large files: the walker pushes a `LargeEntry` directly onto `order_queue`.
 
 ### 2. Serializer thread
 
-**One instance.**  Receives results from all three dispatch paths, orders
-them by sequence number, and pushes them into the output `BoundedBuffer`
-(`bb1`).
+**One instance.**  Consumes `order_queue` in strict FIFO sequence order and
+pushes ordered output into the `BoundedBuffer` (`bb1`).
 
 Responsibilities:
 
-- Drains `bb0` and `completed_queue` (worker results) into a
-  `std::map<uint64_t, Result>` keyed by sequence number.
-- Emits in-order results from the map to `bb1`.
-- Checks the large slot: if it holds a `WorkItem` whose `seq` matches
-  `expected`, calls `stream_large_entry` which writes the entry directly
-  into `bb1` (via the `BBSink` accumulator), then marks the slot `IDLE` and
-  notifies the walker.
-- Uses a generation counter (`notify_generation`) to avoid lost wake-ups:
-  the serializer sleeps on `notify_cv` until it observes a new generation,
-  then re-checks all sources.
+- For `InlineBytes`: pushes the pre-serialised bytes directly to `bb1`.
+- For `WorkerResult`: blocks on `ResultStore::take(seq)` for the worker-produced
+  bytes, then pushes to `bb1`.
+- For `LargeEntry`: calls `stream_large_entry` directly, streaming the
+  entry into `bb1` via the `BBSink` accumulator without buffering the
+  whole file in memory.
+
+The serializer uses a single ordered stream; there is no generation counter or
+multi-source polling.  A `PaxPipeline` owner provides `request_cancel()` for
+coordinated shutdown.
 
 ### 3. Worker threads
 
 **Zero or (--io-thread - 1) instances.**  Only created when
 `--io-thread N` with `N > 1`.  When `N = 1` (default), no workers exist
-and all file entries go through the large slot (serializer reads them).
+and all file entries go through the `LargeEntry` path (serializer reads them).
 
-Each worker has a dedicated `WorkerSlot` (mutex + CV + state + work item).
-The worker loops:
+Each worker loops:
 
-1. Waits on its slot CV until `BUSY` or `done`.
-2. Calls `serialize_entry(entry, fd)` on the assigned work — this opens a
-   fresh libarchive writer for one entry, writes the header and file data,
-   discards the EOA trailer via `drop_mode`, and returns the raw bytes.
-3. Pushes the resulting `{seq, bytes}` to `completed_queue`.
-4. Marks its slot `IDLE` and pushes the slot index back to `idle_queue`.
-5. Bumps `notify_generation` to wake the serializer.
+1. Pops a `WorkItem` from `work_queue` (a `ClosableQueue`).
+2. Calls `serialize_entry(entry, fd)` — opens a fresh libarchive writer
+   for one entry, writes the header and file data, discards the EOA trailer
+   via `drop_mode`, and returns the raw bytes.
+3. Publishes the resulting `{seq, bytes}` to `ResultStore` keyed by `seq`.
+4. Returns to step 1.
 
-The `completed_queue` capacity is `2 × nworkers`, providing natural
-backpressure.
+On exception, the worker triggers full pipeline cancellation by closing
+`work_queue`, `order_queue`, `ResultStore`, and `bb1`.
 
-### 4. Large slot (serializer-processed)
+### 4. Output thread
 
-**Not a thread — a single slot** (index `nworkers`) that the **serializer
-thread** processes directly.  When `nworkers = 0` (default `--io-thread 1`),
-this is the only file path and every file (regardless of size) goes here.
-
-Flow:
-
-1. Walker calls `assign_large` → waits on slot CV for `IDLE` state → fills
-   `WorkItem` → sets `BUSY` → notifies serializer.
-2. Serializer detects `BUSY && seq == expected` → calls
-   `stream_large_entry(BBSink, entry, fd)`.
-3. `stream_large_entry` opens a libarchive writer, pipes the entry through
-   a `BBSink` accumulator (flushes to `bb1` every 4 MiB), discards EOA
-   via `drop_mode`, and returns.
-4. Serializer marks slot `IDLE`, notifies the slot CV (waking the walker),
-   and notifies `notify_cv`.
-
-### 5. Output thread
-
-**One instance.**  Reads chunks from `bb1` (`BoundedBuffer`) and writes
-them to the output file (or stdout).
+**One instance.**  Drains `bb1` (`BoundedBuffer`) and writes chunks via
+`PaxWriterCallbacks`.
 
 Responsibilities:
 
-- Pops chunks from `bb1`.  An empty chunk signals termination.
+- Pops chunks from `bb1`.  An empty chunk signals termination (buffer was
+  closed).
 - Feeds each chunk through the BLAKE3 hasher.
 - Supports `-P <percent>` (waterline) mode: when the buffer is partially
-  full it uses `pop_after_fill` to avoid fragmenting writes on spinning
+  full, it uses `pop_after_fill` to avoid fragmenting writes on spinning
   media; after a drain to empty, it reverts to `pop`.
-- Propagates write errors via `output_error` atomic.
+- On callback exception, triggers pipeline cancellation via `request_cancel()`.
 
-### 6. Stats thread
+### 5. Stats thread
 
 **One instance.**  Prints a live progress line to stderr every second.
 
 Reads `ArchiveStats` counters (`input_bytes`, `output_bytes`,
-`walked_entries`) and `bb1` fill-level, computes rates, and overwrites the
-previous line with `\r`.  A newline in the verbose or BLAKE3 output lines
-ensures the stats line doesn't corrupt them.
+`walked_entries`) and `bb1` fill-level through `PaxPipeline::buffered_bytes()`
+and `PaxPipeline::buffer_capacity()`, computes rates, and overwrites the
+previous line with `\r`.
 
 ## Data flow diagram
 
 ```
-┌──────────┐  non-file entries
-│  Walker  │──────────────────►┌──────┐
-│ (main)   │  serialize_entry  │  bb0 │───┐
-│          │  + push Result    └──────┘   │
-│          │                              │
-│          │  small files                 │
-│          │  ───────────────────────────►│
-│          │  assign_small → slot BUSY    │
-│          │    ┌─────────┐               │
-│          │    │ Worker  │── Result──►┌──┴──────────┐     ┌──────┐     ┌──────┐
-│          │    │ 0..N-2  │  completed │ Serializer  │────►│ bb1  │────►│Output│
-│          │    └─────────┘   queue    │(merge+order)│     │ Buf. │     │thread│
-│          │                           └───┬─────────┘     └──────┘     └──────┘
-│          │  large files                  │
-│          │  ────────────────────────────►│
-│          │  assign_large → slot BUSY     │
-│          │     ┌──────────┐              │
-│          │     │Large slot│─stream──────►│
-│          │     │(slot N-1)│ (BBSink)     │
-│          │     └──────────┘              │
-└──────────┘                               │
-        notify_generation ─────────────────┘
+┌──────────┐  non-file entries (InlineBytes)
+│  Walker  │─────────────────────────────────────────────┐
+│ (main)   │                                             │
+│          │  small files (WorkerResult)                 │
+│          │  ─────┐                                     │
+│          │       │  ┌─────────┐                        │
+│          │       ├─►│ Worker  │── Result──►┌──────────┐│
+│          │       │  │ 0..N-1  │  ResultStore│           │
+│          │       │  └─────────┘             │           │
+│          │  work │                          │ Serializer│────►│ bb1  │────►│Output│
+│          │ queue │                          │(ordered)  │     │ Buf. │     │thread│
+│          │  ────►│                          │           │     └──────┘     └──────┘
+│          │       │                          │           │
+│          │  large files (LargeEntry)        └────┬──────┘
+│          │  ─────────────────────────────────────┘
+│          │        order_queue
+└──────────┘
 ```
 
 ## Sequence numbering
 
-Every dispatched entry (file or non-file) receives a monotonically
-increasing `seq` from the walker.  The serializer emits entries strictly in
-`seq` order using a `std::map` to reorder results from `bb0` and
-`completed_queue`.  The large slot is always at the expected sequence
-because the walker blocks until the slot becomes `IDLE`, so it never overtakes
-the serializer's progress.
+Every dispatched entry receives a monotonically increasing `seq` from the
+walker.  The walker emits exactly one `OrderItem` per sequence into
+`order_queue`.  The serializer consumes `order_queue` in FIFO order, so
+archive order is represented by one stream rather than reconstructed by
+polling multiple sources.
+
+## Backpressure and capacity
+
+| Channel        | Capacity                             |
+| -------------- | ------------------------------------ |
+| `order_queue`  | `max(64, io_thread * 8)` items       |
+| `work_queue`   | `max(1, io_thread * 4)` items        |
+| `ResultStore`  | `order_queue_capacity + worker_count`|
+| `bb1`          | `output_buf_size` bytes              |
+
+`ResultStore` capacity covers every WorkerResult order item that can be in
+`order_queue`, plus one per active worker for in-flight completions, so workers
+can always publish when the serializer is temporarily blocked on large-entry
+streaming or `bb1` backpressure.
 
 ## Shutdown sequence
 
-1. Walker finishes walking → `idle_queue.close()` (wakes worker waiters,
-   drops future pushes) → `done = true`.
-2. All slot CVs and `notify_cv` are notified.
-3. Workers: wake, see `done && !BUSY`, exit.
-4. Serializer: enters drain loop — repeatedly collects `bb0` and
-   `completed_queue` into the pending map, emits what it can, checks the
-   large slot, and exits when `done`, `pending.empty()`, and no slot is
-   `BUSY`.
-5. Worker threads joined, serializer joined.
-6. `bb1.close()`, output thread joined.
-7. Stats thread joined, BLAKE3 hash printed.
+1. Walker finishes walking and calls `PaxPipeline::finish_input()` — closes
+   `work_queue` and `order_queue`.
+2. Workers drain accepted work and exit when `work_queue` is closed and
+   drained.
+3. Serializer drains `order_queue`, takes any remaining `ResultStore` results
+   in order, then exits when `order_queue` is closed and drained.
+4. `PaxPipeline::join()` closes `ResultStore`, joins workers and serializer,
+   closes `bb1`, and joins the output thread.
+5. Any stored pipeline exception is rethrown after all threads are joined.
+6. Stats thread joined, BLAKE3 hash printed.

@@ -5,7 +5,7 @@ INCS	= -Iinclude -Itests -Llib -I/usr/local/include -Lusr/local/lib
 CFLAGS	= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c17 -march=native -pedantic $(INCS)
 CXXFLAGS= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c++20 -march=native -pedantic $(INCS)
 LDLIBS	= lib/libb3sum.a lib/libcrc32c.a -larchive
-EXE	= bin/mt-pax bin/neotape bin/neotape-inspect bin/test_tape bin/test_cli bin/test_restore_validation
+EXE	= bin/mt-pax bin/neotape bin/neotape-inspect bin/test_tape bin/test_cli bin/test_restore_validation bin/test_pax_pipeline
 BINDIR	= bin
 LIBDIR	= lib
 BUILDDIR= build
@@ -85,12 +85,17 @@ $(BINDIR)/test_cli : tests/test_cli.cpp $(CLI_OBJ) Makefile | $(BINDIR)
 $(BINDIR)/test_restore_validation : tests/test_restore_validation.cpp $(RESTORE_VALIDATION_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(RESTORE_VALIDATION_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
-test: $(BINDIR)/test_tape $(BINDIR)/test_cli $(BINDIR)/test_restore_validation $(BINDIR)/neotape $(BINDIR)/neotape-inspect
+$(BINDIR)/test_pax_pipeline : tests/test_pax_pipeline.cpp include/neotape/closable_queue.hpp Makefile | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< -o $@
+
+test: $(BINDIR)/test_tape $(BINDIR)/test_cli $(BINDIR)/test_restore_validation $(BINDIR)/test_pax_pipeline $(BINDIR)/neotape $(BINDIR)/neotape-inspect $(BINDIR)/mt-pax
 	$(BINDIR)/test_tape
 	$(BINDIR)/test_cli
 	$(BINDIR)/test_restore_validation
+	$(BINDIR)/test_pax_pipeline
 	sh tests/smoke_restore_validation.sh
 	sh tests/smoke_pax_backup_restore.sh
+	sh tests/smoke_mt_pax_pipeline.sh
 	sh tests/smoke_inspect_diagnostic.sh
 	sh tests/smoke_tape_backup_wiring.sh
 
