@@ -18,14 +18,9 @@ reader after reading the Frame payload.
 ### Slice-level: `slice_content_blake3`
 
 Computed over exactly `slice_content_size` bytes of concatenated SLICE_CONTENT
-Frame payloads for one logical slice, in Frame sequence order. Calculated by
-the writer after the last SLICE_CONTENT Frame is finalized. Verified by the
+Frame payloads for one logical slice, in Frame sequence order. Calculated by the
+writer after the last SLICE_CONTENT Frame is finalized. Verified by the
 reader after the END Frame for the slice is reached.
-
-### Metadata bundle: `metadata_bundle_blake3`
-
-Optional hash of the Medium Header ar metadata bundle. Computed over the
-entire metadata bundle byte range.
 
 ### Output-level (pax writer)
 

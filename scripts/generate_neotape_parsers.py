@@ -35,7 +35,6 @@ def offset_constant_name(struct_name: str, field_name: str) -> str:
     prefixes = {
         'VolumeHeader': 'vhdr',
         'FrameHeader': 'fhdr',
-        'MediumHeader': 'mhdr',
         'ArchiveEndHeader': 'ae',
     }
     if field_name in SHARED_IDENTITY:

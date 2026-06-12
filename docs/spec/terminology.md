@@ -3,7 +3,6 @@
 Status: active terminology draft.
 
 This document defines common NeoTape terms used by the active specification.
-When terminology here conflicts with `docs/RFC_Draft.md`, this document wins.
 
 ## Logical Hierarchy
 
@@ -16,11 +15,13 @@ An Archive may span one or more archive volumes.
 
 ### Physical Medium
 
-A sequentially writable physical storage medium initialized by NeoTape.
+A sequentially writable physical storage medium used to store NeoTape archive
+volumes.
 
-For LTO deployments, a physical medium is normally one LTO tape medium. A
-physical medium begins with a Medium Header and may contain zero, one, or more
-complete archive instances.
+For LTO deployments, a physical medium is normally one LTO tape medium. It may
+contain zero, one, or more complete archive instances. NeoTape does not store a
+medium-level descriptor in the archive stream; any non-NeoTape prefix before the
+first Volume Header is ignored by readers.
 
 ### Archive Volume (or Volume for short)
 
@@ -74,15 +75,6 @@ or acceleration. It is not part of the payload stream and must not be required
 for basic restore correctness.
 
 ## Headers And Metadata
-
-### Medium Header
-
-The mandatory immutable header at the beginning of a physical medium.
-
-The Medium Header records medium-level identity and initialization metadata,
-then points to an ar metadata bundle. It is not a mutable table of contents and
-MUST NOT record archive lists, free space, last write position, or other mutable
-media state.
 
 ### Volume Header
 
@@ -177,8 +169,8 @@ record.
 
 ### Fixed Header
 
-The 1024-byte fixed field area at the start of every header (Medium, Volume,
-Frame, Archive End).
+The 1024-byte fixed field area at the start of every header (Volume, Frame,
+Archive End).
 
 All header types share this 1024-byte size. Every fixed header places its CRC32C
 field in the final 4 bytes. The remaining 1020 bytes contain the common prefix,
@@ -281,11 +273,6 @@ The fixed NeoTape record size for an archive volume, declared in the Volume
 Header. After commitment, all NeoTape records in that volume MUST use this
 size.
 
-### medium_header_block_size
-
-Block size of the Medium Header (may differ from `volume_block_size`). Declared
-in the Medium Header.
-
 ### Block Size Constraints
 
 | Constraint          | Value                   | Rationale                                               |
@@ -341,28 +328,15 @@ Fields repeated across Volume, Frame, and Archive End headers:
 | `created_by_build_id`        | Source revision, build ID, or other diagnostic identifier. |
 | `archive_end_at_utc`         | Archive end timestamp.                                     |
 
-### Medium Header Fields
-
-| Field                         | Description                                        |
-| ----------------------------- | -------------------------------------------------- |
-| `medium_uuid`               | UUID for this initialized NeoTape physical medium. |
-| `medium_label`              | Human-readable medium label.                       |
-| `initialized_at_utc`        | UTC initialization timestamp.                      |
-| `medium_header_block_size`  | Block size of the Medium Header.                   |
-| `medium_header_block_count` | Number of blocks occupied by the Medium Header.    |
-| `metadata_bundle_size`      | Exact size of the ar metadata bundle.              |
-| `metadata_bundle_blake3`    | Integrity hash for the ar metadata bundle.         |
-
 ## Enum Values
 
 ### HeaderType
 
 | Value | Name            |
 | ----- | --------------- |
-| 1     | `medium`      |
-| 2     | `volume`      |
-| 3     | `frame`       |
-| 4     | `archive_end` |
+| 1     | `volume`      |
+| 2     | `frame`       |
+| 3     | `archive_end` |
 
 ### PayloadProfile
 
@@ -401,8 +375,8 @@ volume sequence number (e.g. `tape-000001`).
 ### tape-file-\<num\>.\<type\>.ntf
 
 A regular file representing one NeoTape tape file. `<num>` is a zero-padded
-tape-file index. `<type>` is one of `medium-header`, `volume-header`,
-`slice-<seq>`, `archive-end`. The `.ntf` extension stands for "NeoTape file".
+tape-file index. `<type>` is one of `volume-header`, `slice-<seq>`,
+`archive-end`. The `.ntf` extension stands for "NeoTape file".
 
 ### Manifest (manifest.json)
 

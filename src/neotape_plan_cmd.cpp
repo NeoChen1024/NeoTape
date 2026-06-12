@@ -674,7 +674,7 @@ void run_plan(Options &opts) {
 
 } // namespace
 
-int neotape_plan_main(int argc, char **argv) {
+int main(int argc, char **argv) {
     try {
         Options opts = parse_args(argc, argv);
         run_plan(opts);

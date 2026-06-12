@@ -23,7 +23,7 @@ Initialization is the only mode that intentionally writes from BOT.
 
 Initialization may create or rewrite media-level structures such as:
 
-- Medium Header.
+- Optional recovery bundle.
 - Initial media identity metadata.
 - Optional implementation-specific label or diagnostic metadata.
 
@@ -167,7 +167,7 @@ The append-only rule supports multiple independent NeoTape archive instances on 
 Conceptual layout:
 
 ```text
-[Medium Header]
+[Optional recovery bundle]
 [Archive A Volume Header]
 [Archive A Slice...]
 [Archive A End Header]

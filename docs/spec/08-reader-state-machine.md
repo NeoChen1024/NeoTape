@@ -1,6 +1,6 @@
 # Reader State Machine
 
-Status: extracted from RFC_Draft.md §§16–17; normative.
+Status: normative.
 
 ## Reader Model
 
@@ -21,11 +21,18 @@ Status: extracted from RFC_Draft.md §§16–17; normative.
 
 ### START
 
-Initialize expected `archive_uuid` (from first volume if unspecified), `expected_volume_seq_num = 1`, `expected_slice_seq_num = 1`.
+Initialize expected `archive_uuid` (from first volume if unspecified),
+`expected_volume_seq_num = 1`, `expected_slice_seq_num = 1`.
+
+From BOT or the start of a spool directory, the reader locates the first
+NeoTape record. Any leading tape file whose first bytes are not the NeoTape
+magic (for example an optional recovery bundle) MUST be skipped. The first
+NeoTape record of an archive stream MUST be a Volume Header.
 
 ### READ_VOLUME_HEADER
 
-Read the Volume Header for the current archive volume. The first archive instance normally starts after the Medium Header. From BOT, the reader MUST skip the Medium Header and scan for the requested `archive_uuid`.
+Read the Volume Header for the current archive volume. The first archive
+instance begins at the first NeoTape record after any non-NeoTape prefix.
 
 If the Volume Header checksum, type, UUID, or sequence number is invalid, enter MISMATCH_HANDLER. Policy options: fail, prompt, or scan forward by filemarks to the next candidate Volume Header. Scan-forward is essential for multi-archive media where the inserted medium may be positioned past the target archive.
 
@@ -57,7 +64,7 @@ If physical EOT is reached before the Archive End Header, prompt for the next vo
 
 ### ERROR_HANDLER
 
-Handle read errors, UUID mismatch, sequence mismatch, header CRC32C errors, and incomplete slices. See `10-error-handling.md` for the Retry/Inspect/Fail/Salvage model.
+Handle read errors, UUID mismatch, sequence mismatch, header CRC32C errors, and incomplete slices. See `09-error-handling.md` for the Retry/Inspect/Fail/Salvage model.
 
 ## Reader State Diagram
 

@@ -5,13 +5,7 @@ implementation planning.
 
 ## Specification Precedence
 
-`docs/spec/` is the active home of the NeoTape format specification. When a
-topic is defined in `docs/spec/`, that definition replaces and supersedes the
-corresponding material in `docs/RFC_Draft.md`.
-
-`docs/RFC_Draft.md` remains useful as source material, rationale, and historical
-draft context. It should not be treated as authoritative for sections that have
-already been split into `docs/spec/`.
+`docs/spec/` is the active home of the NeoTape format specification.
 
 The documentation is split by stability and purpose.
 
@@ -22,23 +16,21 @@ docs/
   README.md                     This file
   ROADMAP.md                    Implementation milestones and sequencing
   IDEAS.md                      Early design ideas (not yet in spec/roadmap)
-  RFC_Draft.md                  Historical draft (superseded by spec/)
 
   spec/                         Normative or near-normative format specification
     terminology.md              Common terms and definitions
     00-format-common.md         Common format rules, datatypes, encoding
-    01-medium-header.md         Medium Header field inventory
-    02-volume-header.md         Volume Header field inventory
-    03-frame-header.md          Frame Header field inventory
-    04-archive-end-header.md    Archive End Header field inventory
-    05-spool-dir.md             Spool directory format
-    06-volume-layout.md         Logical and physical tape layout
-    07-frames-and-slices.md     Frame model, slice completion, content types
-    08-payload-profiles.md      Payload profile definitions (PAX, raw)
-    09-reader-state-machine.md  Reader transitions and validation
-    10-error-handling.md        Retry/Inspect/Fail/Salvage model
-    11-security.md              Trust model, path safety, authentication
-    12-future-extensions.md     Extension ideas (multi-channel, FEC, encryption)
+    01-volume-header.md         Volume Header field inventory
+    02-frame-header.md          Frame Header field inventory
+    03-archive-end-header.md    Archive End Header field inventory
+    04-spool-dir.md             Spool directory format
+    05-volume-layout.md         Logical and physical tape layout
+    06-frames-and-slices.md     Frame model, slice completion, content types
+    07-payload-profiles.md      Payload profile definitions (PAX, raw)
+    08-reader-state-machine.md  Reader transitions and validation
+    09-error-handling.md        Retry/Inspect/Fail/Salvage model
+    10-security.md              Trust model, path safety, authentication
+    11-future-extensions.md     Extension ideas (multi-channel, FEC, encryption)
     appendix-layout-examples.md Single-volume, multi-volume, multi-archive layouts
     appendix-cli.md             CLI usage examples for all tools
     open-questions.md           Unresolved design choices and open questions

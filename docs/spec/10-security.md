@@ -1,19 +1,21 @@
 # Security
 
-Status: extracted from RFC_Draft.md §22; normative.
+Status: normative.
 
 ## Metadata Bundle Trust Model
 
-Readers MUST treat header metadata bundles (Medium Header ar archives, SLICE_METADATA Frame payloads) as untrusted data.
+Readers MUST treat optional recovery bundles and SLICE_METADATA Frame payloads
+as untrusted data.
 
-### Member Names as Identifiers
+Recovery bundle and catalog member names are identifiers for byte blobs, not
+restore paths. Readers MUST:
 
-ar member names are identifiers for byte blobs, not restore paths. Readers MUST:
-
-- Treat the metadata bundle as a flat collection of named byte blobs.
+- Treat the bundle as a flat collection of named byte blobs.
 - NOT interpret member names as filesystem paths.
-- Reject absolute paths and parent-directory components (e.g. `../`) if any extended name syntax is supported.
-- NOT restore ownership, permissions, device nodes, symlinks, hardlinks, xattrs, ACLs, or executable bits from metadata bundles.
+- Reject absolute paths and parent-directory components (e.g. `../`) if any
+  extended name syntax is supported.
+- NOT restore ownership, permissions, device nodes, symlinks, hardlinks,
+  xattrs, ACLs, or executable bits from recovery bundles or catalogs.
 
 ### Catalog as Index
 
@@ -31,7 +33,9 @@ If authenticity or tamper resistance is required, NeoTape SHOULD add signatures 
 
 ## Executable Content
 
-If an archive contains a restore helper binary (e.g. as a metadata bundle member), the reader MUST NOT automatically execute it. Source code and specification text are preferred over binaries for long-term preservation.
+If an archive contains a restore helper binary (e.g. as a recovery bundle
+member), the reader MUST NOT automatically execute it. Source code and
+specification text are preferred over binaries for long-term preservation.
 
 ## Payload Path Safety
 

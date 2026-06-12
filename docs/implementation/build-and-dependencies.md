@@ -56,7 +56,7 @@ system calls. No boost, no protobuf, no heavy external frameworks.
 
 ### JSON Usage
 
-The `manifest.json` in spool tape directories (see `docs/spec/05-spool-dir.md`)
+The `manifest.json` in spool tape directories (see `docs/spec/04-spool-dir.md`)
 is optionally parsed by the reader for auxiliary recovery information (volume
 ordering, file list). It is never required for payload correctness — restore
 integrity comes from NeoTape headers, lengths, and checksums. The reader

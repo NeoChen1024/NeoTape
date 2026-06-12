@@ -1,6 +1,6 @@
 # Appendix: Layout Examples
 
-Status: extracted from RFC_Draft.md Appendix A; non-normative.
+Status: non-normative.
 
 ## Single-Volume Archive (Normal Case)
 
@@ -9,11 +9,9 @@ A single-volume archive fitting on one tape:
 ```
 Tape:
 
-File 0:   Medium Header (BOT, immutable, optional if media already initialized)
+File 0:   Volume Header (archive_uuid=A, volume_seq_num=1)
 filemark
-File 1:   Volume Header (archive_uuid=A, volume_seq_num=1)
-filemark
-File 2:   Logical Slice 1 tape file
+File 1:   Logical Slice 1 tape file
           +-- Frame Header (START, slice=1, frame=1)
           +-- payload bytes (8 GiB)
           +-- Frame Header (slice=1, frame=2)
@@ -22,12 +20,15 @@ File 2:   Logical Slice 1 tape file
           +-- Frame Header (END, slice=1, frame=N, slice_content_size, slice_content_blake3)
           +-- payload bytes
 filemark
-File 3:   Logical Slice 2 tape file
+File 2:   Logical Slice 2 tape file
           ...
 filemark
 File N:   Archive End Header (clean_end, last_slice_seq_num=N-1)
 filemark
 ```
+
+A recovery bundle (plain pax tar) MAY be written in File 0 before the first
+Volume Header; readers skip any non-NeoTape prefix.
 
 ## Multi-Volume Archive
 
@@ -36,31 +37,27 @@ When an archive spans two physical tapes:
 **Tape 1:**
 
 ```
-File 0:   Medium Header (BOT)
+File 0:   Volume Header (archive_uuid=A, volume_seq_num=1)
 filemark
-File 1:   Volume Header (archive_uuid=A, volume_seq_num=1)
+File 1:   Logical Slice 1 tape file (complete, END flag)
 filemark
-File 2:   Logical Slice 1 tape file (complete, END flag)
-filemark
-File 3:   Logical Slice 2 tape file (payload starts, EOT before END)
+File 2:   Logical Slice 2 tape file (payload starts, EOT before END)
 ~~EOT~~
 ```
 
 **Tape 2:**
 
 ```
-File 0:   Medium Header (BOT, initialization for this physical medium)
+File 0:   Volume Header (archive_uuid=A, volume_seq_num=2)
 filemark
-File 1:   Volume Header (archive_uuid=A, volume_seq_num=2)
-filemark
-File 2:   Logical Slice 2 tape file (continuation, END flag)
+File 1:   Logical Slice 2 tape file (continuation, END flag)
           +-- Frame Header (END, slice=2, frame=M, slice_content_size, slice_content_blake3)
           +-- remaining payload bytes
           +-- optional SLICE_METADATA Frames
 filemark
-File 3:   Logical Slice 3 tape file (complete, END flag)
+File 2:   Logical Slice 3 tape file (complete, END flag)
 filemark
-File 4:   Archive End Header (clean_end, last_slice_seq_num=3)
+File 3:   Archive End Header (clean_end, last_slice_seq_num=3)
 filemark
 ```
 
@@ -77,11 +74,9 @@ No NeoTape header bytes are emitted to stdout. Slices do not contain pax EOA mar
 ## Multiple Archives on One Tape
 
 ```
-File 0:   Medium Header
+File 0:   Volume Header (archive_uuid=A, volume_seq_num=1)
 filemark
-File 1:   Volume Header (archive_uuid=A, volume_seq_num=1)
-filemark
-File 2..N:  Logical slice tape files for Archive A
+File 1..N:  Logical slice tape files for Archive A
 filemark
 File N+1: Archive End Header (archive_uuid=A, clean_end)
 filemark

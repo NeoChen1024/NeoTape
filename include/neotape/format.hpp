@@ -15,11 +15,9 @@ struct ParsedHeader {
     std::optional<VolumeHeader> volume;
     std::optional<FrameHeader> frame;
     std::optional<ArchiveEndHeader> archive_end;
-    std::optional<MediumHeader> medium;
 };
 
 HeaderBytes serialize_volume_header(const VolumeHeader &header);
-HeaderBytes serialize_medium_header(const MediumHeader &header);
 HeaderBytes serialize_frame_header(const FrameHeader &header);
 HeaderBytes serialize_archive_end_header(const ArchiveEndHeader &header);
 ParsedHeader parse_fixed_header(const uint8_t *data, std::size_t size);

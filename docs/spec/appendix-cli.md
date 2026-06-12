@@ -34,10 +34,11 @@ colon only, so locator paths may contain additional colons.
 
 `spool:<dir>` selects the file-backed spool backend. A spool root is a directory
 containing single-root `.nts` tape files such as
-`tape-file-000000.medium-header.nts`, `tape-file-000001.volume-header.nts`,
-`tape-file-000002.slice-000001.nts`, and
-`tape-file-000003.archive-end.nts`. Use this backend for hardware-free CLI tests
-and development.
+`tape-file-000000.volume-header.nts`,
+`tape-file-000001.slice-000001.nts`, and
+`tape-file-000002.archive-end.nts`. Use this backend for hardware-free CLI tests
+and development. An optional `recovery-bundle.tar` may be present at the spool
+root for human recovery; it is not part of the NeoTape archive stream.
 
 `tape:<device>` selects a real tape device, for example `tape:/dev/nst0`.
 Directory locators are not accepted as a `tape:` fallback; use `spool:<dir>` for

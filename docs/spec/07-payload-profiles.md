@@ -1,6 +1,6 @@
 # Payload Profiles
 
-Status: extracted from RFC_Draft.md §§14.1, 20; normative.
+Status: normative.
 
 ## Overview
 

@@ -27,7 +27,7 @@ namespace fs = std::filesystem;
 
 // -----------------------------------------------------------------------
 // Minimal density table — independently researched from public specs.
-// Covers modern LTO, IBM 3592, and DLT/SDLT formats.
+// Covers modern LTO formats.
 // -----------------------------------------------------------------------
 
 const map<int, string> density_names = {
@@ -91,8 +91,6 @@ std::vector<fs::path> scan_spool_files(const fs::path &root) {
 
 std::string spool_suffix_for_header(const neotape::ParsedHeader &header) {
     switch (header.type) {
-    case neotape::HeaderType::medium:
-        return "medium-header";
     case neotape::HeaderType::volume:
         return "volume-header";
     case neotape::HeaderType::frame:
@@ -435,9 +433,7 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
         spool_fd_ = -1;
 
         auto header = parse_spool_header_file(current_path_);
-        if (header.medium)
-            current_block_size_ = header.medium->medium_header_block_size;
-        else if (header.volume)
+        if (header.volume)
             current_block_size_ = header.volume->volume_block_size;
         else if (header.frame)
             current_block_size_ = header.frame->volume_block_size;

@@ -1,6 +1,6 @@
 # Volume Layout
 
-Status: specification (extracted from RFC_Draft.md).
+Status: specification.
 
 ## Scope
 
@@ -10,11 +10,10 @@ LTO tape files, filemarks, and spool directory entries.
 
 For header field definitions see the individual header specs:
 
-- Medium Header → [01-medium-header.md](01-medium-header.md)
-- Volume Header → [02-volume-header.md](02-volume-header.md)
-- Frame Header → [03-frame-header.md](03-frame-header.md)
-- Archive End Header → [04-archive-end-header.md](04-archive-end-header.md)
-- Spool directory layout → [05-spool-dir.md](05-spool-dir.md)
+- Volume Header → [01-volume-header.md](01-volume-header.md)
+- Frame Header → [02-frame-header.md](02-frame-header.md)
+- Archive End Header → [03-archive-end-header.md](03-archive-end-header.md)
+- Spool directory layout → [04-spool-dir.md](04-spool-dir.md)
 - Terminology → [terminology.md](terminology.md)
 
 ## Logical Nesting
@@ -43,7 +42,7 @@ How the logical concepts map to physical tape constructs:
 
 ```
 Physical Medium (LTO tape)
-  └── Medium Header (tape file 0, BOT)
+  └── (optional recovery bundle tape file, not NeoTape format)
   └── filemark
   └── Archive Volume (part of one archive on one medium)
   │     ├── Volume Header (tape file, single NeoTape record)
@@ -65,7 +64,9 @@ Physical Medium (LTO tape)
   └── (next archive instance, if capacity remains)
 ```
 
-- **Medium** → a physical LTO tape or start of spool tape directory. Begins with Medium Header at BOT.
+- **Physical Medium** → a sequential storage medium holding one or more archive
+  volumes. NeoTape does not store a medium-level descriptor; any non-NeoTape
+  prefix before the first Volume Header is ignored by readers.
 - **Tape file** → LTO filemark-delimited region. NeoTape uses tape files for
   Volume Headers, logical slices, and Archive End Headers.
 - **NeoTape record** → a single `volume_block_size`-byte block written to the
@@ -78,11 +79,9 @@ Physical Medium (LTO tape)
 A single-volume archive on one physical tape:
 
 ```
-File 0:   Medium Header (BOT, immutable)
+File 0:   Volume Header (archive_uuid, volume_seq_num=1)
 filemark
-File 1:   Volume Header (archive_uuid, volume_seq_num=1)
-filemark
-File 2:   Logical Slice 1 tape file
+File 1:   Logical Slice 1 tape file
           ┌─ Frame Header (START, slice=1, frame=1)
           ├─ payload bytes
           ├─ Frame Header (slice=1, frame=2)
@@ -91,7 +90,7 @@ File 2:   Logical Slice 1 tape file
           ├─ Frame Header (END, slice=1, frame=N, slice_content_size, slice_content_blake3)
           └─ payload bytes
 filemark
-File 3:   Logical Slice 2 tape file
+File 2:   Logical Slice 2 tape file
           ...
 filemark
 File N:   Archive End Header (clean_end, last_slice_seq_num)
@@ -117,9 +116,10 @@ The format design permits interleaving different frame types, but this is
 not currently implemented in normal slice handling. Such interleaving will
 be investigated further in the future.
 
-The Medium Header is at tape file 0. The Volume Header occupies tape file 1
-following the Medium Header, or tape file 0 of a bare archive volume on a
-continuation medium without Medium Header.
+The first NeoTape record in a normal archive stream is a Volume Header. On
+physical tape an optional recovery bundle (for example a plain pax tar file)
+MAY precede the Volume Header; readers locate the Volume Header by scanning
+forward for the NeoTape magic.
 
 ## Multi-Volume Tape Layout
 
@@ -128,28 +128,24 @@ When an archive spans multiple physical tapes:
 **Tape 1:**
 
 ```
-File 0:   Medium Header
+File 0:   Volume Header (volume_seq_num=1)
 filemark
-File 1:   Volume Header (volume_seq_num=1)
+File 1:   Logical Slice 1 tape file (complete, END flag)
 filemark
-File 2:   Logical Slice 1 tape file (complete, END flag)
-filemark
-File 3:   Logical Slice 2 tape file (payload starts but EOT before END)
+File 2:   Logical Slice 2 tape file (payload starts but EOT before END)
 ~~EOT~~
 ```
 
 **Tape 2:**
 
 ```
-File 0:   Medium Header
+File 0:   Volume Header (volume_seq_num=2)
 filemark
-File 1:   Volume Header (volume_seq_num=2)
+File 1:   Logical Slice 2 tape file (continuation, END flag)
 filemark
-File 2:   Logical Slice 2 tape file (continuation, END flag)
+File 2:   Logical Slice 3 tape file (END flag)
 filemark
-File 3:   Logical Slice 3 tape file (END flag)
-filemark
-File 4:   Archive End Header
+File 3:   Archive End Header
 filemark
 ```
 

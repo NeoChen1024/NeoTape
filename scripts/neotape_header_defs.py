@@ -46,10 +46,9 @@ ENUMS = {
     'HeaderType': {
         'underlying': 'uint8_t',
         'values': [
-            ('medium', 1),
-            ('volume', 2),
-            ('frame', 3),
-            ('archive_end', 4),
+            ('volume', 1),
+            ('frame', 2),
+            ('archive_end', 3),
         ],
     },
     'PayloadProfile': {
@@ -134,26 +133,6 @@ HEADER_DEFS = {
             Field('slice_content_blake3', 32, 'nt_hash', cxx_type='Hash'),
             Field('_reserved', 0, 'fill_to_1020'),
             Field('header_crc32c', 4, 'crc32c'),
-        ],
-    },
-    'MediumHeader': {
-        'type_enum': 'HeaderType::medium',
-        'fields': [
-            Field('magic', 8, 'magic', struct_member=False),
-            Field('header_version', 1, 'const_uint8', const_value=1, struct_member=False),
-            Field('header_type', 1, 'enum', enum_type='HeaderType', struct_member=False),
-            Field('medium_header_block_size', 4, 'uint32', cxx_type='uint32_t'),
-            Field('medium_uuid', 37, 'nt_uuid', cxx_type='std::string'),
-            Field('medium_label', 256, 'nt_name', cxx_type='std::string'),
-            Field('initialized_at_utc', 20, 'nt_time', cxx_type='std::string'),
-            Field('medium_header_block_count', 2, 'uint16', cxx_type='uint16_t'),
-            Field('flags', 2, 'uint16', cxx_type='uint16_t'),
-            Field('created_by_implementation', 64, 'ident64', cxx_type='std::string'),
-            Field('created_by_build_id', 64, 'ident64', cxx_type='std::string'),
-            Field('metadata_bundle_size', 4, 'uint32', cxx_type='uint32_t'),
-            Field('metadata_bundle_blake3', 32, 'nt_hash', cxx_type='Hash'),
-            Field('_reserved', 0, 'fill_to_1020'),
-            Field('medium_header_crc32c', 4, 'crc32c'),
         ],
     },
     'ArchiveEndHeader': {

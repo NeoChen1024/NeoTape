@@ -1,6 +1,6 @@
 # Error Handling
 
-Status: extracted from RFC_Draft.md §18; normative.
+Status: normative.
 
 ## Policy Model
 

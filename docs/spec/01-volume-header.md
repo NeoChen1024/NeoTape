@@ -3,8 +3,15 @@
 Status: field sizes and datatypes are concrete.
 
 The Volume Header is the first archive-time record for one archive volume. It
-binds an archive instance to a physical medium position and declares the fixed
-NeoTape record size used by that archive volume.
+binds an archive instance to a medium position and declares the fixed NeoTape
+record size used by that archive volume.
+
+In a normal archive stream the Volume Header is the first NeoTape record. On
+physical tape a recovery bundle (for example a plain pax tar file with README,
+FORMAT-SPEC and reader source) MAY be written in the first tape file before the
+Volume Header. NeoTape readers locate the archive by scanning forward until they
+find a record whose first bytes are the NeoTape magic; any non-NeoTape prefix
+is skipped.
 
 The field inventory below defines the current proposed datatypes and encoded
 field sizes. Exact byte offsets, enum numeric assignments, and future reserved
@@ -20,11 +27,10 @@ and timestamp encoding are defined in
 
 A Volume Header is written at the beginning of each archive volume.
 
-For an initialized physical medium, the first archive instance usually begins
-in the tape file immediately after the Medium Header. If multiple archive
-instances are appended to the same physical medium, later Volume Headers begin
-at the tape file immediately after the previous archive's clean Archive End
-Header.
+For a fresh archive the first archive instance begins at the first NeoTape
+record. If multiple archive instances are appended to the same physical medium,
+later Volume Headers begin at the tape file immediately after the previous
+archive's clean Archive End Header.
 
 The Volume Header is an archive-time commit record and MUST fit within one tape
 record.

@@ -19,7 +19,7 @@ describe the exact binary layout.
 
 ### `scripts/neotape_header_defs.py`
 
-Declares all four NeoTape fixed headers using three categories of definitions:
+Declares all three NeoTape fixed headers using three categories of definitions:
 
 **Enums** — `HeaderType`, `PayloadProfile`, `FrameContentType` with their
 underlying type and numeric values:
@@ -29,10 +29,9 @@ ENUMS = {
     'HeaderType': {
         'underlying': 'uint8_t',
         'values': [
-            ('medium', 1),
-            ('volume', 2),
-            ('frame', 3),
-            ('archive_end', 4),
+            ('volume', 1),
+            ('frame', 2),
+            ('archive_end', 3),
         ],
     },
     ...
@@ -155,7 +154,6 @@ Offset constants use the existing prefix convention:
 | ---------------------- | --------- |
 | VolumeHeader           | `vhdr_` |
 | FrameHeader            | `fhdr_` |
-| MediumHeader           | `mhdr_` |
 | ArchiveEndHeader       | `ae_`   |
 | Shared identity fields | `hdr_`  |
 
@@ -202,19 +200,19 @@ This header is `#include`d by `format.hpp` and provides:
 - Flag constants (`frame_flag_start`, `archive_end_flag_clean_end`, etc.)
 - Flag test helpers (`has_frame_flag_start()`, `has_archive_end_flag_clean_end()`, etc.)
 - All offset constants (`hdr_volume_block_size`, `fhdr_flags`, etc.)
-- `VolumeHeader`, `FrameHeader`, `MediumHeader`, `ArchiveEndHeader` structs
+- `VolumeHeader`, `FrameHeader`, `ArchiveEndHeader` structs
 - `namespace detail` with put/get helpers (`put_u16`, `get_u64`, `put_fixed_string`, `get_hash`, etc.)
 - `make_header()` — creates a `HeaderBytes` array with magic + version + type
 - `finish_crc()` — computes and stores CRC32C at bytes 1020-1023
 - `check_common()` — validates magic and header version
-- Parser declarations (`parse_volume`, `parse_frame`, `parse_medium`, `parse_archive_end`)
+- Parser declarations (`parse_volume`, `parse_frame`, `parse_archive_end`)
 
 ### `format_generated.cpp`
 
 This is compiled alongside the hand-written `neotape_format.cpp`. It provides:
 
-- `serialize_volume_header()`, `serialize_frame_header()`, `serialize_medium_header()`, `serialize_archive_end_header()`
-- `parse_volume()`, `parse_frame()`, `parse_medium()`, `parse_archive_end()`
+- `serialize_volume_header()`, `serialize_frame_header()`, `serialize_archive_end_header()`
+- `parse_volume()`, `parse_frame()`, `parse_archive_end()`
 - `header_type_name()`, `payload_profile_name()`, `frame_content_type_name()`
 
 ## Hand-written files
@@ -236,7 +234,7 @@ It `#include`s `format_generated.hpp` for the generated types.
 Only non-mechanical logic:
 
 - `parse_fixed_header()` — validates magic/version/CRC32C, dispatches to the
-  generated `parse_volume`/`parse_frame`/`parse_medium`/`parse_archive_end`
+  generated `parse_volume`/`parse_frame`/`parse_archive_end`
 - `blake3_hash()` — BLAKE3 computation wrapper
 - `utc_timestamp_now()` — `%Y-%m-%dT%H:%M:%S` UTC timestamp
 - `make_uuid_v4()` — RFC 4122 UUID generation
@@ -259,7 +257,7 @@ $(FORMAT_GEN_OBJ): $(GENERATED_CPP) $(GENERATED_HPP) Makefile | $(BUILDDIR)
 The generated object is linked into all tools that use format objects:
 
 ```makefile
-$(BINDIR)/neotape : ... $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) ...
+$(BINDIR)/neotape-plan : ... $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) ...
 ```
 
 Run manually:
@@ -281,7 +279,7 @@ make generate
 2. Run `python3 scripts/generate_neotape_parsers.py` to regenerate.
 3. If a new field type is needed, add its kind to `size_arg()`, default
    handling, put/get dispatch, and the kind table in `is_struct_member()`.
-4. Run `make` and verify with `bin/test_tape`.
+4. Run `make` and verify.
 
 No changes to hand-written C++ files are needed unless the struct layout change
 affects the dispatch logic in `parse_fixed_header()` or `ParsedHeader`.

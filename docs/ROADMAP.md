@@ -24,8 +24,8 @@ Current implementation snapshot:
   unit tests. Public `tape:` locators are real tape devices only; the old
   `tape:<dir>` file-backed CLI fallback has been removed. Real tape read/write
   validation and recovery behavior are not complete.
-- Phase 8 has a minimal Medium Header serializer/parser and `neotape init`
-  prototype. The self-description metadata bundle is not implemented.
+- Phase 8 is not implemented; the optional BOT recovery bundle is still
+  undefined.
 
 # Roadmap Principles
 
@@ -67,10 +67,10 @@ Initial scope:
 
 Goal: define enough concrete byte layout to create parseable NeoTape records.
 
-Implementation status: Volume, Frame, Archive End, and Medium Header
-serializer/parser support exists with fixed 1024-byte headers and CRC32C.
-`SLICE_METADATA` frame type is defined but metadata item schema/catalog behavior
-is deferred to Phase 5.
+Implementation status: Volume, Frame, and Archive End serializer/parser
+support exists with fixed 1024-byte headers and CRC32C. `SLICE_METADATA` frame
+type is defined but metadata item schema/catalog behavior is deferred to
+Phase 5.
 
 Deliverables:  
 - Shared constants for magic values, header type ids, version ids, and payload profile ids.  
@@ -86,10 +86,10 @@ Candidate headers to freeze first:
 - Frame Header, including `SLICE_CONTENT`, `SLICE_METADATA`, and slice content integrity fields
 - Archive End Header
 
-Deferred:  
-- Full Medium Header byte layout.  
+Deferred:
 - Full `SLICE_METADATA` Frame item schema.
 - Final catalog binary schema.
+- Optional BOT recovery bundle format.
 
 Spec feedback expected:  
 - Exact byte offsets for common fields.  
@@ -276,34 +276,26 @@ Spec feedback expected:
 - stdout contamination prevention rules.  
 - Salvage output marking requirements.
 
-# Phase 8: Medium Header and Long-Term Self-Description: PARTIAL
+# Phase 8: Optional BOT Recovery Bundle: NOT STARTED
 
-Goal: define the immutable BOT Medium Header and recovery bundle.
+Goal: define an optional recovery bundle written before the first Volume Header.
 
-Spec draft: [docs/spec/01-medium-header.md](spec/01-medium-header.md)
+Spec draft: [docs/spec/05-volume-layout.md](spec/05-volume-layout.md)
 
-Implementation status: a minimal Medium Header layout is implemented in the
-format layer and `neotape init` can write one to a tape device. The metadata
-bundle, embedded docs/source package, and virtual-medium validation are not
-implemented.
+Implementation status: not implemented.
 
-Deliverables:  
-- Medium Header binary/ASCII prefix.  
-- Medium metadata bundle format using restricted ar-style flat member container.  
-- Embedded FORMAT-SPEC, RESTORE, README, and optional minimal `neotape restore` source package.
-- Medium initialization tool.
+Deliverables:
+- Plain pax tar recovery bundle format.
+- Recommended member set (README, RESTORE, FORMAT-SPEC, minimal reader source).
+- Optional writer tool to create the bundle.
 
-Validation:  
-- Initialize blank virtual medium or tape.  
-- Read BOT Medium Header without external database.  
-- Verify metadata bundle integrity.  
-- Confirm header does not contain mutable archive index or free-space state.
+Validation:
+- Reader skips non-NeoTape prefix at BOT.
+- Bundle can be extracted with standard tar tools.
 
-Spec feedback expected:  
-- Medium Header first-record minimum fields.  
-- Multi-record Medium Header layout.  
-- Recommended content of self-description bundle.  
-- Restricted ar member naming and integrity rules.
+Spec feedback expected:
+- Whether the bundle should have a fixed member set or be deployment-specific.
+- Integrity rules for the bundle.
 
 # Phase 9: Filesystem-Native Payload Profiles
 
@@ -374,7 +366,7 @@ Validation:
 # Open Implementation Questions
 
 1. CLOSED: The first implementation should use C++ with a standard GNU Makefile.  
-2. Should the minimal reader be dependency-light enough to embed in medium metadata bundle as source code?  
+2. Should the minimal reader be dependency-light enough to embed in the optional recovery bundle as source code?  
 3. What is the first stable volume_block_size default for real LTO drives: 1 MiB, 4 MiB, 8 MiB, or device-specific?  
 4. Should the first public implementation support only spool mode and pax profile, delaying tape backend until format tests are stable?  
 5. Should the catalog format be binary-only, text-friendly, or dual-layer with binary records plus optional human-readable summaries?  

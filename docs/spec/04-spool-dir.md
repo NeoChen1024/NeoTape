@@ -22,9 +22,14 @@ A spool archive is a directory tree:
 
 ```text
 <spool-root>/
+  recovery-bundle.tar
   neotape-<file-num>.<type>.nts
   ...
 ```
+
+The optional `recovery-bundle.tar` is a plain pax archive placed at the spool
+root for human recovery. It is not part of the NeoTape archive stream and a
+reader MUST ignore it when locating the first Volume Header.
 
 The `<spool-root>` is the top-level directory of the spool archive,
 conventionally named `<archive_name>-<archive_uuid>/` for a single-archive spool.
@@ -44,8 +49,7 @@ where:
   the spool, matching the LTO tape-file position (0-based). This is NOT the
   volume-relative content number; it is the logical tape-file index encoding
   the canonical ordering of NeoTape records within the volume.
-- `<type>` — one of `medium-header`, `volume-header`, `slice-<slice-seq>`,
-  `archive-end`.
+- `<type>` — one of `volume-header`, `slice-<slice-seq>`, `archive-end`.
 - `[-<detail>]` — optional qualifier such as continuation markers or Frame
   content-type hints, allowed but not required for correctness.
 - `.nts` — extension for "NeoTape Spool".
@@ -54,17 +58,17 @@ Examples:
 
 ```text
 Under spool-dir:
-tape-file-000000.medium-header.nts
-tape-file-000001.volume-header.nts
-tape-file-000002.slice-000001.nts
-tape-file-000003.slice-000002.nts
-tape-file-000005.slice-000003.nts
-tape-file-000006.archive-end.nts
-tape-file-000007.volume-header.nts
-tape-file-000008.slice-000001.nts
-tape-file-000009.slice-000002.nts
-tape-file-000010.slice-000003.nts
-tape-file-000011.archive-end.nts
+recovery-bundle.tar
+tape-file-000000.volume-header.nts
+tape-file-000001.slice-000001.nts
+tape-file-000002.slice-000002.nts
+tape-file-000003.slice-000003.nts
+tape-file-000004.archive-end.nts
+tape-file-000005.volume-header.nts
+tape-file-000006.slice-000001.nts
+tape-file-000007.slice-000002.nts
+tape-file-000008.slice-000003.nts
+tape-file-000009.archive-end.nts
 ```
 
 The sequence numbers embedded in filenames are deliberately present so that a
@@ -95,11 +99,8 @@ and content integrity.
 - **Record order** = the numeric order of `tape-file-<file-num>` within a tape
   directory, then the byte order within each file.
 
-The spool directory SHOULD contain a `tape-file-000000.medium-header.nts`
-if the spool represents a complete medium-initialized archive, matching the
-Medium Header in tape file 0 of a physical tape. A spool archive without a
-Medium Header is valid only if it represents a bare archive volume that a
-reader would interpret as already positioned past the Medium Header.
+The spool directory SHOULD contain a `tape-file-000000.volume-header.nts` if
+the spool represents an archive volume.
 
 ## Multiple Archives and Append
 
@@ -118,9 +119,9 @@ The padding width is 6 digits for conventional readability and sorted `ls`
 output by name:
 
 ```text
-neo-tape-000000.medium-header.nts
-neo-tape-000001.volume-header.nts
-neo-tape-000002.slice-000001.nts
+neo-tape-000000.volume-header.nts
+neo-tape-000001.slice-000001.nts
+neo-tape-000002.slice-000002.nts
 ```
 
 However, sequence numbers are NOT bounded by the padding width. Values larger

@@ -6,11 +6,12 @@ This document collects open questions, unresolved design choices, and decision p
 
 ## Format and Layout
 
-### Medium Header Metadata Bundle Member Set
+### Recovery Bundle Format and Member Set
 
-The exact set of recommended ar bundle members (README, RESTORE, FORMAT-SPEC,
-CKSUM.B3SUM, reader.tar.gz, medium-info) is suggested but not frozen.
-Should the spec mandate a minimal required set, or keep everything as MAY?
+The exact format, member set, and placement rules for an optional recovery
+bundle at BOT are open. Should the spec recommend a plain pax tar with a fixed
+member set (README, RESTORE, FORMAT-SPEC, reader source), or leave it entirely
+to deployment?
 
 ### Spool Filenames
 
@@ -102,15 +103,16 @@ instance on the same medium? The former is more space-efficient but riskier.
 
 Should NeoTape maintain a lightweight index of all archive instances on a
 medium, or should discovery always be by scanning tape files? An index would
-speed up listing but violates the "no mutable state in Medium Header" rule.
+speed up listing but requires mutable state that is hard to maintain on
+append-only media.
 
 ## Implementation
 
 ### Minimal Reader Embedding
 
-Should the minimal reader (`neotape restore`) be compact enough to embed in
-the Medium Header metadata bundle as source code? What platform assumptions
-would such a reader make?
+Should the minimal reader (`neotape restore`) be compact enough to embed in the
+recovery bundle as source code? What platform assumptions would such a reader
+make?
 
 ### Minimum Supported Platform Set
 
@@ -133,7 +135,7 @@ tape occupancy.
    language changes for v0.1.
 2. **stdout = pure payload bytes** — closed. All diagnostics on stderr or
    `/dev/tty`.
-3. **No mutable state in Medium Header** — closed. Archive discovery by
+3. **No mutable state in the archive stream** — closed. Archive discovery by
    scanning tape files.
 4. **Archive-level completion by Archive End Header only** — closed. EOD alone
    is not sufficient.

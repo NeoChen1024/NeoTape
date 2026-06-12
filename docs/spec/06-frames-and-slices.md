@@ -1,6 +1,6 @@
 # Frames and Slices
 
-Status: extracted from RFC_Draft.md §§7, 11; normative.
+Status: normative.
 
 ## Frame Model
 

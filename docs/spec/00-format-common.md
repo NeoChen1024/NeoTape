@@ -61,8 +61,8 @@ A parser can always read the first 10 bytes of any fixed header, validate the
 magic value, determine the header layout version, and dispatch reader logic by
 header type.
 
-This common prefix applies to the Medium Header, Volume Header, Frame Header,
-and Archive End Header. The layout after byte 9 is type-specific.
+This common prefix applies to the Volume Header, Frame Header, and Archive End
+Header. The layout after byte 9 is type-specific.
 
 ## Repeated Archive Identity Fields
 
@@ -118,8 +118,7 @@ field area, that continuation data MUST begin in the same NeoTape record
 immediately after the 1024-byte fixed field area, without padding or alignment
 gap.
 
-Examples include the Medium Header's ar metadata bundle and the Frame Header's
-content or metadata bytes.
+Examples include the Frame Header's content or metadata bytes.
 
 Header types that are not followed by continuation data (Volume Header, Archive
 End Header) MAY fill the remainder of their NeoTape record with padding. All
@@ -153,8 +152,8 @@ to.
 
 ### Scope
 
-These constraints apply to both `volume_block_size` (Volume Header, Frame Header,
-Archive End Header) and `medium_header_block_size` (Medium Header).
+These constraints apply to `volume_block_size` (Volume Header, Frame Header,
+Archive End Header).
 
 ## Requirement Keywords
 
@@ -203,22 +202,4 @@ Writers MUST NOT use timezone suffixes, numeric offsets, fractional seconds,
 locale-specific text, RFC 3339 variants, ISO 8601 variants, or any other date
 format.
 
-## ar Subset Format
-
-NeoTape metadata bundles use a restricted SVR4/GNU ar subset:
-
-- Global magic: `!<arch>\n`.
-- Thin archive magic is not allowed: `!<thin>\n`.
-- No symbol table member: member name `/` is not allowed.
-- No long-name table: member name `//` is not allowed.
-- No path-like member names: member names MUST NOT contain `/`, `\`, NUL, or newline.
-- Member names MUST be ASCII and MUST fit directly in the fixed 16-byte ar name field.
-- Writer SHOULD use the GNU/SVR4 short-name convention: `name/` followed by spaces.
-- With that convention, the portable member name limit is 15 bytes before the trailing `/`.
-- Header fields are ASCII and space padded.
-- `mtime`, `uid`, `gid`, and `size` fields are ASCII decimal.
-- `mode` is ASCII octal.
-- Member size is stored in the standard 10-byte ar size field and counts only member data bytes.
-- Header trailer magic MUST be `` `\n ``.
-- If member data size is odd, the writer MUST append one `\n` padding byte after the member data.
 - The odd-size padding byte is not counted in the member size field.

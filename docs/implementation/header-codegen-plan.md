@@ -37,10 +37,9 @@ ENUMS = {
     'HeaderType': {
         'underlying': 'uint8_t',
         'values': [
-            ('medium', 1),
-            ('volume', 2),
-            ('frame', 3),
-            ('archive_end', 4),
+            ('volume', 1),
+            ('frame', 2),
+            ('archive_end', 3),
         ],
     },
     'PayloadProfile': {
@@ -95,7 +94,7 @@ HEADER_DEFS = {
             Field(name='header_crc32c',    size=4,   kind='crc32c'),
         ],
     },
-    # FrameHeader, MediumHeader, ArchiveEndHeader follow the same pattern
+    # FrameHeader and ArchiveEndHeader follow the same pattern
 }
 ```
 
@@ -146,7 +145,7 @@ After the codegen is operational, `scripts/neotape_header_defs.py` becomes the
 authoritative reference for field ordering, sizes, and types — replacing the
 offset tables in `docs/implementation/phase-1-header-layout.md`.
 
-The spec docs (`docs/spec/00-format-common.md` through `04-archive-end-header.md`)
+The spec docs (`docs/spec/00-format-common.md` through `03-archive-end-header.md`)
 remain authoritative for field semantics, constraints, enum value meanings,
 encoding rules, and requirement keywords. They should describe *what* each field
 is and *why*, but they need not reproduce exact byte offsets.
@@ -170,7 +169,7 @@ Reads `neotape_header_defs.py`, emits C++ across four output sections:
 #include "neotape/format.hpp"
 
 // Enums
-enum class HeaderType : uint8_t { medium = 1, volume = 2, frame = 3, archive_end = 4 };
+enum class HeaderType : uint8_t { volume = 1, frame = 2, archive_end = 3 };
 enum class PayloadProfile : uint8_t { raw = 1, pax = 2 };
 enum class FrameContentType : uint8_t { slice_content = 1, slice_metadata = 2 };
 
@@ -196,7 +195,6 @@ inline constexpr std::size_t vhdr_flags             = 336;
 // Structs
 struct VolumeHeader { ... };
 struct FrameHeader { ... };
-struct MediumHeader { ... };
 struct ArchiveEndHeader { ... };
 ```
 
@@ -227,7 +225,6 @@ VolumeHeader parse_volume(const uint8_t *data) {
 ```cpp
 std::string header_type_name(HeaderType type) {
     switch (type) {
-    case HeaderType::medium:     return "medium";
     case HeaderType::volume:     return "volume";
     case HeaderType::frame:      return "frame";
     case HeaderType::archive_end: return "archive_end";
@@ -248,7 +245,7 @@ std::string frame_content_type_name(FrameContentType t) { ... }
 | 4 | Trim `include/neotape/format.hpp`: remove old enum/flag/offset/struct definitions, add `#include "format_generated.hpp"` |
 | 5 | Trim `src/neotape_format.cpp`: remove per-header serialize/parse/name-helper functions, keep dispatch + utilities |
 | 6 | Add `src/neotape_format_generated.cpp` to Makefile with generator dependency |
-| 7 | `make clean && make && bin/neotape-inspect ...` to verify round-trip |
+| 7 | `make clean && make && bin/neotape-plan --help` to verify round-trip |
 
 ## What Stays Hand-Written
 
@@ -265,7 +262,6 @@ struct ParsedHeader {
     std::optional<VolumeHeader> volume;
     std::optional<FrameHeader> frame;
     std::optional<ArchiveEndHeader> archive_end;
-    std::optional<MediumHeader> medium;
 };
 
 ParsedHeader parse_fixed_header(const uint8_t *data, std::size_t size);

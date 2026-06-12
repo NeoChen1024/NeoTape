@@ -165,26 +165,8 @@ slice-level digests.
 
 The writer MAY follow the last `SLICE_CONTENT` Frame of a logical slice with
 zero or more `SLICE_METADATA` Frames. Each such Frame carries bytes from a
-restricted ar archive conforming to the ar subset format defined in
-[docs/spec/00-format-common.md](00-format-common.md#ar-subset-format).
-
-`SLICE_METADATA` Frames are NeoTape transport metadata associated with a logical
-slice. They are not part of the payload stream and MUST NOT be emitted to stdout
-by `neotape restore`.
-
-`SLICE_METADATA` Frames are advisory. A reader MUST NOT reject a logical slice or
-archive solely because of missing, truncated, or corrupt `SLICE_METADATA` Frames,
-unless the selected operation explicitly requires slice metadata. If
-`frame_payload_blake3` verification fails for a `SLICE_METADATA` Frame, the
-reader SHOULD log a warning and continue in normal payload extraction mode.
-
-If EOT occurs before all `SLICE_METADATA` Frames can be committed, the next
-volume SHOULD resume with a Volume Header followed by the next complete
-`SLICE_METADATA` Frame for the same `logical_slice_seq_num`. No partial Frame is
-continued across the volume boundary.
-
-The specific ar archive member names and their semantics are intentionally left
-to a future specification.
+restricted archive format. The exact format is intentionally left to a future
+specification.
 
 ## Volume Boundary Rule
 
@@ -194,7 +176,8 @@ unit.
 If EOT or a write error occurs while writing a Frame, that Frame MUST be treated
 as uncommitted unless the backend can prove that the entire `volume_block_size`
 record was written successfully. The writer resumes on the next volume by
-writing a Volume Header (will first initialize Medium Header if not exist) followed by the next complete Frame that has not been committed.
+writing a Volume Header followed by the next complete Frame that has not been
+committed.
 
 There is no offset field and no partial Frame continuation mechanism in this
 design.

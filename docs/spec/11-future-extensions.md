@@ -1,6 +1,6 @@
 # Future Extensions
 
-Status: extracted from RFC_Draft.md §23 and IDEAS.md; non-normative.
+Status: extension ideas; non-normative.
 
 This document collects extension ideas for future NeoTape versions. They are not part of the v0.1 format and should not be implemented until a later version defines them.
 
