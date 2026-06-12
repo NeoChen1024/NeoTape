@@ -5,24 +5,14 @@ A seekable multi-volume length-framed payload transport container designed for L
 NeoTape wraps a payload byte stream (typically a POSIX pax/tar archive) in a lightweight framing layer that provides per-slice and per-Frame structure, integrity verification via BLAKE3, and multi-volume continuation. The on-tape format uses LTO filemarks at logical-slice boundaries, enabling native tape seek to independently verifiable checkpoint units without requiring per-Frame filemarks.
 
 This is an early implementation-stage project. The current implementation
-includes a standalone pax writer (`bin/mt-pax`) plus a primary
-`bin/neotape <subcommand>` CLI for initializing spool or tape media, writing raw
-or PAX profile archives, listing archive instances, and reading/restoring from
-spool archives. The spool backend is the hardware-free file-backed backend and
-uses the same single-root `.nts` tape-file model as the tape abstraction.
-`tape:` locators are reserved for real tape devices such as `/dev/nst0`; directory
-fallback for `tape:<dir>` is intentionally not supported. Real tape-device
-end-to-end validation is still pending.
+includes a standalone pax writer (`bin/mt-pax`) and a planner (`bin/neotape-plan`)
+for slicing metadata. The NeoTape writer/reader/inspect CLI tools have been
+removed and will be rewritten against the simplified format. The `namespace mt`
+tape manipulation library remains available for future tools.
 
 ## Specification Status
 
-The active format specification lives under [`docs/spec/`](docs/spec/). When a topic is
-defined in [`docs/spec/`](docs/spec/), that definition supersedes any older or conflicting
-text in [`docs/RFC_Draft.md`](docs/RFC_Draft.md).
-
-[`docs/RFC_Draft.md`](docs/RFC_Draft.md) remains useful as background design material and historical
-draft text, but it is no longer the authoritative source for sections that have
-been split into [`docs/spec/`](docs/spec/).
+The active format specification lives under [`docs/spec/`](docs/spec/).
 
 ## Hierarchy
 
@@ -33,7 +23,19 @@ Archive
             └─ Frame           fixed record with frame_payload_size
 ```
 
-A NeoTape **Archive** is the complete backup set, identified by an `archive_uuid` and optionally named by `archive_name`. It spans one or more **Volumes** (physical LTO media or virtual volumes in spool mode), each carrying a `volume_seq_num`. Inside each volume, the payload is split into **Logical Slices** — writer-declared byte ranges that are independently verifiable via the slice's BLAKE3 digest and seekable by LTO filemark. A typical slice target size is ~64 GiB but a slice may far exceed that, especially when a single large file spans the entire archive. Each logical slice is composed of one or more **Frames**. A Frame Header explicitly declares `frame_payload_size`, so the reader knows exactly how many bytes in the fixed-size NeoTape record are meaningful without parsing payload content. Frames carry either `SLICE_CONTENT` bytes or advisory `SLICE_METADATA` bytes.
+A NeoTape **Archive** is the complete backup set, identified by an `archive_uuid`
+and optionally named by `archive_name`. It spans one or more **Volumes** (physical
+LTO media or virtual volumes in spool mode), each carrying a `volume_seq_num`.
+NeoTape does not store a medium-level descriptor in the archive stream; physical
+medium identity is handled outside the format. Inside each volume, the payload is
+split into **Logical Slices** — writer-declared byte ranges that are independently
+verifiable via the slice's BLAKE3 digest and seekable by LTO filemark. A typical
+slice target size is ~64 GiB but a slice may far exceed that, especially when a
+single large file spans the entire archive. Each logical slice is composed of one
+or more **Frames**. A Frame Header explicitly declares `frame_payload_size`, so the
+reader knows exactly how many bytes in the fixed-size NeoTape record are
+meaningful without parsing payload content. Frames carry either `SLICE_CONTENT`
+bytes or advisory `SLICE_METADATA` bytes.
 
 All records in an archive volume use a fixed **volume_block_size** declared in the Volume Header. The writer must commit to this block size before writing any payload and must use it for every subsequent record; readers treat a block-size change within a volume as a format error.
 
@@ -50,13 +52,12 @@ All records in an archive volume use a fixed **volume_block_size** declared in t
 | 5     | Slice metadata Frames & catalog    | Spec   |
 | 6     | Tape device backend                | Spec   |
 | 7     | Recovery & salvage                 | Spec   |
-| 8     | Medium Header & self-description   | Spec   |
+| 8     | Optional BOT recovery bundle       | Spec   |
 | 9     | Filesystem-native payload profiles | Spec   |
 
-See [`docs/spec/`](docs/spec/) for the active format specification, [`docs/RFC_Draft.md`](docs/RFC_Draft.md) for
-background draft material, [`docs/ROADMAP.md`](docs/ROADMAP.md) for the implementation plan, and
-[`docs/implementation/`](docs/implementation/) for implementation-specific notes (mt-pax architecture,
-EOA suppression, build notes).
+See [`docs/spec/`](docs/spec/) for the active format specification, [`docs/ROADMAP.md`](docs/ROADMAP.md)
+for the implementation plan, and [`docs/implementation/`](docs/implementation/) for
+implementation-specific notes (mt-pax architecture, EOA suppression, build notes).
 
 ## Dependencies
 
@@ -77,30 +78,18 @@ git submodule update --init --recursive
 make
 ```
 
-Produces `bin/neotape`, `bin/mt-pax`, and standalone NeoTape helper tools.
+Produces `bin/mt-pax`, `bin/neotape-plan`, and standalone NeoTape helper tools.
 
 ## Usage
 
-### bin/neotape
+### bin/neotape-plan
 
 ```sh
-bin/neotape init spool:./archive.spool --label TEST --virtual-tape-size 100G
-bin/neotape plan -C /data -o home.plan photos docs
-bin/neotape backup --target spool:./archive.spool -p home.plan --name home
-bin/neotape restore --source spool:./archive.spool --output home.pax
-
-bin/neotape write --target spool:./archive.spool --input payload.bin --name raw1
-bin/neotape read --source spool:./archive.spool --output payload.out
-bin/neotape list --source spool:./archive.spool --json
+bin/neotape-plan -C /data -o home.plan photos docs
 ```
 
-Use `spool:<dir>` for file-backed testing. Use `tape:<device>` only for real
-tape devices, for example `tape:/dev/nst0`; do not use `tape:<dir>` as a spool
-shortcut.
-
-Default archive `--volume-block-size` is 4 MiB. Payload-producing commands keep
-stdout as payload bytes only; diagnostics and prompts go to stderr or
-`/dev/tty`.
+`neotape-plan` scans source paths and emits per-slice metadata for later use by a
+NeoTape writer. It does not write archives.
 
 ### bin/mt-pax (multi-threaded PAX writer)
 
