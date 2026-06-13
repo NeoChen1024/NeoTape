@@ -1,12 +1,16 @@
 #include "neotape/common.hpp"
+#include "neotape/pax_writer.hpp"
 #include "neotape/tcp_server.hpp"
 
+#include <cerrno>
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <format>
 #include <getopt.h>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -15,13 +19,15 @@ namespace {
 
 using std::format;
 using std::string;
+using std::string_view;
 using std::vector;
 
 struct Options {
     string listen_address;
     uint32_t volume_block_size = 4 * 1024 * 1024;
     string archive_name = "archive";
-    uint64_t dummy_frame_count = 8;
+    neotape::PaxWriterOptions pax;
+    bool explicit_output = false;
 };
 
 [[noreturn]] void fail(const string &msg) {
@@ -29,12 +35,20 @@ struct Options {
     std::exit(1);
 }
 
+[[noreturn]] void fail_errno(const string &context) {
+    fail(format("{}: {}", context, std::strerror(errno)));
+}
+
 void usage(const char *prog) {
     std::cerr << format(
         "usage: {} --listen <tcp://host:port|unix://path>\n"
         "       [--volume-block-size <bytes>] [--archive-name <name>]\n"
-        "       [--dummy-frame-count <N>]\n",
-        prog);
+        "       [-C <dir>] [-P <percent>] [--io-thread <N>]\n"
+        "       [--output-buffer-size <bytes>] [-v|-vv] [-x] <path> [path...]\n"
+        "       {} -f <out-file|-> [-C <dir>] [-P <percent>]\n"
+        "       [--io-thread <N>] [--output-buffer-size <bytes>] [-v|-vv] [-x]\n"
+        "       <path> [path...]\n",
+        prog, prog);
 }
 
 Options parse_args(int argc, char **argv) {
@@ -42,14 +56,20 @@ Options parse_args(int argc, char **argv) {
         {"listen", required_argument, nullptr, 'l'},
         {"volume-block-size", required_argument, nullptr, 'b'},
         {"archive-name", required_argument, nullptr, 'n'},
-        {"dummy-frame-count", required_argument, nullptr, 'd'},
+        {"directory", required_argument, nullptr, 'C'},
+        {"buffer-percent", required_argument, nullptr, 'P'},
+        {"io-thread", required_argument, nullptr, 257},
+        {"output-buffer-size", required_argument, nullptr, 256},
+        {"plan", required_argument, nullptr, 258},
+        {"verbose", no_argument, nullptr, 'v'},
+        {"one-file-system", no_argument, nullptr, 'x'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
     Options opts;
     int c;
-    while ((c = getopt_long(argc, argv, "l:b:n:d:h", long_opts, nullptr)) !=
-           -1) {
+    while ((c = getopt_long(argc, argv, "l:b:n:f:C:P:vxh", long_opts,
+                            nullptr)) != -1) {
         switch (c) {
         case 'l':
             opts.listen_address = optarg;
@@ -61,14 +81,51 @@ Options parse_args(int argc, char **argv) {
         case 'n':
             opts.archive_name = optarg;
             break;
-        case 'd': {
+        case 'f':
+            opts.pax.output_name = optarg;
+            opts.explicit_output = true;
+            break;
+        case 'C':
+            opts.pax.chdir_dir = optarg;
+            break;
+        case 'P': {
             char *end = nullptr;
             unsigned long n = std::strtoul(optarg, &end, 10);
-            if (end == optarg || *end != '\0')
-                fail("--dummy-frame-count requires a number");
-            opts.dummy_frame_count = n;
+            if (end == optarg || *end != '\0' || n > 100) {
+                std::cerr << "neotape-archiver: -P requires a percent from 0 to 100\n";
+                std::exit(2);
+            }
+            opts.pax.buffer_percent = static_cast<unsigned>(n);
             break;
         }
+        case 'v':
+            opts.pax.verbose = std::min(opts.pax.verbose + 1, 2);
+            break;
+        case 'x':
+            opts.pax.one_file_system = true;
+            break;
+        case 256:
+            try {
+                opts.pax.output_buf_size = static_cast<size_t>(
+                    neotape::parse_size(optarg, "output buffer size"));
+            } catch (const std::exception &e) {
+                std::cerr << format("neotape-archiver: {}\n", e.what());
+                std::exit(2);
+            }
+            break;
+        case 257: {
+            char *end = nullptr;
+            unsigned long n = std::strtoul(optarg, &end, 10);
+            if (end == optarg || *end != '\0') {
+                std::cerr << "neotape-archiver: --io-thread requires a number\n";
+                std::exit(2);
+            }
+            opts.pax.io_thread = static_cast<unsigned>(n);
+            break;
+        }
+        case 258:
+            opts.pax.plan_path = optarg;
+            break;
         case 'h':
             usage(argv[0]);
             std::exit(0);
@@ -77,42 +134,84 @@ Options parse_args(int argc, char **argv) {
         }
     }
 
-    if (opts.listen_address.empty()) {
+    while (optind < argc)
+        opts.pax.sources.emplace_back(argv[optind++]);
+
+    if (!opts.listen_address.empty() && opts.explicit_output)
+        fail("-f cannot be used with --listen");
+    if (!opts.listen_address.empty() && opts.pax.sources.empty()) {
         usage(argv[0]);
         std::exit(2);
     }
+    if (opts.listen_address.empty() && opts.pax.sources.empty()) {
+        usage(argv[0]);
+        std::exit(2);
+    }
+
     return opts;
+}
+
+neotape::PaxWriterCallbacks
+make_local_callbacks(const string &output, FILE *&out_file,
+                     bool &close_file) {
+    if (output == "-") {
+        out_file = stdout;
+        close_file = false;
+    } else {
+        out_file = std::fopen(output.c_str(), "wb");
+        if (!out_file)
+            fail_errno(string("open ") + output);
+        close_file = true;
+    }
+    return neotape::PaxWriterCallbacks{
+        .begin_slice = [](uint64_t) {},
+        .write_chunk = [&](neotape::PaxChunk chunk) {
+            if (std::fwrite(chunk.bytes.data(), 1, chunk.bytes.size(),
+                            out_file) != chunk.bytes.size())
+                fail_errno("write output");
+        },
+        .end_slice = [](uint64_t) {},
+        .progress_paused = [] { return false; },
+    };
 }
 
 } // namespace
 
 int main(int argc, char **argv) {
     try {
+        neotape::ensure_utf8_ctype_locale();
         Options opts = parse_args(argc, argv);
 
         if (std::signal(SIGPIPE, SIG_IGN) == SIG_ERR)
             fail("failed to ignore SIGPIPE");
 
-        neotape::TcpArchiverOptions server_opts;
-        server_opts.listen_address = opts.listen_address;
-        server_opts.volume_block_size = opts.volume_block_size;
-        server_opts.archive_name = opts.archive_name;
-        server_opts.has_more_frames = [n = opts.dummy_frame_count](
-                                          uint64_t idx) { return idx < n; };
-        server_opts.produce_record = [size = opts.volume_block_size](
-                                         uint64_t idx) {
-            vector<std::byte> rec(size);
-            // Fill with a recognizable pattern.
-            for (uint32_t i = 0; i < size; ++i)
-                rec[i] = static_cast<std::byte>(static_cast<uint8_t>(idx + i));
-            return rec;
-        };
+        if (!opts.listen_address.empty()) {
+            neotape::TcpArchiverOptions server_opts;
+            server_opts.listen_address = opts.listen_address;
+            server_opts.volume_block_size = opts.volume_block_size;
+            server_opts.archive_name = opts.archive_name;
+            server_opts.pax = opts.pax;
+            server_opts.use_pax = true;
 
-        uint64_t served = neotape::run_tcp_archiver(server_opts);
-        std::cerr << format("archiver served {} frames\n", served);
+            uint64_t served = neotape::run_tcp_archiver(server_opts);
+            std::cerr << format("archiver served {} frames\n", served);
+            return 0;
+        }
+
+        FILE *out_file = nullptr;
+        bool close_file = false;
+        neotape::PaxWriterCallbacks callbacks =
+            make_local_callbacks(opts.pax.output_name, out_file, close_file);
+
+        neotape::PaxWriteResult result =
+            neotape::write_pax(opts.pax, std::move(callbacks));
+        if (close_file && out_file != nullptr && std::fclose(out_file) != 0)
+            fail_errno(string("close ") + opts.pax.output_name);
+
+        std::cerr << format("{}  {}\n", result.blake3_hex,
+                                opts.pax.output_name);
         return 0;
     } catch (const std::exception &e) {
         fail(e.what());
     }
-    return 0;
 }

@@ -1,11 +1,10 @@
 #pragma once
 
+#include "neotape/pax_writer.hpp"
 #include "neotape/tcp_protocol.hpp"
 
 #include <cstdint>
-#include <functional>
 #include <string>
-#include <vector>
 
 namespace neotape {
 
@@ -14,9 +13,10 @@ struct TcpArchiverOptions {
     uint32_t volume_block_size = 4 * 1024 * 1024;
     std::string archive_name;
     uint64_t initial_volume_seq_num = 1;
-    // For the first skeleton, a callback that produces the next record.
-    std::function<std::vector<std::byte>(uint64_t frame_index)> produce_record;
-    std::function<bool(uint64_t frame_index)> has_more_frames;
+
+    // Pax generation options when in archive mode.
+    PaxWriterOptions pax;
+    bool use_pax = false;
 };
 
 // Blocks until the first writer connects, the archive completes, or an error
