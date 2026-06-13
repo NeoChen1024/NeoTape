@@ -112,14 +112,19 @@ struct FrameBuilder {
         : block_size(bs), volume_seq_num(vol), archive_uuid(uuid),
           archive_name(name) {}
 
+    uint32_t payload_capacity() const {
+        return block_size - fixed_header_size;
+    }
+
     // Append payload bytes. Returns zero or more complete frames.
     std::vector<std::vector<std::byte>> feed(std::span<const std::byte> bytes) {
         std::vector<std::vector<std::byte>> out;
         pending.insert(pending.end(), bytes.begin(), bytes.end());
-        while (pending.size() >= block_size) {
+        const uint32_t cap = payload_capacity();
+        while (pending.size() >= cap) {
             out.push_back(build_frame(
-                std::span(pending.begin(), block_size)));
-            pending.erase(pending.begin(), pending.begin() + block_size);
+                std::span(pending.begin(), cap)));
+            pending.erase(pending.begin(), pending.begin() + cap);
         }
         return out;
     }
@@ -134,6 +139,12 @@ struct FrameBuilder {
     }
 
     std::vector<std::byte> build_frame(std::span<const std::byte> payload) {
+        // For the first implementation, each frame is its own single-frame
+        // slice.  Increment the slice counter for every frame and keep the
+        // per-slice frame index at zero.
+        ++slice;
+        frame_in_slice = 0;
+
         FrameHeader fh;
         fh.volume_block_size = block_size;
         fh.archive_uuid = archive_uuid;
@@ -161,7 +172,6 @@ struct FrameBuilder {
         record.resize(block_size); // pad with zero bytes
 
         ++global_frame;
-        ++frame_in_slice;
         return record;
     }
 };
@@ -169,6 +179,17 @@ struct FrameBuilder {
 struct RecordOrDone {
     std::vector<std::byte> record;
     bool done = false;
+};
+
+struct ThreadJoiner {
+    std::thread &thread;
+    explicit ThreadJoiner(std::thread &t) : thread(t) {}
+    ~ThreadJoiner() {
+        if (thread.joinable())
+            thread.join();
+    }
+    ThreadJoiner(const ThreadJoiner &) = delete;
+    ThreadJoiner &operator=(const ThreadJoiner &) = delete;
 };
 
 PaxWriterCallbacks make_server_callbacks(FrameBuilder &builder,
@@ -312,6 +333,7 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                 frame_queue.close();
             }
         });
+        ThreadJoiner pax_joiner(pax_thread);
 
         for (;;) {
             auto req = neotape::tcp::read_message(client);
