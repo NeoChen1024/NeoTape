@@ -63,6 +63,28 @@ headers currently confuse clangd 22.
 - `docs/spec/` — active format spec; `docs/ROADMAP.md` — implementation phases; `docs/mt-pax.md` — mt-pax architecture
 - `tests/smoke_mt_pax_pipeline.sh`, `tests/smoke_tcp_archive.sh`, `tests/smoke_mt_pax_parity.sh` — smoke tests; no test framework or CI yet
 
+## Architecture pattern
+
+NeoTape separates long-running data producers/consumers from short-lived tape
+I/O clients over a single TCP or Unix-domain socket:
+
+- **Listener / long-running role** (`neotape-archiver`, future `neotape-extractor`)
+  owns archive state (archive UUID, volume sequence, frame index) and serves
+  fully-formed NeoTape records through a framed request-response protocol. It
+  stays up for the lifetime of the archive and does not know about physical
+  media changes.
+
+- **Tape client / short-lived role** (`neotape-write`, future `neotape-read`)
+  connects to a listener, requests one volume's worth of data, and writes it to
+  a tape device, spool directory, or raw file. One client process handles
+  exactly one volume; when it reaches end-of-tape it writes a trailing filemark
+  and exits, letting the operator mount a new medium and start another client.
+
+This split lets archive generation/extraction run on one host while tape
+hardware is attached to another, keeps media handling out of the archive state
+machine, and provides natural back-pressure because the client requests frames
+one at a time.
+
 ## mt-pax CLI
 
 ```
