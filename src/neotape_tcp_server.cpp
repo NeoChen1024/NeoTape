@@ -101,9 +101,9 @@ struct FrameBuilder {
     uint64_t volume_seq_num;
     std::string archive_uuid;
     std::string archive_name;
-    uint64_t global_frame = 0;
+    uint64_t global_frame = 1;
     uint64_t slice = 0;
-    uint64_t frame_in_slice = 0;
+    uint64_t frame_in_slice = 1;
     std::vector<std::byte> pending;
 
     explicit FrameBuilder(uint32_t bs, uint64_t vol,
@@ -141,9 +141,9 @@ struct FrameBuilder {
     std::vector<std::byte> build_frame(std::span<const std::byte> payload) {
         // For the first implementation, each frame is its own single-frame
         // slice.  Increment the slice counter for every frame and keep the
-        // per-slice frame index at zero.
+        // per-slice frame index at one (sequence numbers are 1-indexed).
         ++slice;
-        frame_in_slice = 0;
+        frame_in_slice = 1;
 
         FrameHeader fh;
         fh.volume_block_size = block_size;
@@ -172,6 +172,7 @@ struct FrameBuilder {
         record.resize(block_size); // pad with zero bytes
 
         ++global_frame;
+        ++frame_in_slice;
         return record;
     }
 };
@@ -197,7 +198,7 @@ PaxWriterCallbacks make_server_callbacks(FrameBuilder &builder,
     return PaxWriterCallbacks{
         .begin_slice = [&](uint64_t slice_num) {
             builder.slice = slice_num;
-            builder.frame_in_slice = 0;
+            builder.frame_in_slice = 1;
         },
         .write_chunk = [&](PaxChunk chunk) {
             auto frames = builder.feed(chunk.bytes);
@@ -372,7 +373,7 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                         ae.payload_profile = PayloadProfile::pax;
                         ae.last_logical_slice_seq_num = builder.slice;
                         ae.last_global_frame_seq_num =
-                            builder.global_frame > 0 ? builder.global_frame - 1 : 0;
+                            builder.global_frame == 1 ? 0 : builder.global_frame - 1;
                         ae.created_by_implementation = "neotape-archiver";
                         ae.created_by_build_id = "";
                         ae.archive_end_at_utc = utc_timestamp_now();
