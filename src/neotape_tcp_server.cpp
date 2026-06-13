@@ -131,6 +131,7 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
     close(listener);
 
     uint64_t frames_served = 0;
+    uint64_t next_frame_requests = 0;
     try {
         VolumeHeader vh = make_volume_header(opts.volume_block_size,
                                              opts.initial_volume_seq_num,
@@ -172,7 +173,7 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                     close(client);
                     return frames_served;
                 }
-                if (frames_served > 0 && frames_served % 4 == 0) {
+                if (next_frame_requests % 4 == 3) {
                     neotape::tcp::write_message(
                         client, Message{MessageType::tape_eof, {}});
                 } else {
@@ -184,6 +185,7 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                         Message{MessageType::frame_record, std::move(rec)});
                     ++frames_served;
                 }
+                ++next_frame_requests;
                 break;
             default:
                 neotape::tcp::write_message(
