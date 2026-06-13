@@ -37,7 +37,12 @@ CLANG_TIDY_FILES = $(filter-out src/neotape_format_generated.cpp, $(wildcard src
 $(GENERATED_HPP) $(GENERATED_CPP): $(GENERATOR) scripts/neotape_header_defs.py
 	python3 $(GENERATOR)
 
-.PHONY: all clean countline format test test_pax_cli tidy
+.PHONY: all clean countline format test test_pax_cli tidy compile_commands
+
+compile_commands.json:
+	python3 scripts/gen_compile_commands.py
+
+compile_commands: compile_commands.json
 
 all: ${EXE} $(TAPE_OBJ)
 

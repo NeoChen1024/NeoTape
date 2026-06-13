@@ -1,0 +1,197 @@
+[
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/src/mt-pax.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/src/mt-pax.cpp -o /home/neo_chen/vcs/NeoTape/build/mt-pax.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/src/neotape_archiver_cmd.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/src/neotape_archiver_cmd.cpp -o /home/neo_chen/vcs/NeoTape/build/neotape_archiver_cmd.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/src/neotape_bounded_buffer.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/src/neotape_bounded_buffer.cpp -o /home/neo_chen/vcs/NeoTape/build/neotape_bounded_buffer.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/src/neotape_common.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/src/neotape_common.cpp -o /home/neo_chen/vcs/NeoTape/build/neotape_common.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/src/neotape_format.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/src/neotape_format.cpp -o /home/neo_chen/vcs/NeoTape/build/neotape_format.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/src/neotape_format_generated.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/src/neotape_format_generated.cpp -o /home/neo_chen/vcs/NeoTape/build/neotape_format_generated.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/src/neotape_pax_writer.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/src/neotape_pax_writer.cpp -o /home/neo_chen/vcs/NeoTape/build/neotape_pax_writer.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/src/neotape_plan_cmd.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/src/neotape_plan_cmd.cpp -o /home/neo_chen/vcs/NeoTape/build/neotape_plan_cmd.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/src/neotape_tape.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/src/neotape_tape.cpp -o /home/neo_chen/vcs/NeoTape/build/neotape_tape.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/src/neotape_tcp_protocol.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/src/neotape_tcp_protocol.cpp -o /home/neo_chen/vcs/NeoTape/build/neotape_tcp_protocol.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/src/neotape_tcp_server.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/src/neotape_tcp_server.cpp -o /home/neo_chen/vcs/NeoTape/build/neotape_tcp_server.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/src/neotape_write_cmd.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/src/neotape_write_cmd.cpp -o /home/neo_chen/vcs/NeoTape/build/neotape_write_cmd.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/tests/lto-variable-block-record-probe.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/tests/lto-variable-block-record-probe.cpp -o /home/neo_chen/vcs/NeoTape/build/lto-variable-block-record-probe.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/tests/test_pax_pipeline.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/tests/test_pax_pipeline.cpp -o /home/neo_chen/vcs/NeoTape/build/test_pax_pipeline.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/tests/test_tcp_protocol.cpp",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/tests/test_tcp_protocol.cpp -o /home/neo_chen/vcs/NeoTape/build/test_tcp_protocol.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c.cc",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c.cc -o /home/neo_chen/vcs/NeoTape/build/crc32c.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_arm64.cc",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_arm64.cc -o /home/neo_chen/vcs/NeoTape/build/crc32c_arm64.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_arm64_unittest.cc",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_arm64_unittest.cc -o /home/neo_chen/vcs/NeoTape/build/crc32c_arm64_unittest.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_benchmark.cc",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_benchmark.cc -o /home/neo_chen/vcs/NeoTape/build/crc32c_benchmark.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_portable.cc",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_portable.cc -o /home/neo_chen/vcs/NeoTape/build/crc32c_portable.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_portable_unittest.cc",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_portable_unittest.cc -o /home/neo_chen/vcs/NeoTape/build/crc32c_portable_unittest.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_prefetch_unittest.cc",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_prefetch_unittest.cc -o /home/neo_chen/vcs/NeoTape/build/crc32c_prefetch_unittest.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_read_le_unittest.cc",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_read_le_unittest.cc -o /home/neo_chen/vcs/NeoTape/build/crc32c_read_le_unittest.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_round_up_unittest.cc",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_round_up_unittest.cc -o /home/neo_chen/vcs/NeoTape/build/crc32c_round_up_unittest.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_sse42.cc",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_sse42.cc -o /home/neo_chen/vcs/NeoTape/build/crc32c_sse42.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_sse42_unittest.cc",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_sse42_unittest.cc -o /home/neo_chen/vcs/NeoTape/build/crc32c_sse42_unittest.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_test_main.cc",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_test_main.cc -o /home/neo_chen/vcs/NeoTape/build/crc32c_test_main.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_unittest.cc",
+    "command": "c++ -std=c++20 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/crc32c/src/crc32c_unittest.cc -o /home/neo_chen/vcs/NeoTape/build/crc32c_unittest.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3.c",
+    "command": "cc -std=c17 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3.c -o /home/neo_chen/vcs/NeoTape/build/blake3.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3_avx2.c",
+    "command": "cc -std=c17 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3_avx2.c -o /home/neo_chen/vcs/NeoTape/build/blake3_avx2.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3_avx512.c",
+    "command": "cc -std=c17 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3_avx512.c -o /home/neo_chen/vcs/NeoTape/build/blake3_avx512.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3_dispatch.c",
+    "command": "cc -std=c17 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3_dispatch.c -o /home/neo_chen/vcs/NeoTape/build/blake3_dispatch.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3_neon.c",
+    "command": "cc -std=c17 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3_neon.c -o /home/neo_chen/vcs/NeoTape/build/blake3_neon.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3_portable.c",
+    "command": "cc -std=c17 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3_portable.c -o /home/neo_chen/vcs/NeoTape/build/blake3_portable.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3_sse2.c",
+    "command": "cc -std=c17 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3_sse2.c -o /home/neo_chen/vcs/NeoTape/build/blake3_sse2.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3_sse41.c",
+    "command": "cc -std=c17 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/blake3_sse41.c -o /home/neo_chen/vcs/NeoTape/build/blake3_sse41.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/example.c",
+    "command": "cc -std=c17 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/example.c -o /home/neo_chen/vcs/NeoTape/build/example.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/example_tbb.c",
+    "command": "cc -std=c17 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/example_tbb.c -o /home/neo_chen/vcs/NeoTape/build/example_tbb.o"
+  },
+  {
+    "directory": "/home/neo_chen/vcs/NeoTape",
+    "file": "/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/main.c",
+    "command": "cc -std=c17 -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -march=native -pedantic -I/home/neo_chen/vcs/NeoTape/include -I/home/neo_chen/vcs/NeoTape/tests -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include -I/usr/local/include -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++ -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu -c /home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c/main.c -o /home/neo_chen/vcs/NeoTape/build/main.o"
+  }
+]

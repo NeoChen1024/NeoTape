@@ -21,6 +21,19 @@ Dependencies: libarchive (system, `-larchive`), BLAKE3 (bundled submodule
 `3rdparty/crc32c` → `lib/libcrc32c.a`). mt-st is a submodule but unused in
 the build.
 
+## clangd / LSP
+
+The repository includes `.clangd` and `compile_commands.json` so that clangd
+can parse the project out of the box. If you add or remove source files,
+regenerate the compilation database:
+
+```sh
+make compile_commands
+```
+
+clangd is configured to use GCC 15's libstdc++ headers because GCC 16's
+headers currently confuse clangd 22.
+
 ## Python Codegen
 
 - `scripts/neotape_header_defs.py` is the Python source of truth for NeoTape
