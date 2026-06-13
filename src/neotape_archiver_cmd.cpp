@@ -1,6 +1,7 @@
 #include "neotape/common.hpp"
 #include "neotape/tcp_server.hpp"
 
+#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <format>
@@ -88,6 +89,10 @@ Options parse_args(int argc, char **argv) {
 int main(int argc, char **argv) {
     try {
         Options opts = parse_args(argc, argv);
+
+        if (std::signal(SIGPIPE, SIG_IGN) == SIG_ERR)
+            fail("failed to ignore SIGPIPE");
+
         neotape::TcpArchiverOptions server_opts;
         server_opts.listen_address = opts.listen_address;
         server_opts.volume_block_size = opts.volume_block_size;

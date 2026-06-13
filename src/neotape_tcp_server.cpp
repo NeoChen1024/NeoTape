@@ -2,7 +2,6 @@
 #include "neotape/format.hpp"
 #include "neotape/tcp_protocol.hpp"
 
-#include <arpa/inet.h>
 #include <cerrno>
 #include <cstring>
 #include <format>
@@ -19,59 +18,36 @@ namespace neotape {
 
 namespace {
 
+using neotape::tcp::Address;
 using neotape::tcp::Message;
 using neotape::tcp::MessageType;
-
-int parse_listen_address(const std::string &addr, std::string &host,
-                         std::string &port, std::string &path, bool &is_unix) {
-    const std::string tcp_prefix = "tcp://";
-    const std::string unix_prefix = "unix://";
-    if (addr.rfind(tcp_prefix, 0) == 0) {
-        is_unix = false;
-        std::string rest = addr.substr(tcp_prefix.size());
-        auto colon = rest.rfind(':');
-        if (colon == std::string::npos)
-            throw std::runtime_error("tcp listen address missing port");
-        host = rest.substr(0, colon);
-        port = rest.substr(colon + 1);
-        return 0;
-    }
-    if (addr.rfind(unix_prefix, 0) == 0) {
-        is_unix = true;
-        path = addr.substr(unix_prefix.size());
-        return 0;
-    }
-    throw std::runtime_error(
-        "listen address must start with tcp:// or unix://");
-}
+using neotape::tcp::parse_address;
 
 int create_listener(const std::string &addr) {
-    std::string host, port, path;
-    bool is_unix = false;
-    parse_listen_address(addr, host, port, path, is_unix);
+    Address a = parse_address(addr);
 
     int fd = -1;
-    if (is_unix) {
+    if (a.is_unix) {
         fd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (fd < 0)
             throw std::runtime_error(
                 std::format("socket: {}", std::strerror(errno)));
-        unlink(path.c_str());
+        unlink(a.path.c_str());
         sockaddr_un sa{};
         sa.sun_family = AF_UNIX;
-        if (path.size() >= sizeof(sa.sun_path))
+        if (a.path.size() >= sizeof(sa.sun_path))
             throw std::runtime_error("unix socket path too long");
-        std::strncpy(sa.sun_path, path.c_str(), sizeof(sa.sun_path) - 1);
+        std::memcpy(sa.sun_path, a.path.data(), a.path.size());
         if (bind(fd, reinterpret_cast<sockaddr *>(&sa), sizeof(sa)) < 0)
             throw std::runtime_error(
-                std::format("bind {}: {}", path, std::strerror(errno)));
+                std::format("bind {}: {}", a.path, std::strerror(errno)));
     } else {
         addrinfo hints{};
         hints.ai_family = AF_UNSPEC;
         hints.ai_socktype = SOCK_STREAM;
         hints.ai_flags = AI_PASSIVE;
         addrinfo *res = nullptr;
-        int gai = getaddrinfo(host.c_str(), port.c_str(), &hints, &res);
+        int gai = getaddrinfo(a.host.c_str(), a.port.c_str(), &hints, &res);
         if (gai != 0)
             throw std::runtime_error(
                 std::format("getaddrinfo: {}", gai_strerror(gai)));
@@ -82,10 +58,10 @@ int create_listener(const std::string &addr) {
             throw std::runtime_error(
                 std::format("socket: {}", std::strerror(errno)));
         int yes = 1;
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+        (void)::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
         if (bind(fd, res->ai_addr, res->ai_addrlen) < 0)
             throw std::runtime_error(
-                std::format("bind {}:{}: {}", host, port, std::strerror(errno)));
+                std::format("bind {}:{}: {}", a.host, a.port, std::strerror(errno)));
     }
 
     if (listen(fd, 1) < 0)
@@ -125,13 +101,16 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
     std::cerr << std::format("archiver listening on {}\n", opts.listen_address);
 
     int client = accept(listener, nullptr, nullptr);
-    if (client < 0)
+    if (client < 0) {
+        int saved_errno = errno;
+        close(listener);
         throw std::runtime_error(
-            std::format("accept: {}", std::strerror(errno)));
+            std::format("accept: {}", std::strerror(saved_errno)));
+    }
     close(listener);
 
     uint64_t frames_served = 0;
-    uint64_t next_frame_requests = 0;
+    uint64_t request_count = 0;
     try {
         VolumeHeader vh = make_volume_header(opts.volume_block_size,
                                              opts.initial_volume_seq_num,
@@ -173,7 +152,7 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                     close(client);
                     return frames_served;
                 }
-                if (next_frame_requests % 4 == 3) {
+                if (request_count % 4 == 3) {
                     neotape::tcp::write_message(
                         client, Message{MessageType::tape_eof, {}});
                 } else {
@@ -185,13 +164,18 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                         Message{MessageType::frame_record, std::move(rec)});
                     ++frames_served;
                 }
-                ++next_frame_requests;
+                ++request_count;
                 break;
             default:
                 neotape::tcp::write_message(
                     client,
                     Message{MessageType::error,
-                            std::vector<std::byte>{}});
+                            std::vector<std::byte>{
+                                reinterpret_cast<const std::byte *>(
+                                    "unexpected request type"),
+                                reinterpret_cast<const std::byte *>(
+                                    "unexpected request type") +
+                                    std::strlen("unexpected request type")}});
                 close(client);
                 return frames_served;
             }

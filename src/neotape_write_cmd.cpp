@@ -1,7 +1,6 @@
 #include "neotape/common.hpp"
 #include "neotape/tcp_protocol.hpp"
 
-#include <arpa/inet.h>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -18,9 +17,34 @@
 
 namespace {
 
+using neotape::tcp::Address;
+using neotape::tcp::parse_address;
 using std::format;
 using std::string;
 using std::vector;
+
+struct FdGuard {
+    int fd = -1;
+    explicit FdGuard(int f) : fd(f) {}
+    ~FdGuard() {
+        if (fd >= 0)
+            ::close(fd);
+    }
+    FdGuard(const FdGuard &) = delete;
+    FdGuard &operator=(const FdGuard &) = delete;
+};
+
+struct FileGuard {
+    FILE *file = nullptr;
+    bool owned = false;
+    FileGuard(FILE *f, bool own) : file(f), owned(own) {}
+    ~FileGuard() {
+        if (owned && file)
+            std::fclose(file);
+    }
+    FileGuard(const FileGuard &) = delete;
+    FileGuard &operator=(const FileGuard &) = delete;
+};
 
 struct Options {
     string source_address;
@@ -70,51 +94,27 @@ Options parse_args(int argc, char **argv) {
     return opts;
 }
 
-void parse_source_address(const string &addr, string &host, string &port,
-                          string &path, bool &is_unix) {
-    const string tcp_prefix = "tcp://";
-    const string unix_prefix = "unix://";
-    if (addr.rfind(tcp_prefix, 0) == 0) {
-        is_unix = false;
-        string rest = addr.substr(tcp_prefix.size());
-        auto colon = rest.rfind(':');
-        if (colon == std::string::npos)
-            fail("tcp source address missing port");
-        host = rest.substr(0, colon);
-        port = rest.substr(colon + 1);
-        return;
-    }
-    if (addr.rfind(unix_prefix, 0) == 0) {
-        is_unix = true;
-        path = addr.substr(unix_prefix.size());
-        return;
-    }
-    fail("source address must start with tcp:// or unix://");
-}
-
 int connect_to_source(const string &addr) {
-    string host, port, path;
-    bool is_unix = false;
-    parse_source_address(addr, host, port, path, is_unix);
+    Address a = parse_address(addr);
 
     int fd = -1;
-    if (is_unix) {
+    if (a.is_unix) {
         fd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (fd < 0)
             fail(format("socket: {}", std::strerror(errno)));
         sockaddr_un sa{};
         sa.sun_family = AF_UNIX;
-        if (path.size() >= sizeof(sa.sun_path))
+        if (a.path.size() >= sizeof(sa.sun_path))
             fail("unix socket path too long");
-        std::strncpy(sa.sun_path, path.c_str(), sizeof(sa.sun_path) - 1);
+        std::memcpy(sa.sun_path, a.path.data(), a.path.size());
         if (connect(fd, reinterpret_cast<sockaddr *>(&sa), sizeof(sa)) < 0)
-            fail(format("connect {}: {}", path, std::strerror(errno)));
+            fail(format("connect {}: {}", a.path, std::strerror(errno)));
     } else {
         addrinfo hints{};
         hints.ai_family = AF_UNSPEC;
         hints.ai_socktype = SOCK_STREAM;
         addrinfo *res = nullptr;
-        int gai = getaddrinfo(host.c_str(), port.c_str(), &hints, &res);
+        int gai = getaddrinfo(a.host.c_str(), a.port.c_str(), &hints, &res);
         if (gai != 0)
             fail(format("getaddrinfo: {}", gai_strerror(gai)));
         std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> res_guard(res,
@@ -123,7 +123,7 @@ int connect_to_source(const string &addr) {
         if (fd < 0)
             fail(format("socket: {}", std::strerror(errno)));
         if (connect(fd, res->ai_addr, res->ai_addrlen) < 0)
-            fail(format("connect {}:{}: {}", host, port, std::strerror(errno)));
+            fail(format("connect {}:{}: {}", a.host, a.port, std::strerror(errno)));
     }
     return fd;
 }
@@ -133,19 +133,21 @@ int connect_to_source(const string &addr) {
 int main(int argc, char **argv) {
     try {
         Options opts = parse_args(argc, argv);
-        FILE *out = nullptr;
+        FILE *raw_out = nullptr;
         bool close_out = false;
         if (opts.output_path == "-") {
-            out = stdout;
+            raw_out = stdout;
         } else {
-            out = std::fopen(opts.output_path.c_str(), "wb");
-            if (!out)
+            raw_out = std::fopen(opts.output_path.c_str(), "wb");
+            if (!raw_out)
                 fail(format("open {}: {}", opts.output_path,
                             std::strerror(errno)));
             close_out = true;
         }
+        FileGuard out_guard(raw_out, close_out);
 
-        int fd = connect_to_source(opts.source_address);
+        FdGuard fd_guard(connect_to_source(opts.source_address));
+        int fd = fd_guard.fd;
 
         using neotape::tcp::Message;
         using neotape::tcp::MessageType;
@@ -154,7 +156,7 @@ int main(int argc, char **argv) {
         auto vh = neotape::tcp::read_message(fd);
         if (!vh || vh->type != MessageType::volume_header)
             fail("did not receive volume header");
-        if (std::fwrite(vh->payload.data(), 1, vh->payload.size(), out) !=
+        if (std::fwrite(vh->payload.data(), 1, vh->payload.size(), raw_out) !=
             vh->payload.size())
             fail("write output");
 
@@ -167,7 +169,7 @@ int main(int argc, char **argv) {
             switch (msg->type) {
             case MessageType::frame_record:
                 if (std::fwrite(msg->payload.data(), 1, msg->payload.size(),
-                                out) != msg->payload.size())
+                                raw_out) != msg->payload.size())
                     fail("write output");
                 ++frames;
                 break;
@@ -177,13 +179,10 @@ int main(int argc, char **argv) {
                 break;
             case MessageType::archive_end_header:
                 if (std::fwrite(msg->payload.data(), 1, msg->payload.size(),
-                                out) != msg->payload.size())
+                                raw_out) != msg->payload.size())
                     fail("write output");
                 std::cerr << format("writer: received archive end after {} frames\n",
                                     frames);
-                close(fd);
-                if (close_out)
-                    std::fclose(out);
                 return 0;
             case MessageType::error:
                 fail("archiver reported error");

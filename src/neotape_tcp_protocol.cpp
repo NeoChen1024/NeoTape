@@ -106,4 +106,26 @@ std::string message_type_name(MessageType type) {
     return std::format("UNKNOWN({})", static_cast<int>(type));
 }
 
+Address parse_address(const std::string &addr) {
+    Address result;
+    const std::string tcp_prefix = "tcp://";
+    const std::string unix_prefix = "unix://";
+    if (addr.rfind(tcp_prefix, 0) == 0) {
+        result.is_unix = false;
+        std::string rest = addr.substr(tcp_prefix.size());
+        auto colon = rest.rfind(':');
+        if (colon == std::string::npos)
+            throw std::runtime_error("tcp address missing port");
+        result.host = rest.substr(0, colon);
+        result.port = rest.substr(colon + 1);
+        return result;
+    }
+    if (addr.rfind(unix_prefix, 0) == 0) {
+        result.is_unix = true;
+        result.path = addr.substr(unix_prefix.size());
+        return result;
+    }
+    throw std::runtime_error("address must start with tcp:// or unix://");
+}
+
 } // namespace neotape::tcp

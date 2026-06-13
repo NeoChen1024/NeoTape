@@ -38,4 +38,15 @@ void write_message(int fd, const Message &msg);
 
 std::string message_type_name(MessageType type);
 
+struct Address {
+    bool is_unix = false;
+    std::string host; // tcp host
+    std::string port; // tcp port
+    std::string path; // unix path
+};
+
+// Parse a tcp://host:port or unix://path address string.
+// Throws std::runtime_error on invalid input.
+Address parse_address(const std::string &addr);
+
 } // namespace neotape::tcp
