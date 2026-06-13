@@ -4,11 +4,14 @@
 #include "neotape/pax_writer.hpp"
 #include "neotape/tcp_protocol.hpp"
 
+#include <cassert>
 #include <cerrno>
 #include <cstring>
+#include <exception>
 #include <format>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <netdb.h>
 #include <optional>
 #include <span>
@@ -103,7 +106,6 @@ struct FrameBuilder {
     std::string archive_name;
     uint64_t global_frame = 1;
     uint64_t slice = 0;
-    uint64_t frame_in_slice = 1;
     std::vector<std::byte> pending;
 
     explicit FrameBuilder(uint32_t bs, uint64_t vol,
@@ -139,11 +141,11 @@ struct FrameBuilder {
     }
 
     std::vector<std::byte> build_frame(std::span<const std::byte> payload) {
+        assert(payload.size() <= payload_capacity());
+
         // For the first implementation, each frame is its own single-frame
-        // slice.  Increment the slice counter for every frame and keep the
-        // per-slice frame index at one (sequence numbers are 1-indexed).
+        // slice.  Sequence numbers are 1-indexed.
         ++slice;
-        frame_in_slice = 1;
 
         FrameHeader fh;
         fh.volume_block_size = block_size;
@@ -153,7 +155,7 @@ struct FrameBuilder {
         fh.payload_profile = PayloadProfile::pax;
         fh.logical_slice_seq_num = slice;
         fh.global_frame_seq_num = global_frame;
-        fh.frame_seq_num_within_slice = frame_in_slice;
+        fh.frame_seq_num_within_slice = 1;
         fh.frame_payload_size = payload.size();
         fh.frame_content_type = FrameContentType::slice_content;
         fh.frame_payload_blake3 = blake3_hash(
@@ -172,7 +174,6 @@ struct FrameBuilder {
         record.resize(block_size); // pad with zero bytes
 
         ++global_frame;
-        ++frame_in_slice;
         return record;
     }
 };
@@ -191,19 +192,28 @@ struct ThreadJoiner {
     }
     ThreadJoiner(const ThreadJoiner &) = delete;
     ThreadJoiner &operator=(const ThreadJoiner &) = delete;
+    ThreadJoiner(ThreadJoiner &&) = delete;
+    ThreadJoiner &operator=(ThreadJoiner &&) = delete;
 };
+
+void send_error(int client, const char *text) {
+    auto payload = std::vector<std::byte>(
+        reinterpret_cast<const std::byte *>(text),
+        reinterpret_cast<const std::byte *>(text) + std::strlen(text));
+    neotape::tcp::write_message(client,
+                                Message{MessageType::error, std::move(payload)});
+}
 
 PaxWriterCallbacks make_server_callbacks(FrameBuilder &builder,
                                          ClosableQueue<RecordOrDone> &queue) {
     return PaxWriterCallbacks{
-        .begin_slice = [&](uint64_t slice_num) {
-            builder.slice = slice_num;
-            builder.frame_in_slice = 1;
-        },
+        .begin_slice = [](uint64_t) {},
         .write_chunk = [&](PaxChunk chunk) {
             auto frames = builder.feed(chunk.bytes);
-            for (auto &f : frames)
-                queue.push(RecordOrDone{std::move(f), false});
+            for (auto &f : frames) {
+                if (!queue.push(RecordOrDone{std::move(f), false}))
+                    throw std::runtime_error("frame consumer disconnected");
+            }
         },
         .end_slice = [](uint64_t) {},
         .progress_paused = [] { return false; },
@@ -301,15 +311,7 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                     ++request_count;
                     break;
                 default:
-                    neotape::tcp::write_message(
-                        client,
-                        Message{MessageType::error,
-                                std::vector<std::byte>{
-                                    reinterpret_cast<const std::byte *>(
-                                        "unexpected request type"),
-                                    reinterpret_cast<const std::byte *>(
-                                        "unexpected request type") +
-                                        std::strlen("unexpected request type")}});
+                    send_error(client, "unexpected request type");
                     close(client);
                     return frames_served;
                 }
@@ -322,6 +324,32 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                              vh.archive_uuid, opts.archive_name);
         ClosableQueue<RecordOrDone> frame_queue(8);
 
+        std::exception_ptr pax_error;
+        std::string pax_error_text;
+        std::mutex pax_error_mtx;
+        std::atomic<bool> cancelled{false};
+
+        auto capture_pax_error = [&](const std::string &text) {
+            std::lock_guard lock(pax_error_mtx);
+            if (!pax_error) {
+                pax_error_text = text;
+                pax_error = std::current_exception();
+            }
+        };
+
+        auto get_pax_error_text = [&]() -> std::string {
+            std::lock_guard lock(pax_error_mtx);
+            return pax_error_text;
+        };
+
+        auto check_pax_error = [&]() {
+            if (cancelled.load())
+                return;
+            std::lock_guard lock(pax_error_mtx);
+            if (pax_error)
+                std::rethrow_exception(pax_error);
+        };
+
         std::thread pax_thread([&]() {
             try {
                 auto callbacks = make_server_callbacks(builder, frame_queue);
@@ -330,7 +358,11 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                 if (auto tail = builder.flush(); tail.has_value())
                     frame_queue.push(RecordOrDone{std::move(*tail), false});
                 frame_queue.push(RecordOrDone{{}, true});
+            } catch (const std::exception &e) {
+                capture_pax_error(e.what());
+                frame_queue.close();
             } catch (...) {
+                capture_pax_error("unknown pax error");
                 frame_queue.close();
             }
         });
@@ -340,8 +372,10 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
             for (;;) {
                 auto req = neotape::tcp::read_message(client);
                 if (!req.has_value()) {
+                    cancelled.store(true);
                     frame_queue.close();
                     pax_thread.join();
+                    check_pax_error();
                     close(client);
                     return frames_served;
                 }
@@ -356,12 +390,13 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                 case MessageType::next_frame: {
                     auto next = frame_queue.pop();
                     if (!next.has_value()) {
-                        neotape::tcp::write_message(
-                            client, Message{MessageType::error,
-                                            std::vector<std::byte>{}});
+                        std::string reason = get_pax_error_text();
+                        if (reason.empty())
+                            reason = "frame queue closed";
+                        send_error(client, reason.c_str());
                         close(client);
-                        frame_queue.close();
                         pax_thread.join();
+                        check_pax_error();
                         return frames_served;
                     }
                     if (next->done) {
@@ -385,6 +420,7 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                                         serialize_archive_end_header(ae))});
                         close(client);
                         pax_thread.join();
+                        check_pax_error();
                         return frames_served;
                     }
                     if (next->record.size() != opts.volume_block_size)
@@ -397,26 +433,27 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                     break;
                 }
                 case MessageType::tape_eof:
-                    // Archiver never requests EOF from writer; ignore or treat as
+                    // Archiver never requests EOF from writer; treat as
                     // protocol error.
-                    neotape::tcp::write_message(
-                        client, Message{MessageType::error,
-                                        std::vector<std::byte>{}});
-                    close(client);
+                    send_error(client, "unexpected tape_eof request");
+                    cancelled.store(true);
                     frame_queue.close();
                     pax_thread.join();
+                    check_pax_error();
+                    close(client);
                     return frames_served;
                 default:
-                    neotape::tcp::write_message(
-                        client, Message{MessageType::error,
-                                        std::vector<std::byte>{}});
-                    close(client);
+                    send_error(client, "unexpected request type");
+                    cancelled.store(true);
                     frame_queue.close();
                     pax_thread.join();
+                    check_pax_error();
+                    close(client);
                     return frames_served;
                 }
             }
         } catch (...) {
+            cancelled.store(true);
             frame_queue.close();
             throw;
         }

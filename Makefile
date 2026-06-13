@@ -70,14 +70,15 @@ $(BINDIR)/test_tcp_protocol : tests/test_tcp_protocol.cpp $(TCP_PROTO_OBJ) Makef
 $(BINDIR)/neotape-archiver : $(ARCHIVER_CMD_OBJ) $(TCP_SERVER_OBJ) $(TCP_PROTO_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) $(PAX_WRITER_OBJ) $(BOUNDEDBUF_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $(ARCHIVER_CMD_OBJ) $(TCP_SERVER_OBJ) $(TCP_PROTO_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) $(PAX_WRITER_OBJ) $(BOUNDEDBUF_OBJ) -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-write : $(WRITE_CMD_OBJ) $(TCP_PROTO_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(WRITE_CMD_OBJ) $(TCP_PROTO_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/neotape-write : $(WRITE_CMD_OBJ) $(TCP_PROTO_OBJ) $(TAPE_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $(WRITE_CMD_OBJ) $(TCP_PROTO_OBJ) $(TAPE_OBJ) $(FORMAT_OBJ) $(FORMAT_GEN_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
 
 test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/mt-pax $(BINDIR)/neotape-plan $(BINDIR)/neotape-archiver $(BINDIR)/neotape-write
 	$(BINDIR)/test_pax_pipeline
 	$(BINDIR)/test_tcp_protocol
 	sh tests/smoke_mt_pax_pipeline.sh
 	sh tests/smoke_tcp_archive.sh
+	sh tests/smoke_mt_pax_parity.sh
 
 test_pax_cli: $(BINDIR)/mt-pax
 	sh tests/smoke_mt_pax_pipeline.sh

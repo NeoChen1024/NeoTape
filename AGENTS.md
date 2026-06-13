@@ -4,15 +4,16 @@
 
 LTO tape-oriented multi-volume length-framed backup container. A pax writer
 exists: `bin/mt-pax` (multi-threaded with `--io-thread`, `src/mt-pax.cpp`).
-A planner (`bin/neotape-plan`) exists for slice metadata. The NeoTape
-writer/reader/inspect CLI tools have been removed and will be rewritten against
-the simplified format. The tape-device backend (`namespace mt`) remains available
-for future tools.
+A planner (`bin/neotape-plan`) exists for slice metadata. A split producer/writer
+pair (`bin/neotape-archiver` and `bin/neotape-write`) generates and consumes
+NeoTape-framed records over a TCP or Unix-domain socket. The tape-device backend
+(`namespace mt`) remains available for future tools.
 
 ## Build
 
 ```sh
-make -j "$(nproc)"      # produces bin/mt-pax and NeoTape helper tools
+make -j "$(nproc)"      # produces bin/mt-pax, bin/neotape-archiver, bin/neotape-write,
+                        # bin/neotape-plan, and NeoTape helper tools
 make clean
 ```
 
@@ -49,12 +50,18 @@ headers currently confuse clangd 22.
 
 - `src/mt-pax.cpp` — multi-threaded pax writer (worker pool, serializer, streaming large files)
 - `src/neotape_plan_cmd.cpp` — planner for slice metadata
+- `src/neotape_archiver_cmd.cpp` — `bin/neotape-archiver` CLI entry point
+- `src/neotape_write_cmd.cpp` — `bin/neotape-write` CLI entry point
+- `src/neotape_tcp_server.cpp` — archiver server and frame packing
+- `src/neotape_tcp_protocol.cpp` — framed TCP message I/O
 - `src/neotape_*.cpp` — NeoTape format and tape manipulation library (format layer and `namespace mt`)
+- `include/neotape/tcp_protocol.hpp` — TCP archive protocol message types
+- `include/neotape/tcp_server.hpp` — archiver server interface
 - `include/neotape/bounded_buffer.hpp` — thread-safe bounded buffer used by mt-pax
 - `include/neotape/` — shared project headers (common types, format helpers)
 - `3rdparty/` — git submodules (BLAKE3, crc32c, mt-st). Init with `git submodule update --init --recursive`
 - `docs/spec/` — active format spec; `docs/ROADMAP.md` — implementation phases; `docs/mt-pax.md` — mt-pax architecture
-- No test framework, no CI, no test scripts yet
+- `tests/smoke_mt_pax_pipeline.sh`, `tests/smoke_tcp_archive.sh`, `tests/smoke_mt_pax_parity.sh` — smoke tests; no test framework or CI yet
 
 ## mt-pax CLI
 
@@ -77,6 +84,31 @@ All `pax` options plus:
   output buffer (default 0).  When non-zero the output thread waits until
   the buffer reaches at least this full before starting to drain, useful for
   sequential writes on HDD/tape.
+
+## neotape-archiver CLI
+
+```
+bin/neotape-archiver --listen <tcp://host:port|unix://path>
+                     [--volume-block-size <bytes>] [--archive-name <name>]
+                     [-C <dir>] [-P <percent>] [--io-thread <N>]
+                     [--output-buffer-size <bytes>] [--plan <file>]
+                     [-v|-vv] [-x] <path> [path...]
+```
+
+In server mode (`--listen`) the archiver is a long-running producer that serves
+NeoTape records over a single TCP/UDS connection. Without `--listen` it behaves
+like `mt-pax` and writes a plain pax stream to `-f`.
+
+## neotape-write CLI
+
+```
+bin/neotape-write --source <tcp://host:port|unix://path>
+                  [--target <tape:/dev/nst0|spool:./dir> | -o <file|->]
+```
+
+Short-lived per-volume writer client. Connects to an archiver, requests the
+Volume Header, then requests frames one at a time. Supports tape devices,
+filesystem spool directories, and raw file output.
 
 ## Thread architecture (mt-pax)
 

@@ -108,6 +108,11 @@ class TapeDevice {
     void close();
     void reopen();
 
+    // -- I/O -----------------------------------------------------------
+
+    // Write all bytes to the tape device. Throws on short write or error.
+    virtual void write_record(const void *data, std::size_t size);
+
     // -- positioning ---------------------------------------------------
 
     void rewind();
@@ -191,6 +196,8 @@ class SpoolTapeDevice final : public TapeDevice {
 
     int fd() const noexcept override;
 
+    void write_record(const void *data, std::size_t size) override;
+
   protected:
     void do_mtop(int op, int count) override;
     Position do_tell() override;
@@ -209,6 +216,8 @@ class SpoolTapeDevice final : public TapeDevice {
     bool exhausted_ = false;
     bool current_is_temp_ = false;
     std::filesystem::path current_path_;
+
+    void finalize_current_file();
 };
 
 } // namespace mt

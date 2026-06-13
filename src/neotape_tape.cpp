@@ -250,6 +250,23 @@ void TapeDevice::close() {
     }
 }
 
+void TapeDevice::write_record(const void *data, std::size_t size) {
+    const auto *p = static_cast<const char *>(data);
+    std::size_t remaining = size;
+    while (remaining > 0) {
+        ssize_t w = ::write(fd_, p, remaining);
+        if (w < 0) {
+            if (errno == EINTR)
+                continue;
+            throw Error(device_path_, "write_record", errno);
+        }
+        if (w == 0)
+            throw Error(device_path_, "write_record", EIO);
+        p += w;
+        remaining -= static_cast<std::size_t>(w);
+    }
+}
+
 void TapeDevice::reopen() {
     close();
     int oflags = read_write_ ? O_RDWR : O_RDONLY;
@@ -399,15 +416,66 @@ SpoolTapeDevice::SpoolTapeDevice(const fs::path &root, bool read_write)
 }
 
 SpoolTapeDevice::~SpoolTapeDevice() {
-    if (spool_fd_ >= 0)
+    if (spool_fd_ >= 0) {
         ::close(spool_fd_);
-    if (read_write_ && current_is_temp_ && !current_path_.empty()) {
+        spool_fd_ = -1;
+    }
+    if (read_write_ && current_is_temp_ && current_record_ > 0) {
+        // Finalize any trailing tape file that was never explicitly closed
+        // with a filemark.  Destructors must not throw, so swallow errors.
+        try {
+            finalize_current_file();
+        } catch (...) {
+            std::error_code ec;
+            fs::remove(current_path_, ec);
+        }
+    } else if (read_write_ && current_is_temp_ && !current_path_.empty()) {
         std::error_code ec;
         fs::remove(current_path_, ec);
     }
 }
 
+void SpoolTapeDevice::finalize_current_file() {
+    if (!current_is_temp_ || current_path_.empty())
+        return;
+
+    auto header = parse_spool_header_file(current_path_);
+    if (header.volume)
+        current_block_size_ = header.volume->volume_block_size;
+    else if (header.frame)
+        current_block_size_ = header.frame->volume_block_size;
+    else if (header.archive_end)
+        current_block_size_ = header.archive_end->volume_block_size;
+    fs::path final_path = spool_final_path(root_, current_file_num_, header);
+    fs::rename(current_path_, final_path);
+    current_is_temp_ = false;
+    current_path_.clear();
+}
+
 int SpoolTapeDevice::fd() const noexcept { return spool_fd_; }
+
+void SpoolTapeDevice::write_record(const void *data, std::size_t size) {
+    if (!read_write_)
+        throw Error(device_path(), "write_record", EROFS);
+    if (spool_fd_ < 0)
+        throw Error(device_path(), "write_record", EBADF);
+
+    const auto *p = static_cast<const char *>(data);
+    std::size_t remaining = size;
+    while (remaining > 0) {
+        ssize_t w = ::write(spool_fd_, p, remaining);
+        if (w < 0) {
+            if (errno == EINTR)
+                continue;
+            throw Error(device_path(), "write_record", errno);
+        }
+        if (w == 0)
+            throw Error(device_path(), "write_record", EIO);
+        p += w;
+        remaining -= static_cast<std::size_t>(w);
+    }
+    ++current_record_;
+}
 
 void SpoolTapeDevice::do_mtop(int op, int count) {
     if (count <= 0)
@@ -432,18 +500,7 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
             throw Error(device_path(), "close", errno);
         spool_fd_ = -1;
 
-        auto header = parse_spool_header_file(current_path_);
-        if (header.volume)
-            current_block_size_ = header.volume->volume_block_size;
-        else if (header.frame)
-            current_block_size_ = header.frame->volume_block_size;
-        else if (header.archive_end)
-            current_block_size_ = header.archive_end->volume_block_size;
-        fs::path final_path =
-            spool_final_path(root_, current_file_num_, header);
-        fs::rename(current_path_, final_path);
-        current_is_temp_ = false;
-        current_path_.clear();
+        finalize_current_file();
 
         ++next_file_num_;
         current_file_num_ = next_file_num_;

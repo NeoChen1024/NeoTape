@@ -1,15 +1,19 @@
 #include "neotape/common.hpp"
+#include "neotape/tape.hpp"
 #include "neotape/tcp_protocol.hpp"
 
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <getopt.h>
 #include <iostream>
+#include <memory>
 #include <netdb.h>
 #include <string>
+#include <variant>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -46,9 +50,24 @@ struct FileGuard {
     FileGuard &operator=(const FileGuard &) = delete;
 };
 
+struct TargetLocator {
+    enum Kind { none, tape, spool } kind = none;
+    std::string path;
+};
+
+TargetLocator parse_target(const std::string &s) {
+    if (s.rfind("tape:", 0) == 0)
+        return {TargetLocator::tape, s.substr(5)};
+    if (s.rfind("spool:", 0) == 0)
+        return {TargetLocator::spool, s.substr(6)};
+    throw std::runtime_error(
+        "target must be tape:<device> or spool:<dir>");
+}
+
 struct Options {
     string source_address;
     string output_path = "-";
+    TargetLocator target;
 };
 
 [[noreturn]] void fail(const string &msg) {
@@ -58,7 +77,8 @@ struct Options {
 
 void usage(const char *prog) {
     std::cerr << format(
-        "usage: {} --source <tcp://host:port|unix://path> [-o <file|->]\n",
+        "usage: {} --source <tcp://host:port|unix://path>\n"
+        "       [--target <tape:/dev/nst0|spool:./dir> | -o <file|->]\n",
         prog);
 }
 
@@ -66,6 +86,7 @@ Options parse_args(int argc, char **argv) {
     static const struct option long_opts[] = {
         {"source", required_argument, nullptr, 's'},
         {"output", required_argument, nullptr, 'o'},
+        {"target", required_argument, nullptr, 256},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
@@ -79,6 +100,9 @@ Options parse_args(int argc, char **argv) {
         case 'o':
             opts.output_path = optarg;
             break;
+        case 256:
+            opts.target = parse_target(optarg);
+            break;
         case 'h':
             usage(argv[0]);
             std::exit(0);
@@ -90,6 +114,10 @@ Options parse_args(int argc, char **argv) {
     if (opts.source_address.empty()) {
         usage(argv[0]);
         std::exit(2);
+    }
+    if (opts.target.kind != TargetLocator::none &&
+        opts.output_path != "-") {
+        fail("--target and -o are mutually exclusive");
     }
     return opts;
 }
@@ -133,18 +161,6 @@ int connect_to_source(const string &addr) {
 int main(int argc, char **argv) {
     try {
         Options opts = parse_args(argc, argv);
-        FILE *raw_out = nullptr;
-        bool close_out = false;
-        if (opts.output_path == "-") {
-            raw_out = stdout;
-        } else {
-            raw_out = std::fopen(opts.output_path.c_str(), "wb");
-            if (!raw_out)
-                fail(format("open {}: {}", opts.output_path,
-                            std::strerror(errno)));
-            close_out = true;
-        }
-        FileGuard out_guard(raw_out, close_out);
 
         FdGuard fd_guard(connect_to_source(opts.source_address));
         int fd = fd_guard.fd;
@@ -156,11 +172,75 @@ int main(int argc, char **argv) {
         auto vh = neotape::tcp::read_message(fd);
         if (!vh || vh->type != MessageType::volume_header)
             fail("did not receive volume header");
-        if (std::fwrite(vh->payload.data(), 1, vh->payload.size(), raw_out) !=
-            vh->payload.size())
-            fail("write output");
+
+        // Output abstraction: either a raw file/stream or a tape/spool device.
+        struct FileOutput {
+            FILE *file = nullptr;
+            bool owned = false;
+        };
+        struct TargetOutput {
+            std::unique_ptr<mt::TapeDevice> device;
+        };
+        std::variant<FileOutput, TargetOutput> output;
+
+        if (opts.target.kind == TargetLocator::none) {
+            FILE *raw_out = nullptr;
+            bool owned = false;
+            if (opts.output_path == "-") {
+                raw_out = stdout;
+            } else {
+                raw_out = std::fopen(opts.output_path.c_str(), "wb");
+                if (!raw_out)
+                    fail(format("open {}: {}", opts.output_path,
+                                std::strerror(errno)));
+                owned = true;
+            }
+            output = FileOutput{raw_out, owned};
+        } else {
+            std::unique_ptr<mt::TapeDevice> dev;
+            if (opts.target.kind == TargetLocator::tape) {
+                dev = std::make_unique<mt::TapeDevice>(opts.target.path, true);
+            } else {
+                dev = std::make_unique<mt::SpoolTapeDevice>(
+                    std::filesystem::path(opts.target.path), true);
+            }
+            dev->rewind();
+            output = TargetOutput{std::move(dev)};
+        }
+
+        auto write_bytes = [&](const std::vector<std::byte> &bytes) {
+            if (std::holds_alternative<FileOutput>(output)) {
+                FILE *f = std::get<FileOutput>(output).file;
+                if (std::fwrite(bytes.data(), 1, bytes.size(), f) !=
+                    bytes.size())
+                    fail("write output");
+            } else {
+                mt::TapeDevice *dev = std::get<TargetOutput>(output).device.get();
+                if (dev->status().eot())
+                    throw std::runtime_error("end of tape");
+                dev->write_record(bytes.data(), bytes.size());
+            }
+        };
+
+        auto write_filemark = [&]() {
+            if (std::holds_alternative<TargetOutput>(output))
+                std::get<TargetOutput>(output).device->write_filemark();
+        };
+
+        auto close_output = [&]() {
+            if (std::holds_alternative<FileOutput>(output)) {
+                FileOutput &fo = std::get<FileOutput>(output);
+                if (fo.owned && fo.file)
+                    std::fclose(fo.file);
+                fo.file = nullptr;
+                fo.owned = false;
+            }
+        };
+
+        write_bytes(vh->payload);
 
         uint64_t frames = 0;
+        bool eot_reached = false;
         for (;;) {
             neotape::tcp::write_message(fd, Message{MessageType::next_frame});
             auto msg = neotape::tcp::read_message(fd);
@@ -168,24 +248,39 @@ int main(int argc, char **argv) {
                 fail("unexpected disconnect");
             switch (msg->type) {
             case MessageType::frame_record:
-                if (std::fwrite(msg->payload.data(), 1, msg->payload.size(),
-                                raw_out) != msg->payload.size())
-                    fail("write output");
+                try {
+                    write_bytes(msg->payload);
+                } catch (const std::runtime_error &e) {
+                    if (std::string(e.what()) == "end of tape") {
+                        write_filemark();
+                        eot_reached = true;
+                    } else {
+                        throw;
+                    }
+                }
+                if (eot_reached) {
+                    close_output();
+                    std::cerr << format(
+                        "writer: reached end of tape after {} frames\n", frames);
+                    return 1;
+                }
                 ++frames;
                 break;
             case MessageType::tape_eof:
-                // In skeleton mode just print a marker to stderr.
-                std::cerr << "writer: tape eof marker\n";
+                write_filemark();
                 break;
             case MessageType::archive_end_header:
-                if (std::fwrite(msg->payload.data(), 1, msg->payload.size(),
-                                raw_out) != msg->payload.size())
-                    fail("write output");
-                std::cerr << format("writer: received archive end after {} frames\n",
-                                    frames);
+                write_bytes(msg->payload);
+                close_output();
+                std::cerr << format(
+                    "writer: received archive end after {} frames\n", frames);
                 return 0;
-            case MessageType::error:
-                fail("archiver reported error");
+            case MessageType::error: {
+                string reason(msg->payload.begin(), msg->payload.end());
+                if (reason.empty())
+                    reason = "archiver reported error";
+                fail(reason);
+            }
             default:
                 fail(format("unexpected message type {}",
                             static_cast<int>(msg->type)));

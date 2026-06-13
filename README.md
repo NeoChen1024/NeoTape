@@ -5,10 +5,11 @@ A seekable multi-volume length-framed payload transport container designed for L
 NeoTape wraps a payload byte stream (typically a POSIX pax/tar archive) in a lightweight framing layer that provides per-slice and per-Frame structure, integrity verification via BLAKE3, and multi-volume continuation. The on-tape format uses LTO filemarks at logical-slice boundaries, enabling native tape seek to independently verifiable checkpoint units without requiring per-Frame filemarks.
 
 This is an early implementation-stage project. The current implementation
-includes a standalone pax writer (`bin/mt-pax`) and a planner (`bin/neotape-plan`)
-for slicing metadata. The NeoTape writer/reader/inspect CLI tools have been
-removed and will be rewritten against the simplified format. The `namespace mt`
-tape manipulation library remains available for future tools.
+includes a standalone pax writer (`bin/mt-pax`), a planner (`bin/neotape-plan`)
+for slicing metadata, and a split producer/writer pair (`bin/neotape-archiver`
+and `bin/neotape-write`) that generate NeoTape-framed records over a TCP or
+Unix-domain socket. The `namespace mt` tape manipulation library remains
+available for future tools.
 
 ## Specification Status
 
@@ -78,7 +79,8 @@ git submodule update --init --recursive
 make
 ```
 
-Produces `bin/mt-pax`, `bin/neotape-plan`, and standalone NeoTape helper tools.
+Produces `bin/mt-pax`, `bin/neotape-plan`, `bin/neotape-archiver`,
+`bin/neotape-write`, and standalone NeoTape helper tools.
 
 ## Usage
 
@@ -108,9 +110,49 @@ Additional options:
   output thread waits until the buffer reaches at least this full before
   draining, useful for sequential writes on HDD/tape.
 
+### bin/neotape-archiver (long-running producer)
+
+```sh
+bin/neotape-archiver --listen <tcp://host:port|unix://path>
+                     [--volume-block-size <bytes>] [--archive-name <name>]
+                     [-C <dir>] [-P <percent>] [--io-thread <N>]
+                     [--output-buffer-size <bytes>] [--plan <file>]
+                     [-v|-vv] [-x] <path> [path...]
+```
+
+`neotape-archiver` is a functional superset of `mt-pax`. In server mode it
+listens on a TCP or Unix-domain socket and serves NeoTape-framed records to
+`neotape-write` clients. Without `--listen` it writes a plain pax stream to
+`-f <out-file|->`, matching `mt-pax` output.
+
+### bin/neotape-write (per-volume writer client)
+
+```sh
+bin/neotape-write --source <tcp://host:port|unix://path>
+                  [--target <tape:/dev/nst0|spool:./dir> | -o <file|->]
+```
+
+`neotape-write` connects to a running `neotape-archiver`, requests the current
+Volume Header, then requests frames one at a time. It writes each record to a
+tape device, a filesystem spool directory, or a raw file. One writer process
+writes exactly one volume.
+
 ### Examples
 
 ```sh
+# Long-running archiver on a Unix-domain socket
+bin/neotape-archiver --listen unix:///run/neotape/home.sock \
+                     --archive-name home --volume-block-size 4M \
+                     -C /data photos docs
+
+# Write one volume to a tape device
+bin/neotape-write --source unix:///run/neotape/home.sock \
+                  --target tape:/dev/nst0
+
+# Write one volume to a filesystem spool (useful for testing)
+bin/neotape-write --source unix:///run/neotape/home.sock \
+                  --target spool:./vol1.spool
+
 # Pack a directory with 4 I/O threads
 bin/mt-pax -f backup.tar --io-thread 4 src/
 

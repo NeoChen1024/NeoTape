@@ -19,8 +19,6 @@ namespace {
 
 using std::format;
 using std::string;
-using std::string_view;
-using std::vector;
 
 struct Options {
     string listen_address;
@@ -41,12 +39,15 @@ struct Options {
 
 void usage(const char *prog) {
     std::cerr << format(
-        "usage: {} --listen <tcp://host:port|unix://path>\n"
+        "usage (server mode):\n"
+        "  {} --listen <tcp://host:port|unix://path>\n"
         "       [--volume-block-size <bytes>] [--archive-name <name>]\n"
         "       [-C <dir>] [-P <percent>] [--io-thread <N>]\n"
-        "       [--output-buffer-size <bytes>] [-v|-vv] [-x] <path> [path...]\n"
-        "       {} -f <out-file|-> [-C <dir>] [-P <percent>]\n"
-        "       [--io-thread <N>] [--output-buffer-size <bytes>] [-v|-vv] [-x]\n"
+        "       [--output-buffer-size <bytes>] [--plan <file>] [-v|-vv] [-x]\n"
+        "       <path> [path...]\n"
+        "usage (local mode):\n"
+        "  {} -f <out-file|-> [-C <dir>] [-P <percent>] [--io-thread <N>]\n"
+        "       [--output-buffer-size <bytes>] [--plan <file>] [-v|-vv] [-x]\n"
         "       <path> [path...]\n",
         prog, prog);
 }
@@ -151,21 +152,25 @@ Options parse_args(int argc, char **argv) {
     return opts;
 }
 
-neotape::PaxWriterCallbacks
-make_local_callbacks(const string &output, FILE *&out_file,
-                     bool &close_file) {
-    if (output == "-") {
-        out_file = stdout;
-        close_file = false;
-    } else {
-        out_file = std::fopen(output.c_str(), "wb");
-        if (!out_file)
-            fail_errno(string("open ") + output);
-        close_file = true;
+struct FileGuard {
+    FILE *file = nullptr;
+    bool owned = false;
+    FileGuard(FILE *f, bool own) : file(f), owned(own) {}
+    ~FileGuard() {
+        if (owned && file)
+            std::fclose(file);
     }
+    FileGuard(const FileGuard &) = delete;
+    FileGuard &operator=(const FileGuard &) = delete;
+    FileGuard(FileGuard &&) = delete;
+    FileGuard &operator=(FileGuard &&) = delete;
+};
+
+neotape::PaxWriterCallbacks
+make_local_callbacks(FILE *out_file) {
     return neotape::PaxWriterCallbacks{
         .begin_slice = [](uint64_t) {},
-        .write_chunk = [&](neotape::PaxChunk chunk) {
+        .write_chunk = [out_file](neotape::PaxChunk chunk) {
             if (std::fwrite(chunk.bytes.data(), 1, chunk.bytes.size(),
                             out_file) != chunk.bytes.size())
                 fail_errno("write output");
@@ -198,15 +203,24 @@ int main(int argc, char **argv) {
             return 0;
         }
 
-        FILE *out_file = nullptr;
-        bool close_file = false;
-        neotape::PaxWriterCallbacks callbacks =
-            make_local_callbacks(opts.pax.output_name, out_file, close_file);
+        FILE *raw_out = nullptr;
+        bool owned = false;
+        if (opts.pax.output_name == "-") {
+            raw_out = stdout;
+        } else {
+            raw_out = std::fopen(opts.pax.output_name.c_str(), "wb");
+            if (!raw_out)
+                fail_errno(string("open ") + opts.pax.output_name);
+            owned = true;
+        }
+        FileGuard out_guard(raw_out, owned);
+
+        neotape::PaxWriterCallbacks callbacks = make_local_callbacks(raw_out);
 
         neotape::PaxWriteResult result =
             neotape::write_pax(opts.pax, std::move(callbacks));
-        if (close_file && out_file != nullptr && std::fclose(out_file) != 0)
-            fail_errno(string("close ") + opts.pax.output_name);
+        if (std::fflush(raw_out) != 0)
+            fail_errno("flush output");
 
         std::cerr << format("{}  {}\n", result.blake3_hex,
                                 opts.pax.output_name);
