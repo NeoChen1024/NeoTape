@@ -172,7 +172,7 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                     close(client);
                     return frames_served;
                 }
-                if (frames_served % 4 == 3) {
+                if (frames_served > 0 && frames_served % 4 == 0) {
                     neotape::tcp::write_message(
                         client, Message{MessageType::tape_eof, {}});
                 } else {
