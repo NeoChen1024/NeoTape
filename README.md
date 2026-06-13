@@ -130,12 +130,17 @@ listens on a TCP or Unix-domain socket and serves NeoTape-framed records to
 ```sh
 bin/neotape-write --source <tcp://host:port|unix://path>
                   [--target <tape:/dev/nst0|spool:./dir> | -o <file|->]
+                  [--erase | --append]
 ```
 
 `neotape-write` connects to a running `neotape-archiver`, requests the current
 Volume Header, then requests frames one at a time. It writes each record to a
 tape device, a filesystem spool directory, or a raw file. One writer process
 writes exactly one volume.
+
+When `--target` is a tape or spool device, the writer refuses to overwrite
+existing content unless `--erase` (rewind to BOT and overwrite) or `--append`
+(space to EOD and continue) is given. File output (`-o`) always overwrites.
 
 ### Examples
 

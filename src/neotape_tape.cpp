@@ -581,15 +581,21 @@ Position SpoolTapeDevice::do_tell() {
 
 Status SpoolTapeDevice::do_status() {
     long gstat = GMT_ONLINE;
-    if (read_write_ && current_is_temp_ && spool_fd_ >= 0) {
-        off_t cur = ::lseek(spool_fd_, 0, SEEK_CUR);
-        off_t end = ::lseek(spool_fd_, 0, SEEK_END);
-        if (cur >= 0)
-            ::lseek(spool_fd_, cur, SEEK_SET);
-        if (end == 0)
-            gstat |= GMT_BOT | GMT_EOD;
-        else
-            gstat |= GMT_EOD;
+    if (read_write_) {
+        if (current_is_temp_ && spool_fd_ >= 0) {
+            off_t cur = ::lseek(spool_fd_, 0, SEEK_CUR);
+            off_t end = ::lseek(spool_fd_, 0, SEEK_END);
+            if (cur >= 0)
+                ::lseek(spool_fd_, cur, SEEK_SET);
+            if (end == 0)
+                gstat |= GMT_BOT | GMT_EOD;
+            else
+                gstat |= GMT_EOD;
+        }
+        // If there are finalized tape files on disk, the tape is no longer
+        // empty even if the current temp file is empty.
+        if (!files_.empty())
+            gstat &= ~GMT_EOD;
     }
     return Status(0, 0, static_cast<long>(current_block_size_), gstat, 0,
                   static_cast<int>(current_file_num_),

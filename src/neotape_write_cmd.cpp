@@ -68,6 +68,8 @@ struct Options {
     string source_address;
     string output_path = "-";
     TargetLocator target;
+    bool erase = false;
+    bool append = false;
 };
 
 [[noreturn]] void fail(const string &msg) {
@@ -78,7 +80,8 @@ struct Options {
 void usage(const char *prog) {
     std::cerr << format(
         "usage: {} --source <tcp://host:port|unix://path>\n"
-        "       [--target <tape:/dev/nst0|spool:./dir> | -o <file|->]\n",
+        "       [--target <tape:/dev/nst0|spool:./dir> | -o <file|->]\n"
+        "       [--erase | --append]\n",
         prog);
 }
 
@@ -87,6 +90,8 @@ Options parse_args(int argc, char **argv) {
         {"source", required_argument, nullptr, 's'},
         {"output", required_argument, nullptr, 'o'},
         {"target", required_argument, nullptr, 256},
+        {"erase", no_argument, nullptr, 257},
+        {"append", no_argument, nullptr, 258},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
@@ -102,6 +107,12 @@ Options parse_args(int argc, char **argv) {
             break;
         case 256:
             opts.target = parse_target(optarg);
+            break;
+        case 257:
+            opts.erase = true;
+            break;
+        case 258:
+            opts.append = true;
             break;
         case 'h':
             usage(argv[0]);
@@ -119,6 +130,10 @@ Options parse_args(int argc, char **argv) {
         opts.output_path != "-") {
         fail("--target and -o are mutually exclusive");
     }
+    if (opts.erase && opts.append)
+        fail("--erase and --append are mutually exclusive");
+    if (opts.target.kind == TargetLocator::none && (opts.erase || opts.append))
+        fail("--erase and --append require --target");
     return opts;
 }
 
@@ -204,7 +219,26 @@ int main(int argc, char **argv) {
                 dev = std::make_unique<mt::SpoolTapeDevice>(
                     std::filesystem::path(opts.target.path), true);
             }
-            dev->rewind();
+
+            // Default policy: refuse to overwrite existing tape content.
+            if (!opts.erase && !opts.append) {
+                auto st = dev->status();
+                if (!st.bot())
+                    fail("tape is not at BOT; use --erase or --append");
+                // BOT alone doesn't guarantee the tape is empty.  If the
+                // drive reports EOD at BOT, the tape is empty; otherwise
+                // there is at least one record after BOT.
+                if (!st.eod())
+                    fail("tape appears to contain data; use --erase or --append");
+            }
+
+            if (opts.erase)
+                dev->rewind();
+            else if (opts.append)
+                dev->space_to_eod();
+            else
+                dev->rewind(); // empty tape, safe to start at BOT
+
             output = TargetOutput{std::move(dev)};
         }
 
@@ -275,12 +309,16 @@ int main(int argc, char **argv) {
                 std::cerr << format(
                     "writer: received archive end after {} frames\n", frames);
                 return 0;
-            case MessageType::error: {
-                string reason(msg->payload.begin(), msg->payload.end());
-                if (reason.empty())
-                    reason = "archiver reported error";
-                fail(reason);
-            }
+            case MessageType::error:
+                // Archiver reported an error.  Close the output handle before
+                // failing so a tape client can unload cleanly.
+                close_output();
+                {
+                    string reason(msg->payload.begin(), msg->payload.end());
+                    if (reason.empty())
+                        reason = "archiver reported error";
+                    fail(reason);
+                }
             default:
                 fail(format("unexpected message type {}",
                             static_cast<int>(msg->type)));

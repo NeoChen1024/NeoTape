@@ -126,11 +126,16 @@ like `mt-pax` and writes a plain pax stream to `-f`.
 ```
 bin/neotape-write --source <tcp://host:port|unix://path>
                   [--target <tape:/dev/nst0|spool:./dir> | -o <file|->]
+                  [--erase | --append]
 ```
 
 Short-lived per-volume writer client. Connects to an archiver, requests the
 Volume Header, then requests frames one at a time. Supports tape devices,
 filesystem spool directories, and raw file output.
+
+When `--target` is a tape or spool device, the writer refuses to overwrite
+existing content unless `--erase` (rewind to BOT and overwrite) or `--append`
+(space to EOD and continue) is given. File output (`-o`) always overwrites.
 
 ## Thread architecture (mt-pax)
 
