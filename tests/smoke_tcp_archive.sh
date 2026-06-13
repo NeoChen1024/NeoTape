@@ -2,12 +2,12 @@
 set -e
 
 SOCK=/tmp/neotape-smoke-$$
-OUT=/tmp/neotape-smoke-out-$$
+SPOOL=/tmp/neotape-smoke-spool-$$
 SRC=/tmp/neotape-smoke-src-$$
 BLOCK=4096
 
 cleanup() {
-    rm -rf "$SOCK" "$OUT" "$SRC"
+    rm -rf "$SOCK" "$SPOOL" "$SRC"
 }
 trap cleanup EXIT
 
@@ -27,12 +27,20 @@ for i in $(seq 1 50); do
     sleep 0.1
 done
 
-./bin/neotape-write --source "unix://$SOCK" --output "$OUT"
+./bin/neotape-write --source "unix://$SOCK" --target "spool:$SPOOL"
 wait "$ARCHIVER_PID"
 
 # NeoTape fixed header size; volume and archive-end headers are each this size.
 HEADER_SIZE=1024
 
+# The spool should contain exactly one finalized tape file for a small archive.
+FILE_COUNT=$(find "$SPOOL" -maxdepth 1 -type f -name '*.nts' | wc -l)
+if [ "$FILE_COUNT" -ne 1 ]; then
+    echo "smoke_tcp_archive: expected 1 spool file, got $FILE_COUNT"
+    exit 1
+fi
+
+OUT=$(find "$SPOOL" -maxdepth 1 -type f -name '*.nts' | head -n1)
 ACTUAL=$(stat -c%s "$OUT")
 if [ "$ACTUAL" -lt $((HEADER_SIZE * 2 + BLOCK)) ]; then
     echo "smoke_tcp_archive: output too small: $ACTUAL"

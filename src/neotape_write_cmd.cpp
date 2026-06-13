@@ -13,7 +13,6 @@
 #include <memory>
 #include <netdb.h>
 #include <string>
-#include <variant>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -38,18 +37,6 @@ struct FdGuard {
     FdGuard &operator=(const FdGuard &) = delete;
 };
 
-struct FileGuard {
-    FILE *file = nullptr;
-    bool owned = false;
-    FileGuard(FILE *f, bool own) : file(f), owned(own) {}
-    ~FileGuard() {
-        if (owned && file)
-            std::fclose(file);
-    }
-    FileGuard(const FileGuard &) = delete;
-    FileGuard &operator=(const FileGuard &) = delete;
-};
-
 struct TargetLocator {
     enum Kind { none, tape, spool } kind = none;
     std::string path;
@@ -66,7 +53,6 @@ TargetLocator parse_target(const std::string &s) {
 
 struct Options {
     string source_address;
-    string output_path = "-";
     TargetLocator target;
     bool erase = false;
     bool append = false;
@@ -80,7 +66,7 @@ struct Options {
 void usage(const char *prog) {
     std::cerr << format(
         "usage: {} --source <tcp://host:port|unix://path>\n"
-        "       [--target <tape:/dev/nst0|spool:./dir> | -o <file|->]\n"
+        "       --target <tape:/dev/nst0|spool:./dir>\n"
         "       [--erase | --append]\n",
         prog);
 }
@@ -88,7 +74,6 @@ void usage(const char *prog) {
 Options parse_args(int argc, char **argv) {
     static const struct option long_opts[] = {
         {"source", required_argument, nullptr, 's'},
-        {"output", required_argument, nullptr, 'o'},
         {"target", required_argument, nullptr, 256},
         {"erase", no_argument, nullptr, 257},
         {"append", no_argument, nullptr, 258},
@@ -97,13 +82,10 @@ Options parse_args(int argc, char **argv) {
 
     Options opts;
     int c;
-    while ((c = getopt_long(argc, argv, "s:o:h", long_opts, nullptr)) != -1) {
+    while ((c = getopt_long(argc, argv, "s:h", long_opts, nullptr)) != -1) {
         switch (c) {
         case 's':
             opts.source_address = optarg;
-            break;
-        case 'o':
-            opts.output_path = optarg;
             break;
         case 256:
             opts.target = parse_target(optarg);
@@ -126,14 +108,10 @@ Options parse_args(int argc, char **argv) {
         usage(argv[0]);
         std::exit(2);
     }
-    if (opts.target.kind != TargetLocator::none &&
-        opts.output_path != "-") {
-        fail("--target and -o are mutually exclusive");
-    }
+    if (opts.target.kind == TargetLocator::none)
+        fail("--target is required");
     if (opts.erase && opts.append)
         fail("--erase and --append are mutually exclusive");
-    if (opts.target.kind == TargetLocator::none && (opts.erase || opts.append))
-        fail("--erase and --append require --target");
     return opts;
 }
 
@@ -188,30 +166,14 @@ int main(int argc, char **argv) {
         if (!vh || vh->type != MessageType::volume_header)
             fail("did not receive volume header");
 
-        // Output abstraction: either a raw file/stream or a tape/spool device.
-        struct FileOutput {
-            FILE *file = nullptr;
-            bool owned = false;
-        };
+        // Output abstraction: a tape or spool device.  There is no raw file
+        // mode; spool is the filesystem surrogate for tape.
         struct TargetOutput {
             std::unique_ptr<mt::TapeDevice> device;
         };
-        std::variant<FileOutput, TargetOutput> output;
+        TargetOutput output;
 
-        if (opts.target.kind == TargetLocator::none) {
-            FILE *raw_out = nullptr;
-            bool owned = false;
-            if (opts.output_path == "-") {
-                raw_out = stdout;
-            } else {
-                raw_out = std::fopen(opts.output_path.c_str(), "wb");
-                if (!raw_out)
-                    fail(format("open {}: {}", opts.output_path,
-                                std::strerror(errno)));
-                owned = true;
-            }
-            output = FileOutput{raw_out, owned};
-        } else {
+        {
             std::unique_ptr<mt::TapeDevice> dev;
             if (opts.target.kind == TargetLocator::tape) {
                 dev = std::make_unique<mt::TapeDevice>(opts.target.path, true);
@@ -232,43 +194,26 @@ int main(int argc, char **argv) {
                     fail("tape appears to contain data; use --erase or --append");
             }
 
-            if (opts.erase)
-                dev->rewind();
-            else if (opts.append)
+            if (opts.append)
                 dev->space_to_eod();
             else
-                dev->rewind(); // empty tape, safe to start at BOT
+                dev->rewind(); // --erase or empty tape
 
             output = TargetOutput{std::move(dev)};
         }
 
         auto write_bytes = [&](const std::vector<std::byte> &bytes) {
-            if (std::holds_alternative<FileOutput>(output)) {
-                FILE *f = std::get<FileOutput>(output).file;
-                if (std::fwrite(bytes.data(), 1, bytes.size(), f) !=
-                    bytes.size())
-                    fail("write output");
-            } else {
-                mt::TapeDevice *dev = std::get<TargetOutput>(output).device.get();
-                if (dev->status().eot())
-                    throw std::runtime_error("end of tape");
-                dev->write_record(bytes.data(), bytes.size());
-            }
+            mt::TapeDevice *dev = output.device.get();
+            if (dev->status().eot())
+                throw std::runtime_error("end of tape");
+            dev->write_record(bytes.data(), bytes.size());
         };
 
-        auto write_filemark = [&]() {
-            if (std::holds_alternative<TargetOutput>(output))
-                std::get<TargetOutput>(output).device->write_filemark();
-        };
+        auto write_filemark = [&]() { output.device->write_filemark(); };
 
         auto close_output = [&]() {
-            if (std::holds_alternative<FileOutput>(output)) {
-                FileOutput &fo = std::get<FileOutput>(output);
-                if (fo.owned && fo.file)
-                    std::fclose(fo.file);
-                fo.file = nullptr;
-                fo.owned = false;
-            }
+            // Nothing to close explicitly; the device is cleaned up by its
+            // destructor when main returns.
         };
 
         write_bytes(vh->payload);
