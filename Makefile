@@ -5,7 +5,7 @@ INCS	= -Iinclude -Itests -Llib -I/usr/local/include -Lusr/local/lib
 CFLAGS	= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c17 -march=native -pedantic $(INCS)
 CXXFLAGS= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c++20 -march=native -pedantic $(INCS)
 LDLIBS	= lib/libb3sum.a lib/libcrc32c.a -larchive
-EXE	= bin/mt-pax bin/neotape-plan bin/test_pax_pipeline
+EXE	= bin/mt-pax bin/neotape-plan bin/test_pax_pipeline bin/test_tcp_protocol
 BINDIR	= bin
 LIBDIR	= lib
 BUILDDIR= build
@@ -16,6 +16,7 @@ BOUNDEDBUF_OBJ = src/neotape_bounded_buffer.o
 PAX_WRITER_OBJ = src/neotape_pax_writer.o
 TAPE_OBJ = src/neotape_tape.o
 PLAN_CMD_OBJ = src/neotape_plan_cmd.o
+TCP_PROTO_OBJ = src/neotape_tcp_protocol.o
 
 include 3rdparty/blake3.mk
 include 3rdparty/crc32c.mk
@@ -54,6 +55,9 @@ $(FORMAT_GEN_OBJ): $(GENERATED_CPP) $(GENERATED_HPP) Makefile
 
 $(BINDIR)/test_pax_pipeline : tests/test_pax_pipeline.cpp include/neotape/closable_queue.hpp Makefile | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< -o $@
+
+$(BINDIR)/test_tcp_protocol : tests/test_tcp_protocol.cpp $(TCP_PROTO_OBJ) Makefile | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(TCP_PROTO_OBJ) -o $@
 
 test: $(BINDIR)/test_pax_pipeline $(BINDIR)/mt-pax $(BINDIR)/neotape-plan
 	$(BINDIR)/test_pax_pipeline
