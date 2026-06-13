@@ -335,25 +335,77 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
         });
         ThreadJoiner pax_joiner(pax_thread);
 
-        for (;;) {
-            auto req = neotape::tcp::read_message(client);
-            if (!req.has_value()) {
-                frame_queue.close();
-                pax_thread.join();
-                close(client);
-                return frames_served;
-            }
+        try {
+            for (;;) {
+                auto req = neotape::tcp::read_message(client);
+                if (!req.has_value()) {
+                    frame_queue.close();
+                    pax_thread.join();
+                    close(client);
+                    return frames_served;
+                }
 
-            switch (req->type) {
-            case MessageType::get_volume_header:
-                neotape::tcp::write_message(
-                    client, Message{MessageType::volume_header,
-                                    std::move(vh_payload)});
-                vh_payload = bytes_from_header_bytes(vh_bytes);
-                break;
-            case MessageType::next_frame: {
-                auto next = frame_queue.pop();
-                if (!next.has_value()) {
+                switch (req->type) {
+                case MessageType::get_volume_header:
+                    neotape::tcp::write_message(
+                        client, Message{MessageType::volume_header,
+                                        std::move(vh_payload)});
+                    vh_payload = bytes_from_header_bytes(vh_bytes);
+                    break;
+                case MessageType::next_frame: {
+                    auto next = frame_queue.pop();
+                    if (!next.has_value()) {
+                        neotape::tcp::write_message(
+                            client, Message{MessageType::error,
+                                            std::vector<std::byte>{}});
+                        close(client);
+                        frame_queue.close();
+                        pax_thread.join();
+                        return frames_served;
+                    }
+                    if (next->done) {
+                        ArchiveEndHeader ae;
+                        ae.volume_block_size = opts.volume_block_size;
+                        ae.archive_uuid = vh.archive_uuid;
+                        ae.archive_name = opts.archive_name;
+                        ae.volume_seq_num = opts.initial_volume_seq_num;
+                        ae.payload_profile = PayloadProfile::pax;
+                        ae.last_logical_slice_seq_num = builder.slice;
+                        ae.last_global_frame_seq_num =
+                            builder.global_frame > 0 ? builder.global_frame - 1 : 0;
+                        ae.created_by_implementation = "neotape-archiver";
+                        ae.created_by_build_id = "";
+                        ae.archive_end_at_utc = utc_timestamp_now();
+                        ae.flags = archive_end_flag_clean_end;
+                        neotape::tcp::write_message(
+                            client,
+                            Message{MessageType::archive_end_header,
+                                    bytes_from_header_bytes(
+                                        serialize_archive_end_header(ae))});
+                        close(client);
+                        pax_thread.join();
+                        return frames_served;
+                    }
+                    if (next->record.size() != opts.volume_block_size)
+                        throw std::runtime_error("frame size mismatch");
+                    neotape::tcp::write_message(
+                        client,
+                        Message{MessageType::frame_record,
+                                std::move(next->record)});
+                    ++frames_served;
+                    break;
+                }
+                case MessageType::tape_eof:
+                    // Archiver never requests EOF from writer; ignore or treat as
+                    // protocol error.
+                    neotape::tcp::write_message(
+                        client, Message{MessageType::error,
+                                        std::vector<std::byte>{}});
+                    close(client);
+                    frame_queue.close();
+                    pax_thread.join();
+                    return frames_served;
+                default:
                     neotape::tcp::write_message(
                         client, Message{MessageType::error,
                                         std::vector<std::byte>{}});
@@ -362,57 +414,10 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                     pax_thread.join();
                     return frames_served;
                 }
-                if (next->done) {
-                    ArchiveEndHeader ae;
-                    ae.volume_block_size = opts.volume_block_size;
-                    ae.archive_uuid = vh.archive_uuid;
-                    ae.archive_name = opts.archive_name;
-                    ae.volume_seq_num = opts.initial_volume_seq_num;
-                    ae.payload_profile = PayloadProfile::pax;
-                    ae.last_logical_slice_seq_num = builder.slice;
-                    ae.last_global_frame_seq_num =
-                        builder.global_frame > 0 ? builder.global_frame - 1 : 0;
-                    ae.created_by_implementation = "neotape-archiver";
-                    ae.created_by_build_id = "";
-                    ae.archive_end_at_utc = utc_timestamp_now();
-                    ae.flags = archive_end_flag_clean_end;
-                    neotape::tcp::write_message(
-                        client,
-                        Message{MessageType::archive_end_header,
-                                bytes_from_header_bytes(
-                                    serialize_archive_end_header(ae))});
-                    close(client);
-                    pax_thread.join();
-                    return frames_served;
-                }
-                if (next->record.size() != opts.volume_block_size)
-                    throw std::runtime_error("frame size mismatch");
-                neotape::tcp::write_message(
-                    client,
-                    Message{MessageType::frame_record,
-                            std::move(next->record)});
-                ++frames_served;
-                break;
             }
-            case MessageType::tape_eof:
-                // Archiver never requests EOF from writer; ignore or treat as
-                // protocol error.
-                neotape::tcp::write_message(
-                    client, Message{MessageType::error,
-                                    std::vector<std::byte>{}});
-                close(client);
-                frame_queue.close();
-                pax_thread.join();
-                return frames_served;
-            default:
-                neotape::tcp::write_message(
-                    client, Message{MessageType::error,
-                                    std::vector<std::byte>{}});
-                close(client);
-                frame_queue.close();
-                pax_thread.join();
-                return frames_served;
-            }
+        } catch (...) {
+            frame_queue.close();
+            throw;
         }
     } catch (...) {
         close(client);
