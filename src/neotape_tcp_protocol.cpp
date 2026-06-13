@@ -34,6 +34,8 @@ void write_exact(int fd, const void *buf, std::size_t n) {
     std::size_t remaining = n;
     while (remaining > 0) {
         ssize_t w = ::write(fd, p, remaining);
+        if (w == 0)
+            throw std::runtime_error("write returned 0 bytes");
         if (w < 0) {
             if (errno == EINTR)
                 continue;

@@ -1,8 +1,6 @@
 #include "neotape/tcp_protocol.hpp"
 
-#include <array>
 #include <cstdlib>
-#include <cstring>
 #include <iostream>
 #include <string>
 #include <unistd.h>
@@ -20,24 +18,67 @@ int main() {
     if (pipe(fds) != 0)
         fail("pipe failed");
 
-    std::vector<std::byte> payload;
-    payload.reserve(256);
-    for (int i = 0; i < 256; ++i)
-        payload.push_back(static_cast<std::byte>(i));
+    // Empty payload round-trip.
+    {
+        Message out{MessageType::get_volume_header, {}};
+        neotape::tcp::write_message(fds[1], out);
 
-    Message out{MessageType::frame_record, std::move(payload)};
-    neotape::tcp::write_message(fds[1], out);
+        auto in = neotape::tcp::read_message(fds[0]);
+        if (!in.has_value())
+            fail("expected a message for empty payload");
+        if (in->type != MessageType::get_volume_header)
+            fail("wrong message type for empty payload");
+        if (!in->payload.empty())
+            fail("expected empty payload");
+    }
 
-    auto in = neotape::tcp::read_message(fds[0]);
-    if (!in.has_value())
-        fail("expected a message");
-    if (in->type != MessageType::frame_record)
-        fail("wrong message type");
-    if (in->payload.size() != 256)
-        fail("wrong payload size");
-    for (int i = 0; i < 256; ++i) {
-        if (static_cast<uint8_t>(in->payload[i]) != static_cast<uint8_t>(i))
-            fail("payload mismatch");
+    // 256-byte payload round-trip.
+    {
+        std::vector<std::byte> payload;
+        payload.reserve(256);
+        for (int i = 0; i < 256; ++i)
+            payload.push_back(static_cast<std::byte>(i));
+
+        Message out{MessageType::frame_record, std::move(payload)};
+        neotape::tcp::write_message(fds[1], out);
+
+        auto in = neotape::tcp::read_message(fds[0]);
+        if (!in.has_value())
+            fail("expected a message");
+        if (in->type != MessageType::frame_record)
+            fail("wrong message type");
+        if (in->payload.size() != 256)
+            fail("wrong payload size");
+        for (int i = 0; i < 256; ++i) {
+            if (static_cast<uint8_t>(in->payload[i]) != static_cast<uint8_t>(i))
+                fail("payload mismatch");
+        }
+    }
+
+    // Multiple sequential messages.
+    {
+        for (int i = 0; i < 4; ++i) {
+            std::vector<std::byte> payload = {
+                static_cast<std::byte>(i),
+                static_cast<std::byte>(i + 1),
+            };
+            Message out{MessageType::next_frame, std::move(payload)};
+            neotape::tcp::write_message(fds[1], out);
+        }
+
+        for (int i = 0; i < 4; ++i) {
+            auto in = neotape::tcp::read_message(fds[0]);
+            if (!in.has_value())
+                fail("expected sequential message");
+            if (in->type != MessageType::next_frame)
+                fail("wrong sequential message type");
+            if (in->payload.size() != 2)
+                fail("wrong sequential payload size");
+            if (static_cast<uint8_t>(in->payload[0]) != static_cast<uint8_t>(i))
+                fail("sequential payload[0] mismatch");
+            if (static_cast<uint8_t>(in->payload[1]) != static_cast<uint8_t>(i + 1))
+                fail("sequential payload[1] mismatch");
+        }
     }
 
     // Clean close returns nullopt.

@@ -59,8 +59,9 @@ $(BINDIR)/test_pax_pipeline : tests/test_pax_pipeline.cpp include/neotape/closab
 $(BINDIR)/test_tcp_protocol : tests/test_tcp_protocol.cpp $(TCP_PROTO_OBJ) Makefile | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(TCP_PROTO_OBJ) -o $@
 
-test: $(BINDIR)/test_pax_pipeline $(BINDIR)/mt-pax $(BINDIR)/neotape-plan
+test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/mt-pax $(BINDIR)/neotape-plan
 	$(BINDIR)/test_pax_pipeline
+	$(BINDIR)/test_tcp_protocol
 	sh tests/smoke_mt_pax_pipeline.sh
 
 test_pax_cli: $(BINDIR)/mt-pax
