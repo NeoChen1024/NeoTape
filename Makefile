@@ -35,7 +35,7 @@ CLANG_FORMAT_FILES = $(filter-out $(GENERATED_HPP) $(GENERATED_CPP), \
 CLANG_TIDY ?= clang-tidy
 CLANG_TIDY_FILES = $(filter-out src/neotape_format_generated.cpp, $(wildcard src/*.cpp))
 
-$(GENERATED_HPP) $(GENERATED_CPP): $(GENERATOR) scripts/neotape_header_defs.py
+$(GENERATED_HPP) $(GENERATED_CPP) &: $(GENERATOR) scripts/neotape_header_defs.py
 	python3 $(GENERATOR)
 
 .PHONY: all clean countline format test test_pax_cli tidy compile_commands
@@ -52,6 +52,9 @@ $(BINDIR) $(LIBDIR) $(BUILDDIR) $(BUILDDIR)/blake3 $(BUILDDIR)/crc32c:
 
 src/%.o : src/%.cpp Makefile
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# Object files that include neotape/format.hpp (which pulls in the generated header).
+$(FORMAT_OBJ) $(TAPE_OBJ) $(TCP_SERVER_OBJ) $(WRITE_CMD_OBJ) $(READ_CMD_OBJ): $(GENERATED_HPP)
 
 $(BINDIR)/mt-pax : src/mt-pax.cpp $(PAX_WRITER_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(PAX_WRITER_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) -o $@ $(LDLIBS)
