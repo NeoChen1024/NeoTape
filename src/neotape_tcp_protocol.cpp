@@ -102,6 +102,8 @@ std::string message_type_name(MessageType type) {
         return "TAPE_EOF";
     case MessageType::error:
         return "ERROR";
+    case MessageType::ack_frame:
+        return "ACK_FRAME";
     }
     return std::format("UNKNOWN({})", static_cast<int>(type));
 }

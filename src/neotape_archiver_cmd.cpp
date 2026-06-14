@@ -24,8 +24,10 @@ struct Options {
     string listen_address;
     uint32_t volume_block_size = 4 * 1024 * 1024;
     string archive_name = "archive";
+    uint64_t retention_frame_count = 256;
     neotape::PaxWriterOptions pax;
     bool explicit_output = false;
+    bool debug = false;
 };
 
 [[noreturn]] void fail(const string &msg) {
@@ -43,7 +45,8 @@ void usage(const char *prog) {
         "  {} --listen <tcp://host:port|unix://path>\n"
         "       [--volume-block-size <bytes>] [--archive-name <name>]\n"
         "       [-C <dir>] [-P <percent>] [--io-thread <N>]\n"
-        "       [--output-buffer-size <bytes>] [--plan <file>] [-v|-vv] [-x]\n"
+        "       [--output-buffer-size <bytes>] [--plan <file>]\n"
+        "       [--retention-frame-count <N>] [-v|-vv] [-x] [--debug]\n"
         "       <path> [path...]\n"
         "usage (local mode):\n"
         "  {} -f <out-file|-> [-C <dir>] [-P <percent>] [--io-thread <N>]\n"
@@ -62,8 +65,10 @@ Options parse_args(int argc, char **argv) {
         {"io-thread", required_argument, nullptr, 257},
         {"output-buffer-size", required_argument, nullptr, 256},
         {"plan", required_argument, nullptr, 258},
+        {"retention-frame-count", required_argument, nullptr, 259},
         {"verbose", no_argument, nullptr, 'v'},
         {"one-file-system", no_argument, nullptr, 'x'},
+        {"debug", no_argument, nullptr, 260},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
@@ -127,6 +132,19 @@ Options parse_args(int argc, char **argv) {
         case 258:
             opts.pax.plan_path = optarg;
             break;
+        case 259: {
+            char *end = nullptr;
+            unsigned long n = std::strtoul(optarg, &end, 10);
+            if (end == optarg || *end != '\0' || n == 0 || n > 1000000) {
+                std::cerr << "neotape-archiver: --retention-frame-count requires a number from 1 to 1000000\n";
+                std::exit(2);
+            }
+            opts.retention_frame_count = static_cast<uint64_t>(n);
+            break;
+        }
+        case 260:
+            opts.debug = true;
+            break;
         case 'h':
             usage(argv[0]);
             std::exit(0);
@@ -186,6 +204,7 @@ int main(int argc, char **argv) {
     try {
         neotape::ensure_utf8_ctype_locale();
         Options opts = parse_args(argc, argv);
+        neotape::g_debug = opts.debug;
 
         if (std::signal(SIGPIPE, SIG_IGN) == SIG_ERR)
             fail("failed to ignore SIGPIPE");
@@ -195,8 +214,10 @@ int main(int argc, char **argv) {
             server_opts.listen_address = opts.listen_address;
             server_opts.volume_block_size = opts.volume_block_size;
             server_opts.archive_name = opts.archive_name;
+            server_opts.retention_frame_count = opts.retention_frame_count;
             server_opts.pax = opts.pax;
             server_opts.use_pax = true;
+            server_opts.debug = opts.debug;
 
             uint64_t served = neotape::run_tcp_archiver(server_opts);
             std::cerr << format("archiver served {} frames\n", served);

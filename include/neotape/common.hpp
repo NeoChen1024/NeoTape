@@ -3,10 +3,20 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <format>
+#include <iostream>
 #include <string>
 #include <string_view>
 
 namespace neotape {
+
+extern bool g_debug;
+
+#define NEOTAPE_DEBUG(...)                                                     \
+    do {                                                                       \
+        if (neotape::g_debug)                                                  \
+            std::cerr << std::format(__VA_ARGS__);                             \
+    } while (0)
 
 uint64_t parse_size(std::string_view text, std::string_view name);
 std::string humanize_number(std::size_t number);

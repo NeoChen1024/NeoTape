@@ -16,6 +16,8 @@ enum class MessageType : uint8_t {
     archive_end_header = 0x05,
     tape_eof = 0x06,
     error = 0x07,
+    // ack_frame payload: uint64_t little-endian global frame sequence number.
+    ack_frame = 0x08,
 };
 
 struct Message {

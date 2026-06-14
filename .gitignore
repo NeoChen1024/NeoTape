@@ -10,3 +10,5 @@ lib/
 __pycache__/
 *_generated.hpp
 *_generated.cpp
+.cache/
+testing/

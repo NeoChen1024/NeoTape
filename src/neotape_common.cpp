@@ -14,6 +14,8 @@
 
 namespace neotape {
 
+bool g_debug = false;
+
 using std::format;
 using std::size;
 using std::string;

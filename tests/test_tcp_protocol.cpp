@@ -81,6 +81,32 @@ int main() {
         }
     }
 
+    // ack_frame round-trip (8-byte little-endian uint64 payload).
+    {
+        uint64_t seq = 0x123456789abcdef0u;
+        std::vector<std::byte> payload;
+        payload.reserve(8);
+        for (std::size_t i = 0; i < 8; ++i)
+            payload.push_back(static_cast<std::byte>((seq >> (8 * i)) & 0xffu));
+
+        Message out{MessageType::ack_frame, std::move(payload)};
+        neotape::tcp::write_message(fds[1], out);
+
+        auto in = neotape::tcp::read_message(fds[0]);
+        if (!in.has_value())
+            fail("expected ack_frame message");
+        if (in->type != MessageType::ack_frame)
+            fail("wrong message type for ack_frame");
+        if (in->payload.size() != 8)
+            fail("wrong ack_frame payload size");
+        uint64_t decoded = 0;
+        for (std::size_t i = 0; i < 8; ++i)
+            decoded |= static_cast<uint64_t>(static_cast<uint8_t>(in->payload[i]))
+                       << (8 * i);
+        if (decoded != seq)
+            fail("ack_frame payload mismatch");
+    }
+
     // Clean close returns nullopt.
     close(fds[1]);
     auto end = neotape::tcp::read_message(fds[0]);
