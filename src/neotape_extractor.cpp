@@ -291,9 +291,9 @@ vector<std::byte> uint64_to_le_bytes(uint64_t v) {
 
     // --- frame_seq_num_within_channel (per (slice, channel) group) ---
     const bool channel_changed =
-        (state.current_phase != ExtractorState::Phase::none &&
-         header.channel_type != state.last_channel_type);
-    const bool is_new_group = channel_changed;
+        (header.channel_type != state.last_channel_type);
+    const bool start_flag = has_frame_flag_start(header.flags);
+    const bool is_new_group = channel_changed || start_flag;
 
     if (is_new_group) {
         if (header.frame_seq_num_within_channel != 1) {
@@ -303,7 +303,6 @@ vector<std::byte> uint64_to_le_bytes(uint64_t v) {
                 header.frame_seq_num_within_channel);
             return false;
         }
-        state.expected_frame_seq_within_channel = 2;
     } else {
         if (header.frame_seq_num_within_channel !=
             state.expected_frame_seq_within_channel) {
@@ -313,6 +312,11 @@ vector<std::byte> uint64_to_le_bytes(uint64_t v) {
                 state.expected_frame_seq_within_channel);
             return false;
         }
+    }
+
+    if (has_frame_flag_end(header.flags)) {
+        state.expected_frame_seq_within_channel = 1;
+    } else {
         state.expected_frame_seq_within_channel =
             header.frame_seq_num_within_channel + 1;
     }
@@ -380,7 +384,8 @@ vector<std::byte> uint64_to_le_bytes(uint64_t v) {
                 if (!flush_slice(state, output)) {
                     return false;
                 }
-                break;
+                // Reader is about to disconnect — return to accept next reader.
+                return false;
             }
             case MessageType::error: {
                 string reason;

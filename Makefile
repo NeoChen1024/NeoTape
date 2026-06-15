@@ -75,6 +75,7 @@ test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_for
 	sh tests/smoke_tcp_archive_multi.sh
 	sh tests/smoke_mt_pax_parity.sh
 	sh tests/smoke_tcp_extract.sh
+	sh tests/smoke_tcp_extract_multi.sh
 
 test_pax_cli: $(BINDIR)/mt-pax
 	sh tests/smoke_mt_pax_pipeline.sh
