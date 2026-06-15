@@ -14,8 +14,11 @@ Every record is a single line terminated by `\0\n` (NUL byte followed by
 newline). NUL cannot appear in file paths, so `\0\n` is an unambiguous record
 separator even when paths contain embedded newlines.
 
-The first field of each record determines its type. Records with a leading
-decimal digit are **entry records**; all other records are **directives**.
+The first field of each record determines its type. Records whose first field
+is a decimal integer are **entry records**. A record whose first field is
+`/chdir/` is a **directive** — it MUST appear at most once and MUST be the
+first record in the stream. If present, it changes the working directory for
+all subsequent entry records.
 
 ## Record Types
 
@@ -27,8 +30,8 @@ a filesystem path to a directory or symlink to a directory (resolved when there'
 This directive is emitted whenever the user specified `-C <dir>` on the command
 line.
 
-Chdir directives appear in the order the user specified them and remain in
-effect for all subsequent entry records.
+`/chdir/` MUST appear at most once and MUST be the first record in the stream.
+All entry records that follow are resolved relative to this directory.
 
 ### `/<slice>/<file_num>/<kind>/<size>/<mtime>/<uid>/<uname>/<gid>/<gname>/<hardlink>/<filepath>\0\n`
 
