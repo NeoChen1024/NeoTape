@@ -49,19 +49,38 @@ bin/neotape-plan -C /data -o home.plan photos docs
 
 Generates slice-metadata JSON consumed by `neotape-archiver --plan`.
 
-## Reader (raw record copier)
+## Extractor / Reader (reading pipeline)
+
+The extractor and reader are a long-running server / short-lived client pair for
+reading NeoTape archives back.  The extractor validates every frame and
+reassembles the pax content stream:
 
 ```sh
-# Copy records from a spool to another spool:
-bin/neotape-read --source spool:./in --target spool:./out
+# Start the extractor server (long-running, validates frames):
+bin/neotape-extractor --listen tcp://0.0.0.0:9000 -o output.pax
 
-# Copy from a real tape device:
-bin/neotape-read --source tape:/dev/nst0 --target spool:./out
+# Read one volume from tape and feed it to the extractor:
+bin/neotape-read --source tape:/dev/nst0 --connect tcp://tapehost:9000
+
+# Read from a spool directory:
+bin/neotape-read --source spool:./in --connect tcp://tapehost:9000
 ```
 
-`neotape-read` is a raw NeoTape record copier.  It reads frame records from a
-tape device or spool directory and writes them to a spool target.  It does
-*not* extract pax payload or pipe to `bsdtar` in this version.
+## Reader (TCP client)
+
+```sh
+# Connect to extractor and read from tape:
+bin/neotape-read --source tape:/dev/nst0 --connect tcp://extractor_host:9000
+
+# Connect to extractor and read from spool:
+bin/neotape-read --source spool:./in --connect unix:///tmp/extractor.sock
+```
+
+Reads NeoTape records from a tape device or spool directory and forwards them
+to an extractor server over TCP or Unix-domain socket.  The extractor drives
+the protocol (pull model).  One reader instance handles one volume; when the
+volume is exhausted the reader disconnects and the operator starts a new
+instance for the next volume.
 
 ## Backend locators
 
@@ -71,9 +90,9 @@ colon only, so locator paths may contain additional colons.
 | Kind | Syntax | Used by |
 |------|--------|---------|
 | `tape:` | `tape:/dev/nst0` | `neotape-write --target`, `neotape-read --source` |
-| `spool:` | `spool:./dir` | `neotape-write --target`, `neotape-read --source` / `--target` |
-| `tcp:` | `tcp://host:port` | `neotape-archiver --listen`, `neotape-write --source` |
-| `unix:` | `unix:///path/socket` | `neotape-archiver --listen`, `neotape-write --source` |
+| `spool:` | `spool:./dir` | `neotape-write --target`, `neotape-read --source` |
+| `tcp:` | `tcp://host:port` | `neotape-archiver --listen`, `neotape-extractor --listen`, `neotape-write --source`, `neotape-read --connect` |
+| `unix:` | `unix:///path/socket` | `neotape-archiver --listen`, `neotape-extractor --listen`, `neotape-write --source`, `neotape-read --connect` |
 
 ## Output conventions
 
