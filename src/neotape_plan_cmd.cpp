@@ -14,11 +14,13 @@
 #include <filesystem>
 #include <format>
 #include <getopt.h>
+#include <grp.h>
 #include <iostream>
 #include <limits>
 #include <map>
 #include <mutex>
 #include <optional>
+#include <pwd.h>
 #include <queue>
 #include <stdexcept>
 #include <string>
@@ -26,7 +28,10 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -58,6 +63,13 @@ struct EntryMeta {
     uint64_t disk_bytes = 0;
     uint64_t apparent_bytes = 0;
     dev_t device = 0;
+    ino_t inode = 0;
+    int64_t mtime = 0;
+    uid_t uid = 0;
+    string uname;
+    gid_t gid = 0;
+    string gname;
+    bool hardlink = false;
 };
 
 struct SlicePlan {
@@ -328,6 +340,12 @@ class WorkerPool {
                 .disk_bytes = disk_bytes_from_stat(st),
                 .apparent_bytes = apparent_bytes_from_stat(st),
                 .device = st.st_dev,
+                .inode = st.st_ino,
+                .mtime = static_cast<int64_t>(st.st_mtime),
+                .uid = st.st_uid,
+                .uname = {},
+                .gid = st.st_gid,
+                .gname = {},
             };
             return r;
         } catch (...) {
@@ -432,14 +450,101 @@ class WorkerPool {
     }
 };
 
+// ====================== Name & Inode Resolution ==================
+
+class NameCache {
+    std::unordered_map<uid_t, string> uid_to_name_;
+    std::unordered_map<gid_t, string> gid_to_name_;
+
+  public:
+    string resolve_user(uid_t uid) {
+        auto it = uid_to_name_.find(uid);
+        if (it != uid_to_name_.end()) {
+            return it->second;
+        }
+        string name = lookup_user(uid);
+        uid_to_name_[uid] = name;
+        return name;
+    }
+
+    string resolve_group(gid_t gid) {
+        auto it = gid_to_name_.find(gid);
+        if (it != gid_to_name_.end()) {
+            return it->second;
+        }
+        string name = lookup_group(gid);
+        gid_to_name_[gid] = name;
+        return name;
+    }
+
+  private:
+    static string lookup_user(uid_t uid) {
+        long const bufsize = sysconf(_SC_GETPW_R_SIZE_MAX);
+        size_t const sz = bufsize > 0 ? static_cast<size_t>(bufsize) : 16384;
+        string buf(sz, '\0');
+        struct passwd pwd{};
+        struct passwd *result = nullptr;
+        int const rc = getpwuid_r(
+            uid, &pwd, buf.data(), sz, &result);
+        if (rc != 0 || result == nullptr) {
+            return {};
+        }
+        return string(result->pw_name);
+    }
+
+    static string lookup_group(gid_t gid) {
+        long const bufsize = sysconf(_SC_GETGR_R_SIZE_MAX);
+        size_t const sz = bufsize > 0 ? static_cast<size_t>(bufsize) : 16384;
+        string buf(sz, '\0');
+        struct group grp{};
+        struct group *result = nullptr;
+        int const rc = getgrgid_r(
+            gid, &grp, buf.data(), sz, &result);
+        if (rc != 0 || result == nullptr) {
+            return {};
+        }
+        return string(result->gr_name);
+    }
+};
+
+struct InodeKey {
+    dev_t dev;
+    ino_t ino;
+    bool operator==(const InodeKey &o) const {
+        return dev == o.dev && ino == o.ino;
+    }
+};
+
+struct InodeKeyHash {
+    size_t operator()(const InodeKey &k) const {
+        return std::hash<dev_t>{}(k.dev) ^
+               (std::hash<ino_t>{}(k.ino) << 1);
+    }
+};
+
+class InodeTracker {
+    std::unordered_set<InodeKey, InodeKeyHash> seen_;
+
+  public:
+    bool is_hardlink(dev_t dev, ino_t ino) {
+        InodeKey const key{dev, ino};
+        if (!seen_.insert(key).second) {
+            return true; // Already seen — this is a hardlink.
+        }
+        return false;
+    }
+};
+
 // ====================== Streaming Slice Packing ==================
 
 void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num,
                 vector<uint64_t> &slice_sizes) {
     for (size_t i = 0; i < slice.entries.size(); ++i) {
         const EntryMeta &e = slice.entries[i];
-        string line = format("/{}/{}/{}/{}/{}", slice_num, i, e.kind,
-                             e.apparent_bytes, e.archive_path);
+        string line = format("/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}", slice_num, i,
+                             e.kind, e.apparent_bytes, e.mtime, e.uid,
+                             e.uname, e.gid, e.gname,
+                             e.hardlink ? 1 : 0, e.archive_path);
         fwrite(line.data(), 1, line.size(), opts.meta_out);
         fputc('\0', opts.meta_out);
         fputc('\n', opts.meta_out);
@@ -454,9 +559,10 @@ void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num,
         return;
     }
     for (const EntryMeta &entry : slice.entries) {
-        std::cerr << format("  {} disk={} apparent={} {}\n", entry.kind,
+        std::cerr << format("  {} disk={} apparent={} {}:{} {}:{} {}\n", entry.kind,
                             neotape::humanize_number(entry.disk_bytes),
                             neotape::humanize_number(entry.apparent_bytes),
+                            entry.uid, entry.uname, entry.gid, entry.gname,
                             entry.source_path.generic_string());
     }
 }
@@ -532,6 +638,14 @@ class PlannerScanner {
     vector<uint64_t> &slice_sizes_;
     WorkerPool *pool_;
     std::deque<DirectoryWork> frontier_;
+    NameCache name_cache_;
+    InodeTracker inode_tracker_;
+
+    void resolve_names(EntryMeta &meta) {
+        meta.uname = name_cache_.resolve_user(meta.uid);
+        meta.gname = name_cache_.resolve_group(meta.gid);
+        meta.hardlink = inode_tracker_.is_hardlink(meta.device, meta.inode);
+    }
 
     LstatResult stat_child(size_t index, const fs::path &path,
                            const neotape::SourceSpec &spec,
@@ -563,6 +677,12 @@ class PlannerScanner {
             .disk_bytes = disk_bytes_from_stat(st),
             .apparent_bytes = apparent_bytes_from_stat(st),
             .device = st.st_dev,
+            .inode = st.st_ino,
+            .mtime = static_cast<int64_t>(st.st_mtime),
+            .uid = st.st_uid,
+            .uname = {},
+            .gid = st.st_gid,
+            .gname = {},
         };
         return r;
     }
@@ -612,6 +732,7 @@ class PlannerScanner {
                 continue;
             }
 
+            resolve_names(r.meta);
             add_to_slice(current_slice_, r.meta, opts_, slice_num_, totals_,
                          slice_sizes_);
             if (r.meta.kind == 'd') {
@@ -636,16 +757,23 @@ class PlannerScanner {
         }
 
         std::optional<dev_t> const root_device = st.st_dev;
-        add_to_slice(current_slice_,
-                     EntryMeta{
-                         .source_path = spec.open_path,
-                         .archive_path = neotape::archive_path_for_source(
-                             spec, spec.open_path.generic_string()),
-                         .kind = kind_from_mode(st.st_mode),
-                         .disk_bytes = disk_bytes_from_stat(st),
-                         .apparent_bytes = apparent_bytes_from_stat(st),
-                         .device = st.st_dev,
-                     },
+        EntryMeta root_meta{
+            .source_path = spec.open_path,
+            .archive_path = neotape::archive_path_for_source(
+                spec, spec.open_path.generic_string()),
+            .kind = kind_from_mode(st.st_mode),
+            .disk_bytes = disk_bytes_from_stat(st),
+            .apparent_bytes = apparent_bytes_from_stat(st),
+            .device = st.st_dev,
+            .inode = st.st_ino,
+            .mtime = static_cast<int64_t>(st.st_mtime),
+            .uid = st.st_uid,
+            .uname = {},
+            .gid = st.st_gid,
+            .gname = {},
+        };
+        resolve_names(root_meta);
+        add_to_slice(current_slice_, root_meta,
                      opts_, slice_num_, totals_, slice_sizes_);
 
         if (!S_ISDIR(st.st_mode)) {
