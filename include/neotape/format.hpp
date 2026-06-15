@@ -54,7 +54,7 @@ struct FrameHeader {
     uint64_t global_frame_seq_num{0};
     uint64_t logical_slice_seq_num{0};
     uint64_t frame_seq_num_within_channel{0};
-    uint64_t frame_payload_size{0};
+    uint32_t frame_payload_size{0};
     uint64_t flags{0};
     SignatureBytes signature{};
     Hash frame_hash{};

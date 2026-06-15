@@ -32,15 +32,20 @@ constexpr size_t off_global_frame_seq_num = 122;
 constexpr size_t off_logical_slice_seq_num = 130;
 constexpr size_t off_frame_seq_num_within_channel = 138;
 constexpr size_t off_frame_payload_size = 146;
-constexpr size_t off_flags = 154;
-constexpr size_t off_reserved = 162;
-constexpr size_t reserved_size = 246;
+constexpr size_t off_flags = 150;
+constexpr size_t off_reserved = 158;
+constexpr size_t reserved_size = 250;
 constexpr size_t off_signature = 408;
 constexpr size_t off_frame_hash = 480;
 
 void put_u16(HeaderBytes &bytes, size_t offset, uint16_t value) {
     bytes[offset] = static_cast<uint8_t>(value & 0xffu);
     bytes[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffu);
+}
+
+void put_u32(HeaderBytes &bytes, size_t offset, uint32_t value) {
+    for (size_t i = 0; i < 4; ++i)
+        bytes[offset + i] = static_cast<uint8_t>((value >> (i * 8)) & 0xffu);
 }
 
 void put_u64(HeaderBytes &bytes, size_t offset, uint64_t value) {
@@ -51,6 +56,13 @@ void put_u64(HeaderBytes &bytes, size_t offset, uint64_t value) {
 uint16_t get_u16(const uint8_t *bytes, size_t offset) {
     return static_cast<uint16_t>(bytes[offset]) |
            static_cast<uint16_t>(bytes[offset + 1]) << 8;
+}
+
+uint32_t get_u32(const uint8_t *bytes, size_t offset) {
+    uint32_t value = 0;
+    for (size_t i = 0; i < 4; ++i)
+        value |= static_cast<uint32_t>(bytes[offset + i]) << (i * 8);
+    return value;
 }
 
 uint64_t get_u64(const uint8_t *bytes, size_t offset) {
@@ -169,7 +181,7 @@ HeaderBytes serialize_frame_header(const FrameHeader &header) {
     put_u64(bytes, off_logical_slice_seq_num, header.logical_slice_seq_num);
     put_u64(bytes, off_frame_seq_num_within_channel,
             header.frame_seq_num_within_channel);
-    put_u64(bytes, off_frame_payload_size, header.frame_payload_size);
+    put_u32(bytes, off_frame_payload_size, header.frame_payload_size);
     put_u64(bytes, off_flags, header.flags);
     std::copy(header.signature.begin(), header.signature.end(),
               bytes.begin() + static_cast<std::ptrdiff_t>(off_signature));
@@ -203,7 +215,7 @@ FrameHeader parse_frame_header(const uint8_t *data, std::size_t size) {
     header.logical_slice_seq_num = get_u64(data, off_logical_slice_seq_num);
     header.frame_seq_num_within_channel =
         get_u64(data, off_frame_seq_num_within_channel);
-    header.frame_payload_size = get_u64(data, off_frame_payload_size);
+    header.frame_payload_size = get_u32(data, off_frame_payload_size);
     header.flags = get_u64(data, off_flags);
     std::copy(data + off_signature, data + off_signature + signature_size,
               header.signature.begin());

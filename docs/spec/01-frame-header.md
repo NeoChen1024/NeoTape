@@ -18,7 +18,7 @@ All NeoTape records use a single unified 512-byte fixed header. The final 32 byt
 | `global_frame_seq_num`         | `uint64`     | 8               | MUST        | Monotonically increasing across **all** frames, including `archive_end`.          |
 | `logical_slice_seq_num`        | `uint64`     | 8               | MUST        | `0` for the `archive_end` control frame.                                             |
 | `frame_seq_num_within_channel` | `uint64`     | 8               | MUST        | `1` for the `archive_end` control frame.                                             |
-| `frame_payload_size`           | `uint64`     | 8               | MUST        | Meaningful payload bytes after the fixed header.                                         |
+| `frame_payload_size`           | `uint32`     | 4               | MUST        | Meaningful payload bytes after the fixed header.                                         |
 | `flags`                        | `uint64`     | 8               | MUST        | Frame flags. See [Flags](#flags).                                                            |
 | `_reserved`                    | `byte[246]`  | 246             | MUST        | Zero-filled padding.                                                                     |
 | `signature`                    | `byte[72]`   | 72              | MAY         | 8-byte key ID plus 64-byte Ed25519 signature over `frame_hash` when `SIGNED` is set. |
@@ -34,7 +34,7 @@ Datatype rules from `docs/spec/00-format-common.md` still apply (little-endian i
 
 Stores the NeoTape record size in KiB, not bytes. The decoded record size is `volume_block_size_kib * 1024` bytes. Writers MUST encode only whole-KiB record sizes; readers MUST reject `0` and SHOULD apply the format's normal minimum/maximum block-size constraints after decoding. The current supported encoded range is `4 <= volume_block_size_kib <= 8192`, matching a decoded record-size range of 4 KiB to 8 MiB.
 
-`frame_payload_size` MUST be less than or equal to `(volume_block_size_kib * 1024) - 512`.
+`frame_payload_size` is a uint32; its maximum value is implicitly bounded by `(volume_block_size_kib * 1024) - 512`.
 
 ### `archive_label`
 
