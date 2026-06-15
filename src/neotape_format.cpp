@@ -44,8 +44,9 @@ void put_u16(HeaderBytes &bytes, size_t offset, uint16_t value) {
 }
 
 void put_u32(HeaderBytes &bytes, size_t offset, uint32_t value) {
-    for (size_t i = 0; i < 4; ++i)
+    for (size_t i = 0; i < 4; ++i) {
         bytes[offset + i] = static_cast<uint8_t>((value >> (i * 8)) & 0xffu);
+    }
 }
 
 void put_u64(HeaderBytes &bytes, size_t offset, uint64_t value) {
@@ -60,8 +61,9 @@ uint16_t get_u16(const uint8_t *bytes, size_t offset) {
 
 uint32_t get_u32(const uint8_t *bytes, size_t offset) {
     uint32_t value = 0;
-    for (size_t i = 0; i < 4; ++i)
+    for (size_t i = 0; i < 4; ++i) {
         value |= static_cast<uint32_t>(bytes[offset + i]) << (i * 8);
+    }
     return value;
 }
 

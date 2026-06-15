@@ -37,8 +37,9 @@ uint16_t le16(const neotape::HeaderBytes &b, std::size_t off) {
 
 uint32_t le32(const neotape::HeaderBytes &b, std::size_t off) {
     uint32_t v = 0;
-    for (std::size_t i = 0; i < 4; ++i)
+    for (std::size_t i = 0; i < 4; ++i) {
         v |= static_cast<uint32_t>(b[off + i]) << (8 * i);
+    }
     return v;
 }
 
