@@ -1,0 +1,275 @@
+# Terminology
+
+Status: normative.
+
+This document defines common NeoTape terms used by the active specification.
+
+## Logical Hierarchy
+
+### Archive
+
+A complete NeoTape backup set, identified by `archive_uuid` and optionally labeled by `archive_label`.
+
+An Archive may span one or more backend volumes.
+
+### Physical Medium
+
+A sequentially writable physical storage medium used to store NeoTape archive volumes.
+
+For LTO deployments, a physical medium is normally one LTO tape medium. It may contain zero, one, or more complete archive instances. NeoTape does not store a medium-level descriptor in the archive stream; any non-NeoTape prefix before the first NeoTape frame is ignored by readers.
+
+### Backend Volume (or Volume for short)
+
+A backend-defined physical or virtual container. It is not an authoritative logical record in the NeoTape stream. `volume_seq_num` is advisory and combines with `archive_label` to form an operator-facing display label (`${archive_label} #${volume_seq_num}`).
+
+### Tape File
+
+A logical tape file delimited by LTO filemarks.
+
+NeoTape uses tape files for coarse seekable boundaries such as logical slice tape files and the Archive End frame. Frames within a slice tape file are chained by `frame_payload_size`, not by additional filemarks.
+
+### Logical Slice
+
+A writer-declared logical content grouping, identified by `logical_slice_seq_num`.
+
+Each logical slice consists of zero or more `ch_metadata` frames followed by zero or more `ch_content` frames. At least one frame must be present. Metadata, when present, MUST precede content. A logical slice MAY contain only metadata and MAY span backend volumes.
+
+### Frame
+
+A fixed-size NeoTape transport record inside an archive volume.
+
+Each Frame occupies exactly one NeoTape record of `volume_block_size_kib * 1024` bytes. It consists of a 512-byte Frame Header followed by `frame_payload_size` meaningful bytes and zero padding to the end of the record. Frames are chained by explicit sequence numbers and length fields, not by parsing payload bytes.
+
+### Channel
+
+Partitions a logical slice into `ch_metadata` and `ch_content`. Each channel is a contiguous group of frames within the logical slice, identified by `channel_type`. `frame_seq_num_within_channel` is scoped per-channel.
+
+### ch_content
+
+The ordered payload byte stream carried by `ch_content` frames for one logical slice. This is the only per-slice byte stream emitted by normal payload readers such as `neotape restore`.
+
+### ch_metadata
+
+Advisory metadata bytes carried by `ch_metadata` frames for one logical slice. It is transport metadata for listing, diagnostics, partial restore, or acceleration. It is not part of the content stream and must not be required for basic restore correctness.
+
+## Headers And Metadata
+
+### Frame Header
+
+The unified 512-byte fixed header at the start of every NeoTape frame. It records channel type, frame sequencing, payload size, archive identity, flags, and a BLAKE3 `frame_hash` covering the entire frame. A `signature` field holds a binary signify-style signature over `frame_hash` when the `SIGNED` flag is set. There is only one header layout — no separate Volume Header or Archive End Header exists.
+
+### Archive End Frame
+
+The final clean archive-level frame, with `channel_type = archive_end`. An archive is not cleanly complete unless a valid Archive End frame is found with `CLEAN_END = 1`.
+
+### Archive-Level Catalog
+
+Optional advisory metadata associated with the whole archive. Archive-level catalog metadata may be carried in the optional payload of the Archive End frame. It is not required for basic restore correctness.
+
+## Payload Terms
+
+### Payload
+
+The byte stream transported by NeoTape. NeoTape core is payload-format agnostic and does not enforce any payload profile.
+
+## Frame Flags
+
+### START
+
+Frame flag (bit 0) indicating the first frame of a channel group within a logical slice.
+
+### END
+
+Frame flag (bit 1) indicating the last frame of a channel group within a logical slice.
+
+### SIGNED
+
+Frame flag (bit 2) indicating that `signature` contains a binary signify-style signature over `frame_hash`.
+
+### CLEAN_END
+
+Frame flag (bit 63) indicating a clean archive end. Only valid for `archive_end` frames. Must be `1` on a valid end-of-archive frame.
+
+## Format Constructs
+
+### NeoTape Record
+
+A single `volume_block_size_kib * 1024`-byte block written to the tape device or stored as a record within a spool file.
+
+The fundamental I/O unit. Every frame header, every frame payload, and every padding chunk fits in exactly one NeoTape record.
+
+### Fixed Header
+
+The 512-byte fixed field area at the start of every frame.
+
+The final 32 bytes of the header are `frame_hash`, a BLAKE3 digest over the canonical image of the entire frame. The 128-byte `signature` field holds a binary signify-style signature over `frame_hash` when the `SIGNED` flag is set.
+
+### Common Header Prefix
+
+The first 10 bytes shared by all NeoTape frames:
+
+| Field          | Size |
+| -------------- | ---- |
+| `magic`        | 8    |
+| `header_version` | 1  |
+| `channel_type` | 1    |
+
+A parser can always read 10 bytes, validate the magic, and dispatch by `channel_type`.
+
+## Integrity
+
+### frame_hash
+
+BLAKE3 hash computed over the canonical image of the entire frame (`volume_block_size_kib * 1024` bytes). The canonical image treats `signature` and `frame_hash` as all-zero bytes. `frame_hash` is the final 32 bytes of the 512-byte header. See [docs/spec/00-format-common.md](00-format-common.md) for the full calculation rules.
+
+### signature
+
+128-byte field in the fixed header that holds a binary signify-style signature over `frame_hash` when the `SIGNED` flag is set. The signature payload is 74 bytes at the beginning of this field; remaining bytes must be zero. When `SIGNED` is clear, the entire field must be zero.
+
+## Encoding Rules
+
+### Timestamp Format
+
+NeoTape timestamp fields (for example in plan metadata or spool manifests) use UTC, encoded as exactly 20 bytes:
+
+```text
+YYYY-MM-DDTHH:MM:SS\0
+```
+
+19 ASCII bytes matching `strftime("%Y-%m-%dT%H:%M:%S")` followed by one NUL byte. No timezone suffixes, fractional seconds, or locale-specific text. The unified Frame Header does not contain timestamp fields.
+
+### nt_uuid
+
+37-byte NUL-terminated UUID string per RFC 4122. Fixed size allows simple offset-based header parsing.
+
+### nt_name
+
+N-byte fixed UTF-8 text field. NUL-terminated, NUL-padded. Maximum (N-1) usable characters. `archive_label` uses a 65-byte field with at most 64 usable bytes.
+
+### Empty Fixed-Field Encoding
+
+When a writer does not produce a meaningful value for a field:
+
+- Numeric fields: zero
+- Fixed byte arrays: all zero bytes
+- NUL-terminated strings: first byte NUL, remaining zero
+
+### Requirement Keywords
+
+In fixed header field tables, `MUST`, `SHOULD`, and `MAY` describe whether a writer is required to produce a meaningful value. Every fixed field is always present at its stable position; writers fill absent values with the empty encoding.
+
+## Block Size
+
+### volume_block_size_kib
+
+The fixed NeoTape record size for an archive volume, encoded in KiB. The decoded record size is `volume_block_size_kib * 1024` bytes. This field is repeated in every frame.
+
+### Block Size Constraints
+
+| Constraint          | Value                        | Rationale                                                      |
+| ------------------- | ---------------------------- | -------------------------------------------------------------- |
+| Minimum             | 4 KiB (`value >= 4`)         | Below 4 KiB, header overhead dominates.                        |
+| Recommended minimum | 64 KiB (`value >= 64`)       | At 4 KiB, the Frame Header consumes 12.5% of each record.      |
+| Maximum             | 8 MiB (`value <= 8192`)      | LTO hardware record size limit.                                |
+
+Non-power-of-2 block sizes are allowed by the format, but they are generally not a good choice for physical media, including LTO tape.
+
+## Header Field Terminology
+
+### Repeated Archive Identity Fields
+
+Fields repeated across every frame:
+
+| Field                    | Type       | Description                                                    |
+| ------------------------ | ---------- | -------------------------------------------------------------- |
+| `archive_uuid`           | `nt_uuid`  | Stable UUID for the archive instance.                          |
+| `archive_label`          | `nt_name`  | Human-readable archive label (65 bytes, max 64 usable). Not a unique key. |
+| `volume_seq_num`         | `uint64`   | Advisory volume sequence number, starting at 1.                |
+| `volume_block_size_kib`  | `uint16`   | Fixed NeoTape record size for this volume, encoded in KiB.     |
+
+### Frame Header Fields
+
+All frames share the same fixed header layout:
+
+| Field                          | Type       | Description                                                    |
+| ------------------------------ | ---------- | -------------------------------------------------------------- |
+| `magic`                        | `char[8]`  | `NeoTape\0`                                                    |
+| `header_version`               | `uint8`    | Header layout version.                                         |
+| `channel_type`                 | `uint8_enum` | `ch_content`, `ch_metadata`, or `archive_end`.             |
+| `volume_block_size_kib`        | `uint16`   | Record size in KiB.                                            |
+| `archive_uuid`                 | `nt_uuid`  | Archive UUID.                                                  |
+| `archive_label`                | `nt_name`  | Human-readable archive label.                                  |
+| `volume_seq_num`               | `uint64`   | Advisory volume sequence number.                               |
+| `global_frame_seq_num`         | `uint64`   | Global frame sequence number within archive.                   |
+| `logical_slice_seq_num`        | `uint64`   | Logical slice sequence number.                                 |
+| `frame_seq_num_within_channel` | `uint64`   | Frame sequence number within the current channel.              |
+| `frame_payload_size`           | `uint64`   | Meaningful payload bytes after the 512-byte header.            |
+| `flags`                        | `uint64`   | START, END, SIGNED, CLEAN_END.                                 |
+| `_reserved`                    | `byte[190]`| Zero-filled padding.                                           |
+| `signature`                    | `byte[128]`| Binary signify-style signature over `frame_hash`.              |
+| `frame_hash`                   | `nt_hash`  | BLAKE3 over the canonical image of the entire frame.           |
+
+## Channel Type Enum
+
+| Value | Name          | Description                                      |
+| ----- | ------------- | ------------------------------------------------ |
+| 1     | `ch_content`  | Logical slice content stream frames.             |
+| 2     | `ch_metadata` | Advisory metadata frames for a logical slice.    |
+| 255   | `archive_end` | Clean end-of-archive marker.                     |
+
+Values 0, 3–254 are reserved.
+
+## Flags
+
+| Bit   | Name        | Meaning                                                   |
+| ----- | ----------- | --------------------------------------------------------- |
+| 0     | `START`     | First frame of the current channel group.                 |
+| 1     | `END`       | Last frame of the current channel group.                  |
+| 2     | `SIGNED`    | `signature` contains a binary signify-style signature over `frame_hash`. |
+| 3–62  | _reserved_  | Must be zero.                                             |
+| 63    | `CLEAN_END` | Archive completed cleanly (only `archive_end`).           |
+
+## Spool Concepts
+
+### Spool Directory
+
+A filesystem representation of one or more NeoTape archive virtual volumes. Regular files and directories stand in for tape filemarks. Preserves the same logical record order and volume transition rules as tape mode.
+
+### tape-\<seq\> (Volume Directory)
+
+A directory representing one NeoTape virtual volume. `<seq>` is a zero-padded volume sequence number (e.g. `tape-000001`).
+
+### tape-file-\<num\>.\<type\>.ntf
+
+A regular file representing one NeoTape tape file. `<num>` is a zero-padded tape-file index. `<type>` is one of `slice-<seq>`, `archive-end`. The `.ntf` extension stands for "NeoTape file".
+
+### Manifest (manifest.json)
+
+Advisory JSON file in a spool tape directory listing archives and their constituent tape files. Restore correctness comes from NeoTape headers, not the manifest.
+
+### Virtual Tape Size
+
+A configured capacity limit (`--virtual-tape-size`) that simulates EOT for spool mode. When exceeded, the writer transitions to the next virtual volume.
+
+## Common Acronyms
+
+| Acronym  | Expansion            | Notes                                                                                     |
+| -------- | -------------------- | ----------------------------------------------------------------------------------------- |
+| LTO      | Linear Tape-Open     | The tape format family targeted by NeoTape.                                                |
+| BOT      | Beginning of Tape    | Physical start of a tape medium.                                                           |
+| EOT      | End of Tape          | Physical end of writable medium region.                                                    |
+| EOD      | End of Data          | Logical end of valid data.                                                                 |
+| filemark | —                    | LTO filemark delimited region; NeoTape uses filemarks for coarse seekable boundaries.      |
+| BLAKE3   | —                    | The cryptographic hash used for frame integrity.                                            |
+
+## Relationship Rules
+
+- An **Archive** contains one or more **Backend Volumes**.
+- A **Backend Volume** is stored on one **Physical Medium** (or virtual volume).
+- A **Physical Medium** may store multiple **Archive Instances** sequentially.
+- A **Backend Volume** contains one or more **Logical Slices**.
+- A **Logical Slice** contains at most one contiguous `ch_metadata` group followed by at most one contiguous `ch_content` group. At least one frame must be present.
+- A **Frame** is exactly one **NeoTape Record**.
+- `ch_metadata` frames MUST precede `ch_content` frames within a logical slice.
+- A normal payload reader emits only `ch_content` frame payload bytes.
+- Archive completion is declared only by a valid **Archive End** frame with `CLEAN_END = 1`.

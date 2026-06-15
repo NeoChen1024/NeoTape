@@ -1,0 +1,40 @@
+# Security
+
+Status: normative.
+
+## Metadata Trust Model
+
+Readers MUST treat optional recovery bundles and `ch_metadata` frame payloads as untrusted data.
+
+Recovery bundle and catalog member names are identifiers for byte blobs, not restore paths. Readers MUST:
+
+- Treat the bundle as a flat collection of named byte blobs.
+- NOT interpret member names as filesystem paths.
+- Reject absolute paths and parent-directory components (e.g. `../`) if any extended name syntax is supported.
+- NOT restore ownership, permissions, device nodes, symlinks, hardlinks, xattrs, ACLs, or executable bits from recovery bundles or catalogs.
+
+### Catalog as Index
+
+The catalog is an advisory index, not authoritative metadata. Readers MUST:
+
+- Validate path safety before using catalog data for partial restore selection.
+- Reject or specially handle absolute paths, parent-directory traversal components, and policy-sensitive file types.
+- Treat catalog/payload discrepancies by trusting payload metadata.
+
+## Integrity vs. Authentication
+
+BLAKE3 (`frame_hash`) is used for per-frame integrity verification, not authentication.
+
+The `signature` field (128 bytes) holds a binary signify-style signature over `frame_hash`. When the `SIGNED` flag is set, the signature provides authenticity and tamper resistance. When the flag is clear, the entire `signature` field MUST be zero.
+
+## Executable Content
+
+If an archive contains a restore helper binary (e.g. as a recovery bundle member), the reader MUST NOT automatically execute it. Source code and specification text are preferred over binaries for long-term preservation.
+
+## Payload Path Safety
+
+When restoring payload bytes through a downstream tool (e.g. bsdtar), path safety should be enforced by the downstream tool's security options, including:
+
+- Rejecting or remapping absolute paths.
+- Rejecting or remapping parent-directory traversal components.
+- Controlling ownership, permission, device node, xattr, and ACL restoration.

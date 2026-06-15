@@ -23,7 +23,7 @@ neotape list --source spool:./archive.spool
 neotape list --source spool:./archive.spool --json
 ```
 
-Default archive `--volume-block-size` is 4 MiB for `backup` and `write`.
+Default archive `--volume-block-size` is 4 MiB for `backup` and `write` (encoded as `volume_block_size_kib = 4096`).
 Commands that emit payload data keep stdout as payload bytes only; diagnostics
 and prompts use stderr or `/dev/tty`.
 
@@ -34,9 +34,8 @@ colon only, so locator paths may contain additional colons.
 
 `spool:<dir>` selects the file-backed spool backend. A spool root is a directory
 containing single-root `.nts` tape files such as
-`tape-file-000000.volume-header.nts`,
-`tape-file-000001.slice-000001.nts`, and
-`tape-file-000002.archive-end.nts`. Use this backend for hardware-free CLI tests
+`neotape-000000.slice-000001.nts`, and
+`neotape-000001.archive-end.nts`. Use this backend for hardware-free CLI tests
 and development. An optional `recovery-bundle.tar` may be present at the spool
 root for human recovery; it is not part of the NeoTape archive stream.
 

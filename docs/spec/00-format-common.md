@@ -1,170 +1,130 @@
 # Common Format Rules
 
-Status: draft / common rules.
+Status: normative.
 
-This document defines common rules and conventions shared across the NeoTape
-format. Header type-specific field inventories are defined in their own
-documents.
+This document defines common rules and conventions shared across the unified
+NeoTape frame format. The fixed header layout and field semantics are defined in
+[docs/spec/01-frame-header.md](01-frame-header.md).
 
 ## Datatype Reference
 
 All fixed header field tables in this specification use the following datatypes:
 
-| Datatype       | Description                                                                                                                                                                          |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `uint8`      | Unsigned 8-bit integer.                                                                                                                                                              |
-| `uint8_enum` | Unsigned 8-bit integer with enumerated values defined per field.                                                                                                                     |
-| `uint16`     | Unsigned 16-bit integer, little-endian.                                                                                                                                              |
-| `uint32`     | Unsigned 32-bit integer, little-endian.                                                                                                                                              |
-| `uint64`     | Unsigned 64-bit integer, little-endian.                                                                                                                                              |
-| `char[N]`    | Fixed N-byte character array. NUL-terminated or NUL-padded per field rules.                                                                                                          |
-| `byte[N]`    | Fixed N-byte raw binary array.                                                                                                                                                       |
-| `byte[*]`    | Auto-calculated zero padding. Expands to the number of zero bytes needed to fill the 1024-byte fixed header area. Writers MUST write zero; readers MUST include all bytes in CRC32C. |
-| `nt_name`    | Fixed 256-byte UTF-8 text field. NUL-terminated, NUL-padded after the terminator, required to end with NUL. (Max 255 bytes usable)                                                   |
-| `nt_time`    | NUL-terminated UTC timestamp. 20 bytes. Encoding defined in Timestamp Format.                                                                                                        |
-| `nt_uuid`    | NUL-terminated UUID string per RFC 4122. 37 bytes.                                                                                                                                   |
-| `nt_hash`    | BLAKE3 256-bit hash. 32 bytes.                                                                                                                                                       |
-| `nt_crc32c`  | CRC32C checksum, little-endian. 4 bytes. Algorithm defined in CRC32C Algorithm section.                                                                                              |
+| Datatype       | Description                                                                           |
+| -------------- | ------------------------------------------------------------------------------------- |
+| `uint8`        | Unsigned 8-bit integer.                                                               |
+| `uint8_enum`   | Unsigned 8-bit integer with enumerated values defined per field.                      |
+| `uint16`       | Unsigned 16-bit integer, little-endian.                                               |
+| `uint64`       | Unsigned 64-bit integer, little-endian.                                               |
+| `char[N]`      | Fixed N-byte character array. NUL-terminated or NUL-padded per field rules.           |
+| `byte[N]`      | Fixed N-byte raw binary array.                                                        |
+| `byte[*]`      | Auto-calculated zero padding. Expands to the number of zero bytes needed to fill the 512-byte fixed header area. Writers MUST write zero; readers MUST include all bytes in `frame_hash`. |
+| `nt_name`      | Fixed N-byte UTF-8 text field. NUL-terminated, NUL-padded after the terminator, required to end with NUL. |
+| `nt_uuid`      | NUL-terminated UUID string per RFC 4122. 37 bytes.                                    |
+| `nt_hash`      | BLAKE3 256-bit hash. 32 bytes.                                                        |
 
 ## Magic Value
 
-All NeoTape fixed headers MUST use the same 8-byte magic value:
+All NeoTape frames MUST use the same 8-byte magic value:
 
 ```text
 NeoTape\0
 ```
 
-Header type is distinguished by each header's type field, not by a different
-magic value.
+Frame semantics are distinguished by the `channel_type` field, not by a different magic value.
 
 ## Field Packing
 
-All fields in every NeoTape fixed header MUST be packed contiguously — no
-padding, alignment, or gap bytes between fields. This is equivalent to a C or
-C++ packed struct (`__attribute__((packed))`).
+All fields in the NeoTape fixed header MUST be packed contiguously — no padding, alignment, or gap bytes between fields. This is equivalent to a C or C++ packed struct (`__attribute__((packed))`).
 
-Field sizes in the tables are exact and cumulative: the byte offset of a field
-equals the sum of all preceding field sizes in that header's table.
+Field sizes in the table are exact and cumulative: the byte offset of a field equals the sum of all preceding field sizes.
 
 ## Common Header Prefix
 
-Every NeoTape fixed header MUST begin with the same three fields in this exact
-order:
+Every NeoTape frame MUST begin with the same three fields in this exact order:
 
 | Field          | datatype   | size (in bytes) |
 | -------------- | ---------- | --------------- |
 | magic          | char[8]    | 8               |
 | header_version | uint8      | 1               |
-| header_type    | uint8_enum | 1               |
+| channel_type   | uint8_enum | 1               |
 
-A parser can always read the first 10 bytes of any fixed header, validate the
-magic value, determine the header layout version, and dispatch reader logic by
-header type.
-
-This common prefix applies to the Volume Header, Frame Header, and Archive End
-Header. The layout after byte 9 is type-specific.
+A parser can always read the first 10 bytes, validate the magic value, determine the layout version, and dispatch reader logic by channel type.
 
 ## Repeated Archive Identity Fields
 
-Archive-time headers SHOULD repeat enough identity fields to make an archive
-recognizable during low-level inspection, even without a NeoTape-aware tool.
-
-Volume Header, Frame Header, and Archive End Header therefore include
-`archive_uuid` and `archive_name`. `archive_uuid` is the authoritative machine
-identifier. `archive_name` is a human-readable hint and MUST NOT be used as a
-unique key.
+Every frame repeats `archive_uuid`, `archive_label`, `volume_seq_num`, and `volume_block_size_kib`. `archive_uuid` is the authoritative machine identifier. `archive_label` is a human-readable hint and MUST NOT be used as a unique key.
 
 ## Header Position Rule
 
-Every NeoTape fixed header MUST begin at byte 0 of its containing NeoTape
-record. No fixed header may start at a non-zero offset within a record.
+Every NeoTape fixed header MUST begin at byte 0 of its containing NeoTape record. No fixed header may start at a non-zero offset within a record.
 
 ## Fixed Header Size
 
-Every NeoTape fixed header field area MUST occupy exactly 1024 bytes.
+Every NeoTape fixed header field area MUST occupy exactly 512 bytes.
 
-Every fixed header MUST place its CRC32C field as the last 4 bytes of that
-1024-byte fixed area. The CRC32C is computed over all preceding fixed header
-bytes, including empty values and reserved fields. The CRC32C field itself is
-excluded from its own calculation.
+The final 32 bytes of the header are `frame_hash`, a BLAKE3 digest over the canonical image of the entire frame. See [Frame Hash Calculation](#frame-hash-calculation) below for the exact rules.
 
-Unused bytes in the 1024-byte fixed area MUST be represented as a reserved field
-and MUST be written as zero by writers. Readers MUST include reserved bytes in
-the CRC32C calculation.
+## Frame Hash Calculation
 
-## CRC32C Algorithm
+`frame_hash` covers exactly `volume_block_size_kib * 1024` bytes: the 512-byte fixed header, `frame_payload_size` bytes of payload, and all trailing padding bytes through the end of the frame.
 
-NeoTape uses CRC32C (Castagnoli polynomial) with the following parameters:
+```text
+frame_hash = BLAKE3(canonical_image)
+```
 
-- Polynomial: `0x82F63B78`
-- Initial value: `0xFFFFFFFF`
-- Final XOR: `0xFFFFFFFF`
-- Input reflection: yes
-- Result reflection: yes
+where `canonical_image` is the full `volume_block_size_kib * 1024`-byte frame with two fields treated as all-zero bytes:
 
-Implementations MAY use any compatible method (lookup-table, slicing-by-8,
-hardware CRC32C instructions).
+- `signature` (128 bytes)
+- `frame_hash` (32 bytes)
 
-The CRC32C is computed over all fixed header bytes preceding the CRC32C field,
-including reserved and zero-filled fields, in their on-media byte order. The
-CRC32C field itself is excluded from the computation.
+All other fixed header fields, payload bytes, and padding bytes are included exactly as stored.
 
-All `nt_crc32c` fields in NeoTape headers use this algorithm.
+Padding bytes after `frame_payload_size` and before the end of the decoded record size MUST be zero-filled by writers. Readers include padding bytes in `frame_hash` verification.
+
+## Signing Sequence
+
+The `signature` field (128 bytes) holds a binary, unarmored signify-style signature over `frame_hash` when the `SIGNED` flag is set. The signature payload is 74 bytes and is written at the beginning of the `signature` field; the remaining bytes MUST be zero. When `SIGNED` is clear, writers MUST write the entire `signature` field as zero and readers MUST ignore it.
+
+The writer-side sequence is:
+
+1. Fill the final header fields, including the final `SIGNED` flag value.
+2. Write payload bytes and zero-fill all padding bytes through the decoded record size.
+3. Compute `frame_hash` over the canonical image (see above).
+4. If `SIGNED` is set, sign `frame_hash` and write the 74-byte binary signify-style signature into `signature`, followed by zero padding.
+5. Write `frame_hash` into the final 32 bytes of the header.
 
 ## Data Continuation Rule
 
-If a header type semantically defines continuation data that follows its fixed
-field area, that continuation data MUST begin in the same NeoTape record
-immediately after the 1024-byte fixed field area, without padding or alignment
-gap.
+Payload bytes MUST begin in the same NeoTape record immediately after the 512-byte fixed field area, without padding or alignment gap.
 
-Examples include the Frame Header's content or metadata bytes.
-
-Header types that are not followed by continuation data (Volume Header, Archive
-End Header) MAY fill the remainder of their NeoTape record with padding. All
-other header types MUST NOT waste record space between the fixed field area and
-their associated continuation data.
+Any bytes after `frame_payload_size` and before the end of the decoded record size are zero padding. Writers MUST write this padding as zero. Readers include padding bytes in `frame_hash` verification.
 
 ## Block Size Constraints
 
 ### Minimum
 
-The NeoTape record block size MUST be at least 4 KiB (4096 bytes).
+The NeoTape record block size MUST be at least 4 KiB (4096 bytes), encoded as `volume_block_size_kib >= 4`.
 
-A writer SHOULD use at least 64 KiB (65536 bytes) in practice. Below 64 KiB
-the Frame Header overhead (1024 bytes per record) becomes significant: at 4 KiB
-the header consumes 25% of each record.
+A writer SHOULD use at least 64 KiB (65536 bytes) in practice (`volume_block_size_kib >= 64`). Below 64 KiB the Frame Header overhead (512 bytes per record) becomes significant: at 4 KiB the header consumes 12.5% of each record.
 
 ### Maximum
 
-The NeoTape record block size MUST NOT exceed 8 MiB (8388608 bytes). A reader
-SHOULD reject larger values as unsupported.
-
-8 MiB is the practical variable-length record ceiling validated on the target
-LTO-5 drive. Values above 8 MiB may fail at the hardware layer.
+The NeoTape record block size MUST NOT exceed 8 MiB (8388608 bytes), encoded as `volume_block_size_kib <= 8192`. A reader SHOULD reject larger values as unsupported.
 
 ### Shape
 
-The format MAY use non-power-of-2 block sizes. In practice, that is usually a
-poor choice for any physical medium, especially LTO tape. Writers SHOULD prefer
-power-of-2 block sizes unless they have a concrete medium-specific reason not
-to.
+The format MAY use non-power-of-2 block sizes. In practice, that is usually a poor choice for any physical medium, especially LTO tape. Writers SHOULD prefer power-of-2 block sizes unless they have a concrete medium-specific reason not to.
 
 ### Scope
 
-These constraints apply to `volume_block_size` (Volume Header, Frame Header,
-Archive End Header).
+`volume_block_size_kib` is repeated in every frame in the archive volume. The decoded record size is `volume_block_size_kib * 1024` bytes.
 
 ## Requirement Keywords
 
-For fixed header field tables, `MUST`, `SHOULD`, and `MAY` describe whether a
-writer is required or expected to produce a meaningful value. They do not make
-the field itself optional.
+For fixed header field tables, `MUST`, `SHOULD`, and `MAY` describe whether a writer is required or expected to produce a meaningful value. They do not make the field itself optional.
 
-Every fixed field listed in a header field table has a stable position and fixed
-encoded size. Writers MUST NOT omit fields from the encoded header. If a writer
-does not produce a meaningful value for a `SHOULD` or `MAY` field, it MUST write
-the field's empty value instead.
+Every fixed field listed in the header table has a stable position and fixed encoded size. Writers MUST NOT omit fields from the encoded header. If a writer does not produce a meaningful value for a `SHOULD` or `MAY` field, it MUST write the field's empty value instead.
 
 Empty fixed-field values are encoded as follows:
 
@@ -173,18 +133,11 @@ Empty fixed-field values are encoded as follows:
 - NUL-terminated string fields: first byte NUL, remaining bytes zero.
 - `nt_name` fields: first byte NUL, remaining bytes zero.
 
-CRC32C calculations over fixed fields MUST include every fixed field byte,
-including empty values and reserved fields. The relevant CRC32C field is
-excluded from its own calculation.
-
-This rule applies to fixed header fields only. Metadata bundle or catalog member
-tables are file lists; `MAY` member files may be absent from the relevant
-container.
+`frame_hash` calculations over fixed fields MUST include every fixed field byte, including empty values and reserved fields. `signature` and `frame_hash` are treated as zero for hash calculation.
 
 ## Timestamp Format
 
-All fixed NeoTape timestamp fields MUST use UTC and MUST be encoded as a
-20-byte NUL-terminated string.
+NeoTape timestamp fields (for example in plan metadata or spool manifests) MUST use UTC and MUST be encoded as a 20-byte NUL-terminated string.
 
 The timestamp text before the NUL byte MUST match this exact `strftime` format:
 
@@ -198,8 +151,4 @@ This is exactly 19 ASCII bytes followed by one NUL byte:
 YYYY-MM-DDTHH:MM:SS\0
 ```
 
-Writers MUST NOT use timezone suffixes, numeric offsets, fractional seconds,
-locale-specific text, RFC 3339 variants, ISO 8601 variants, or any other date
-format.
-
-- The odd-size padding byte is not counted in the member size field.
+Writers MUST NOT use timezone suffixes, numeric offsets, fractional seconds, locale-specific text, RFC 3339 variants, ISO 8601 variants, or any other date format. The unified Frame Header defined in [docs/spec/01-frame-header.md](01-frame-header.md) does not contain timestamp fields.
