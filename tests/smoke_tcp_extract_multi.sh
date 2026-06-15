@@ -9,11 +9,11 @@ BLOCK=4096
 MAX_VOL_BYTES=$((8 * BLOCK)) # force EOT after ~8 frames
 
 cleanup() {
-    if [ -n "${EXTRACTOR_PID:-}" ]; then
-        kill "$EXTRACTOR_PID" 2>/dev/null || true
-        wait "$EXTRACTOR_PID" 2>/dev/null || true
-    fi
-    rm -rf "$SOCK" "$SPOOL1" "$SPOOL2" "$SRC"
+	if [ -n "${EXTRACTOR_PID:-}" ]; then
+		kill "$EXTRACTOR_PID" 2>/dev/null || true
+		wait "$EXTRACTOR_PID" 2>/dev/null || true
+	fi
+	rm -rf "$SOCK" "$SPOOL1" "$SPOOL2" "$SRC"
 }
 trap cleanup EXIT
 
@@ -28,32 +28,32 @@ REF_PAX=/tmp/neotape-extract-ref-$$
 ARCHIVER_SOCK="unix://$SOCK"
 
 ./bin/neotape-archiver \
-    --listen "$ARCHIVER_SOCK" \
-    --volume-block-size "$BLOCK" \
-    --archive-name multi-extract \
-    --retention-frame-count 64 \
-    -C "$SRC" blob.bin &
+	--listen "$ARCHIVER_SOCK" \
+	--volume-block-size "$BLOCK" \
+	--archive-name multi-extract \
+	--retention-frame-count 64 \
+	-C "$SRC" blob.bin &
 ARCHIVER_PID=$!
 
 for _ in $(seq 1 50); do
-    [ -S "$SOCK" ] && break
-    sleep 0.1
+	[ -S "$SOCK" ] && break
+	sleep 0.1
 done
 
 # Writer 1: tiny volume to force EOT.
 set +e
 ./bin/neotape-write --source "$ARCHIVER_SOCK" --target "spool:$SPOOL1" \
-    --output-buffer-size 8388608 --max-volume-bytes "$MAX_VOL_BYTES"
+	--output-buffer-size 8388608 --max-volume-bytes "$MAX_VOL_BYTES"
 rc=$?
 set -e
 if [ "$rc" -ne 1 ]; then
-    echo "smoke_tcp_extract_multi: writer 1 exited with $rc, expected 1"
-    exit 1
+	echo "smoke_tcp_extract_multi: writer 1 exited with $rc, expected 1"
+	exit 1
 fi
 
 # Writer 2: finish the archive.
 ./bin/neotape-write --source "$ARCHIVER_SOCK" --target "spool:$SPOOL2" \
-    --output-buffer-size 8388608
+	--output-buffer-size 8388608
 
 wait "$ARCHIVER_PID"
 
@@ -65,8 +65,8 @@ OUT_PAX=/tmp/neotape-extract-out-$$
 EXTRACTOR_PID=$!
 
 for _ in $(seq 1 50); do
-    [ -S "/tmp/neotape-extract-sock-$$" ] && break
-    sleep 0.1
+	[ -S "/tmp/neotape-extract-sock-$$" ] && break
+	sleep 0.1
 done
 
 # Reader 1: reads volume 1 (SPOOL1 only).
@@ -82,8 +82,8 @@ mkdir /tmp/neotape-extract-refdir-$$ /tmp/neotape-extract-outdir-$$
 bsdtar -xpf "$REF_PAX" -C "/tmp/neotape-extract-refdir-$$"
 bsdtar -xpf "$OUT_PAX" -C "/tmp/neotape-extract-outdir-$$"
 if diff -rq "/tmp/neotape-extract-refdir-$$" "/tmp/neotape-extract-outdir-$$"; then
-    echo "smoke_tcp_extract_multi: ok"
+	echo "smoke_tcp_extract_multi: ok"
 else
-    echo "smoke_tcp_extract_multi: FAIL"
-    exit 1
+	echo "smoke_tcp_extract_multi: FAIL"
+	exit 1
 fi
