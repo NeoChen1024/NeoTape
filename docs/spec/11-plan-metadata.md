@@ -30,22 +30,59 @@ line.
 Chdir directives appear in the order the user specified them and remain in
 effect for all subsequent entry records.
 
-### `/<slice>/<file_num>/<kind>/<size>/<filepath>\0\n`
+### `/<slice>/<file_num>/<kind>/<size>/<mtime>/<uid>/<uname>/<gid>/<gname>/<hardlink>/<filepath>\0\n`
 
 An entry record. Fields:
 
 | Field          | Description                                                                                                 |
 | -------------- | ----------------------------------------------------------------------------------------------------------- |
-| `<slice>`    | Slice number, not zero-padded, 0-based.                                                                     |
-| `<file_num>` | Index within the slice, not zero-padded, 0-based.                                                           |
-| `<kind>`     | File type:`f` regular, `d` directory, `l` symlink, `c` char, `b` block, `p` fifo, `s` socket. |
-| `<size>`     | Apparent file size in bytes (decimal).                                                                      |
-| `<filepath>` | Archive path (relative, may include the source-directory prefix, no leading `/`).                         |
+| `<slice>`      | Slice number, not zero-padded, 0-based.                                                                     |
+| `<file_num>`   | Index within the slice, not zero-padded, 0-based.                                                           |
+| `<kind>`       | File type:`f` regular, `d` directory, `l` symlink, `c` char, `b` block, `p` fifo, `s` socket. |
+| `<size>`       | Apparent file size in bytes (decimal).                                                                      |
+| `<mtime>`      | Modification time as Unix timestamp (decimal seconds).                                                      |
+| `<uid>`        | Numeric owner user ID (decimal). `0` when unknown.                                                          |
+| `<uname>`      | Owner user name as a string (empty when unknown).                                                           |
+| `<gid>`        | Numeric group ID (decimal). `0` when unknown.                                                               |
+| `<gname>`      | Group name as a string (empty when unknown).                                                                |
+| `<hardlink>`   | `1` if this entry is a hardlink, `0` otherwise. Hardlinks share file content; the target path is not recorded. |
+| `<filepath>`   | Archive path (relative, may include the source-directory prefix, no leading `/`).                           |
+
+All fields are mandatory — every entry record carries all 11 fields. Unknown
+or unavailable values use a reasonable zero sentinel (`0`, `""`, or timestamp `0`)
+rather than being omitted.
+
+This record doubles as the `ch_metadata` catalog for each logical slice. A
+downstream reader can parse the same record format to list archive contents,
+compute per-slice progress, or verify slice integrity against the planned
+file set.
 
 ## Example
 
 ```
 /chdir//home/user\0\n
-/0/0/f/1234/src/main.c\0\n
-/0/1/f/5678/docs/readme.txt\0\n
+/0/0/f/1234/1718400000/1000/neo_chen/1000/neogroup/0/src/main.c\0\n
+/0/1/f/5678/1718400000/0//0//0/docs/readme.txt\0\n
+/0/2/d/0/1718400000/1000/neo_chen/1000/neogroup/0/src/\0\n
+/0/3/h/4096/1718400000/1000/neo_chen/1000/neogroup/1/share/also-main.c\0\n
 ```
+
+## Catalog Role (`ch_metadata`)
+
+The plan metadata stream serves a dual purpose:
+
+1. **Planning** — the archiver reads entry records to determine slice boundaries
+   and file packing order.
+2. **Catalog** — the same entry records, when written into `ch_metadata` frames
+   within each logical slice, form a machine-readable index of the slice's
+   contents. A reader can parse them to list files, verify completeness, or
+   display progress without inspecting the `ch_content` payload.
+
+The catalog is slice-scoped: each logical slice's `ch_metadata` contains only
+the entry records whose `<slice>` field matches the enclosing
+`logical_slice_seq_num`. This keeps metadata streaming and avoids the need for
+an archive-level preamble that would require knowing total file counts in
+advance.
+
+`/chdir/` directives are *not* written into `ch_metadata` — they are
+planning-only instructions consumed by the archiver.
