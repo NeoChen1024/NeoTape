@@ -44,22 +44,25 @@ constexpr string_view spool_temp_ext = ".pending";
 
 const char *density_name_for_code(int code) noexcept {
     auto it = density_names.find(code);
-    if (it == density_names.end())
+    if (it == density_names.end()) {
         return "unknown";
+    }
     return it->second.c_str();
 }
 
 bool parse_spool_file_name(const fs::path &path, uint64_t &file_num) {
     string name = path.filename().string();
     if (name.size() <= spool_prefix.size() + spool_ext.size() ||
-        name.rfind(spool_prefix, 0) != 0 ||
-        name.substr(name.size() - spool_ext.size()) != spool_ext)
+        !name.starts_with(spool_prefix) ||
+        name.substr(name.size() - spool_ext.size()) != spool_ext) {
         return false;
+    }
 
-    size_t number_begin = spool_prefix.size();
-    size_t number_end = name.find('.', number_begin);
-    if (number_end == string::npos || number_end == number_begin)
+    size_t const number_begin = spool_prefix.size();
+    size_t const number_end = name.find('.', number_begin);
+    if (number_end == string::npos || number_end == number_begin) {
         return false;
+    }
     string_view middle(name.c_str() + number_begin, number_end - number_begin);
     char *end = nullptr;
     file_num = std::strtoull(middle.data(), &end, 10);
@@ -68,15 +71,18 @@ bool parse_spool_file_name(const fs::path &path, uint64_t &file_num) {
 
 std::vector<fs::path> scan_spool_files(const fs::path &root) {
     std::vector<fs::path> files;
-    if (!fs::exists(root))
+    if (!fs::exists(root)) {
         return files;
+    }
 
     for (const auto &entry : fs::directory_iterator(root)) {
-        if (!entry.is_regular_file())
+        if (!entry.is_regular_file()) {
             continue;
+        }
         uint64_t file_num = 0;
-        if (!parse_spool_file_name(entry.path(), file_num))
+        if (!parse_spool_file_name(entry.path(), file_num)) {
             continue;
+        }
         files.push_back(entry.path());
     }
 
@@ -113,21 +119,24 @@ fs::path spool_temp_path(const fs::path &root, uint64_t file_num) {
 
 neotape::FrameHeader parse_spool_header_file(const fs::path &path) {
     std::ifstream in(path, std::ios::binary);
-    if (!in)
+    if (!in) {
         throw std::runtime_error(format("open {}", path.string()));
+    }
 
     std::vector<uint8_t> bytes(neotape::fixed_header_size);
     if (!in.read(reinterpret_cast<char *>(bytes.data()),
-                 static_cast<std::streamsize>(bytes.size())))
+                 static_cast<std::streamsize>(bytes.size()))) {
         throw std::runtime_error(format("short read from {}", path.string()));
+    }
     return neotape::parse_fixed_header(bytes.data(), bytes.size());
 }
 
 int open_fd(const fs::path &path, int flags) {
-    int fd = ::open(path.c_str(), flags, 0666);
-    if (fd < 0)
+    int const fd = ::open(path.c_str(), flags, 0666);
+    if (fd < 0) {
         throw std::runtime_error(
             format("open {}: {}", path.string(), std::strerror(errno)));
+    }
     return fd;
 }
 
@@ -151,15 +160,17 @@ Status::Status(long mt_type, long mt_resid, long mt_dsreg, long mt_gstat,
     : type_(mt_type), resid_(mt_resid), dsreg_(mt_dsreg), gstat_(mt_gstat),
       erreg_(mt_erreg), fileno_(mt_fileno), blkno_(mt_blkno) {}
 
-bool Status::eof() const noexcept { return gstat_ & GMT_EOF; }
-bool Status::bot() const noexcept { return gstat_ & GMT_BOT; }
-bool Status::eot() const noexcept { return gstat_ & GMT_EOT; }
-bool Status::sm() const noexcept { return gstat_ & GMT_SM; }
-bool Status::eod() const noexcept { return gstat_ & GMT_EOD; }
-bool Status::wr_prot() const noexcept { return gstat_ & GMT_WR_PROT; }
-bool Status::online() const noexcept { return gstat_ & GMT_ONLINE; }
-bool Status::dr_open() const noexcept { return gstat_ & GMT_DR_OPEN; }
-bool Status::cleaning_requested() const noexcept { return gstat_ & GMT_CLN; }
+bool Status::eof() const noexcept { return (gstat_ & GMT_EOF) != 0; }
+bool Status::bot() const noexcept { return (gstat_ & GMT_BOT) != 0; }
+bool Status::eot() const noexcept { return (gstat_ & GMT_EOT) != 0; }
+bool Status::sm() const noexcept { return (gstat_ & GMT_SM) != 0; }
+bool Status::eod() const noexcept { return (gstat_ & GMT_EOD) != 0; }
+bool Status::wr_prot() const noexcept { return (gstat_ & GMT_WR_PROT) != 0; }
+bool Status::online() const noexcept { return (gstat_ & GMT_ONLINE) != 0; }
+bool Status::dr_open() const noexcept { return (gstat_ & GMT_DR_OPEN) != 0; }
+bool Status::cleaning_requested() const noexcept {
+    return (gstat_ & GMT_CLN) != 0;
+}
 
 int Status::density_code() const noexcept {
     return static_cast<int>((dsreg_ & MT_ST_DENSITY_MASK) >>
@@ -172,21 +183,26 @@ int Status::block_size() const noexcept {
 }
 
 std::string_view Status::density_name() const {
-    auto *n = density_name_for_code(density_code());
-    return n ? std::string_view(n) : std::string_view("unknown");
+    const auto *n = density_name_for_code(density_code());
+    return (n != nullptr) ? std::string_view(n) : std::string_view("unknown");
 }
 
 std::string Status::type_name() const {
-    if (type_ == MT_ISSCSI1)
+    if (type_ == MT_ISSCSI1) {
         return "SCSI 1";
-    if (type_ == MT_ISSCSI2)
+    }
+    if (type_ == MT_ISSCSI2) {
         return "SCSI 2";
-    if (type_ == MT_ISONSTREAM_SC)
+    }
+    if (type_ == MT_ISONSTREAM_SC) {
         return "OnStream SC-, DI-, DP-, or USB";
-    if (type_ & 0x800000)
+    }
+    if ((type_ & 0x800000) != 0) {
         return "qic-117 drive type = 0x" + std::to_string(type_ & 0x1ffff);
-    if (type_ == 0)
+    }
+    if (type_ == 0) {
         return "IDE-Tape (type code 0) ?";
+    }
     return "Unknown tape drive type (code " + std::to_string(type_) + ")";
 }
 
@@ -196,15 +212,16 @@ std::string Status::type_name() const {
 
 TapeDevice::TapeDevice(std::string_view device_path, bool read_write)
     : device_path_(device_path), read_write_(read_write) {
-    int oflags = read_write ? O_RDWR : O_RDONLY;
+    int const oflags = read_write ? O_RDWR : O_RDONLY;
 
     fd_ = ::open(device_path_.c_str(), oflags | O_NONBLOCK);
-    if (fd_ < 0)
+    if (fd_ < 0) {
         throw Error(device_path_, "open", errno);
+    }
 
     struct ::stat st;
     if (::fstat(fd_, &st) < 0) {
-        int e = errno;
+        int const e = errno;
         ::close(fd_);
         fd_ = -1;
         throw Error(device_path_, "fstat", e);
@@ -220,8 +237,9 @@ TapeDevice::TapeDevice(int fd, std::string_view path, bool read_write)
     : fd_(fd), device_path_(path), read_write_(read_write) {}
 
 TapeDevice::~TapeDevice() {
-    if (fd_ >= 0)
+    if (fd_ >= 0) {
         ::close(fd_);
+    }
 }
 
 TapeDevice::TapeDevice(TapeDevice &&other) noexcept
@@ -232,8 +250,9 @@ TapeDevice::TapeDevice(TapeDevice &&other) noexcept
 
 TapeDevice &TapeDevice::operator=(TapeDevice &&other) noexcept {
     if (this != &other) {
-        if (fd_ >= 0)
+        if (fd_ >= 0) {
             ::close(fd_);
+        }
         fd_ = other.fd_;
         device_path_ = std::move(other.device_path_);
         read_write_ = other.read_write_;
@@ -254,10 +273,11 @@ void TapeDevice::write_record(const void *data, std::size_t size) {
     std::size_t remaining = size;
     NEOTAPE_DEBUG("[tape {}] write_record begin size={}\n", device_path_, size);
     while (remaining > 0) {
-        ssize_t w = ::write(fd_, p, remaining);
+        ssize_t const w = ::write(fd_, p, remaining);
         if (w < 0) {
-            if (errno == EINTR)
+            if (errno == EINTR) {
                 continue;
+            }
             NEOTAPE_DEBUG("[tape {}] write_record error errno={} ({})\n",
                           device_path_, errno, std::strerror(errno));
             throw Error(device_path_, "write_record", errno);
@@ -275,10 +295,11 @@ void TapeDevice::write_record(const void *data, std::size_t size) {
 
 void TapeDevice::reopen() {
     close();
-    int oflags = read_write_ ? O_RDWR : O_RDONLY;
+    int const oflags = read_write_ ? O_RDWR : O_RDONLY;
     fd_ = ::open(device_path_.c_str(), oflags | O_NONBLOCK);
-    if (fd_ < 0)
+    if (fd_ < 0) {
         throw Error(device_path_, "open", errno);
+    }
 }
 
 // -- low-level ioctl dispatch ------------------------------------------
@@ -307,8 +328,9 @@ void TapeDevice::space_to_eod() {
     } catch (const Error &e) {
         if (e.error_code() == EIO) {
             try {
-                if (status().eod())
+                if (status().eod()) {
                     return;
+                }
             } catch (const Error &) {
             }
         }
@@ -376,8 +398,9 @@ int TapeDevice::get_blkno() { return status().blkno(); }
 
 Position TapeDevice::do_tell() {
     mtpos pos{};
-    if (::ioctl(fd_, MTIOCPOS, &pos) < 0)
+    if (::ioctl(fd_, MTIOCPOS, &pos) < 0) {
         throw Error(device_path_, "tell", errno);
+    }
     return Position{pos.mt_blkno};
 }
 
@@ -390,8 +413,7 @@ Status TapeDevice::do_status() {
         throw Error(device_path_, "status", errno);
     }
     Status st(raw.mt_type, raw.mt_resid, raw.mt_dsreg, raw.mt_gstat,
-              raw.mt_erreg, static_cast<int>(raw.mt_fileno),
-              static_cast<int>(raw.mt_blkno));
+              raw.mt_erreg, raw.mt_fileno, raw.mt_blkno);
     NEOTAPE_DEBUG("[tape {}] status type=0x{:x} resid={} dsreg=0x{:x} "
                   "gstat=0x{:x} erreg=0x{:x} fileno={} blkno={} "
                   "bot={} eot={} eod={} eof={} online={}\n",
@@ -404,21 +426,24 @@ Status TapeDevice::do_status() {
 // -- static helpers ----------------------------------------------------
 
 std::string_view TapeDevice::density_name(int code) {
-    auto *n = density_name_for_code(code);
-    return n ? std::string_view(n) : std::string_view("unknown");
+    const auto *n = density_name_for_code(code);
+    return (n != nullptr) ? std::string_view(n) : std::string_view("unknown");
 }
 
 SpoolTapeDevice::SpoolTapeDevice(const fs::path &root, bool read_write)
     : TapeDevice(-1, root.string(), read_write), root_(root),
       read_write_(read_write) {
-    if (read_write_)
+    if (read_write_) {
         fs::create_directories(root_);
+    }
 
     files_ = scan_spool_files(root_);
     for (const auto &file : files_) {
         uint64_t file_num = 0;
-        if (parse_spool_file_name(file, file_num) && file_num >= next_file_num_)
+        if (parse_spool_file_name(file, file_num) &&
+            file_num >= next_file_num_) {
             next_file_num_ = file_num + 1;
+        }
     }
 
     if (read_write_) {
@@ -459,12 +484,14 @@ SpoolTapeDevice::~SpoolTapeDevice() {
 }
 
 void SpoolTapeDevice::finalize_current_file() {
-    if (!current_is_temp_ || current_path_.empty())
+    if (!current_is_temp_ || current_path_.empty()) {
         return;
+    }
 
     auto header = parse_spool_header_file(current_path_);
     current_block_size_ = neotape::decoded_block_size(header);
-    fs::path final_path = spool_final_path(root_, current_file_num_, header);
+    fs::path const final_path =
+        spool_final_path(root_, current_file_num_, header);
     fs::rename(current_path_, final_path);
     current_is_temp_ = false;
     current_path_.clear();
@@ -473,22 +500,26 @@ void SpoolTapeDevice::finalize_current_file() {
 int SpoolTapeDevice::fd() const noexcept { return spool_fd_; }
 
 void SpoolTapeDevice::write_record(const void *data, std::size_t size) {
-    if (!read_write_)
+    if (!read_write_) {
         throw Error(device_path(), "write_record", EROFS);
-    if (spool_fd_ < 0)
+    }
+    if (spool_fd_ < 0) {
         throw Error(device_path(), "write_record", EBADF);
+    }
 
     const auto *p = static_cast<const char *>(data);
     std::size_t remaining = size;
     while (remaining > 0) {
-        ssize_t w = ::write(spool_fd_, p, remaining);
+        ssize_t const w = ::write(spool_fd_, p, remaining);
         if (w < 0) {
-            if (errno == EINTR)
+            if (errno == EINTR) {
                 continue;
+            }
             throw Error(device_path(), "write_record", errno);
         }
-        if (w == 0)
+        if (w == 0) {
             throw Error(device_path(), "write_record", EIO);
+        }
         p += w;
         remaining -= static_cast<std::size_t>(w);
     }
@@ -496,8 +527,9 @@ void SpoolTapeDevice::write_record(const void *data, std::size_t size) {
 }
 
 void SpoolTapeDevice::do_mtop(int op, int count) {
-    if (count <= 0)
+    if (count <= 0) {
         return;
+    }
 
     switch (op) {
     case MTSETBLK:
@@ -505,17 +537,22 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
         return;
 
     case MTWEOF: {
-        if (!read_write_)
+        if (!read_write_) {
             throw Error(device_path(), "write filemark", ENOTSUP);
-        if (count != 1)
+        }
+        if (count != 1) {
             throw Error(device_path(), "write filemark", ENOTSUP);
-        if (spool_fd_ < 0)
+        }
+        if (spool_fd_ < 0) {
             throw Error(device_path(), "write filemark", EBADF);
+        }
 
-        if (::fsync(spool_fd_) < 0)
+        if (::fsync(spool_fd_) < 0) {
             throw Error(device_path(), "fsync", errno);
-        if (::close(spool_fd_) < 0)
+        }
+        if (::close(spool_fd_) < 0) {
             throw Error(device_path(), "close", errno);
+        }
         spool_fd_ = -1;
 
         finalize_current_file();
@@ -532,15 +569,16 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
 
     case MTFSF:
     case MTFSFM: {
-        if (read_write_)
+        if (read_write_) {
             throw Error(device_path(), "filemark spacing", ENOTSUP);
+        }
         if (spool_fd_ >= 0) {
             ::close(spool_fd_);
             spool_fd_ = -1;
         }
 
         auto it = std::ranges::find(files_, current_path_);
-        size_t index =
+        size_t const index =
             it == files_.end()
                 ? 0
                 : static_cast<size_t>(std::distance(files_.begin(), it)) + 1;
@@ -558,18 +596,22 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
     }
 
     case MTREW:
-        if (spool_fd_ < 0)
+        if (spool_fd_ < 0) {
             throw Error(device_path(), "rewind", EBADF);
-        if (::lseek(spool_fd_, 0, SEEK_SET) < 0)
+        }
+        if (::lseek(spool_fd_, 0, SEEK_SET) < 0) {
             throw Error(device_path(), "lseek", errno);
+        }
         current_record_ = 0;
         return;
 
     case MTEOM:
-        if (spool_fd_ < 0)
+        if (spool_fd_ < 0) {
             throw Error(device_path(), "space to eod", EBADF);
-        if (::lseek(spool_fd_, 0, SEEK_END) < 0)
+        }
+        if (::lseek(spool_fd_, 0, SEEK_END) < 0) {
             throw Error(device_path(), "lseek", errno);
+        }
         return;
 
     case MTBSF:
@@ -589,11 +631,13 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
 }
 
 Position SpoolTapeDevice::do_tell() {
-    if (spool_fd_ < 0)
+    if (spool_fd_ < 0) {
         throw Error(device_path(), "tell", EBADF);
-    off_t pos = ::lseek(spool_fd_, 0, SEEK_CUR);
-    if (pos < 0)
+    }
+    off_t const pos = ::lseek(spool_fd_, 0, SEEK_CUR);
+    if (pos < 0) {
         throw Error(device_path(), "tell", errno);
+    }
     return Position{static_cast<long>(pos)};
 }
 
@@ -601,19 +645,22 @@ Status SpoolTapeDevice::do_status() {
     long gstat = GMT_ONLINE;
     if (read_write_) {
         if (current_is_temp_ && spool_fd_ >= 0) {
-            off_t cur = ::lseek(spool_fd_, 0, SEEK_CUR);
-            off_t end = ::lseek(spool_fd_, 0, SEEK_END);
-            if (cur >= 0)
+            off_t const cur = ::lseek(spool_fd_, 0, SEEK_CUR);
+            off_t const end = ::lseek(spool_fd_, 0, SEEK_END);
+            if (cur >= 0) {
                 ::lseek(spool_fd_, cur, SEEK_SET);
-            if (end == 0)
+            }
+            if (end == 0) {
                 gstat |= GMT_BOT | GMT_EOD;
-            else
+            } else {
                 gstat |= GMT_EOD;
+            }
         }
         // If there are finalized tape files on disk, the tape is no longer
         // empty even if the current temp file is empty.
-        if (!files_.empty())
+        if (!files_.empty()) {
             gstat &= ~GMT_EOD;
+        }
     }
     return Status(0, 0, static_cast<long>(current_block_size_), gstat, 0,
                   static_cast<int>(current_file_num_),
@@ -622,8 +669,9 @@ Status SpoolTapeDevice::do_status() {
 
 bool TapeDevice::is_scsi_tape(int fd) {
     mtget raw{};
-    if (::ioctl(fd, MTIOCGET, &raw) < 0)
+    if (::ioctl(fd, MTIOCGET, &raw) < 0) {
         return false;
+    }
     return raw.mt_type == MT_ISSCSI1 || raw.mt_type == MT_ISSCSI2;
 }
 

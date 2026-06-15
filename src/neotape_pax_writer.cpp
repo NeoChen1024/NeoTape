@@ -132,7 +132,7 @@ struct FdHandle {
 
     int get() const { return fd; }
     int release() {
-        int file_fd = fd;
+        int const file_fd = fd;
         fd = -1;
         return file_fd;
     }
@@ -200,7 +200,7 @@ struct ResultStore {
     }
 
     void close() {
-        std::lock_guard lock(mtx);
+        std::scoped_lock const lock(mtx);
         closed = true;
         cv.notify_all();
     }
@@ -343,7 +343,7 @@ void ensure_utf8_ctype_locale_impl() {
 uint64_t parse_u64_field(const string &field, const fs::path &path,
                          uint64_t record_num) {
     char *end = nullptr;
-    unsigned long long value = std::strtoull(field.c_str(), &end, 10);
+    unsigned long long const value = std::strtoull(field.c_str(), &end, 10);
     if (end == field.c_str() || *end != '\0') {
         throw std::runtime_error(
             format("{}:{}: invalid numeric field", path.string(), record_num));
@@ -475,7 +475,7 @@ string entry_display_path(archive_entry *entry) {
 }
 
 string entry_size_display(archive_entry *entry) {
-    la_int64_t sz = archive_entry_size(entry);
+    la_int64_t const sz = archive_entry_size(entry);
     if (sz < 0) {
         return "?";
     }
@@ -504,7 +504,7 @@ int open_entry_file(archive_entry *entry) {
     if (src == nullptr) {
         return -1;
     }
-    int fd = open(src, O_RDONLY | O_CLOEXEC);
+    int const fd = open(src, O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
         cerr << format("pax: warning: open {}: {}\n", src,
                        std::strerror(errno));
@@ -519,7 +519,8 @@ archive_entry *planned_entry_from_path(archive *disk, const string &path) {
     }
     copy_pathname_utf8(entry.get(), path);
     archive_entry_copy_sourcepath(entry.get(), path.c_str());
-    int r = archive_read_disk_entry_from_file(disk, entry.get(), -1, nullptr);
+    int const r =
+        archive_read_disk_entry_from_file(disk, entry.get(), -1, nullptr);
     if (r == ARCHIVE_FATAL) {
         throw_archive("read filesystem", disk);
     }
@@ -548,14 +549,14 @@ void copy_file_data(archive *writer, archive_entry *entry, int fd) {
         buf.resize(SMALL_FILE_THRESHOLD);
     }
     for (;;) {
-        ssize_t n = read(fd, buf.data(), buf.size());
+        ssize_t const n = read(fd, buf.data(), buf.size());
         if (n < 0) {
             throw_errno(string("read ") + src);
         }
         if (n == 0) {
             break;
         }
-        ssize_t w =
+        ssize_t const w =
             archive_write_data(writer, buf.data(), static_cast<size_t>(n));
         if (w < 0) {
             throw_archive("write file data", writer);
@@ -606,9 +607,9 @@ struct ArchiveWriteHandle {
 };
 
 vector<std::byte> serialize_entry(archive_entry *entry, int fd) {
-    ArchiveWriteHandle writer(archive_write_new());
+    ArchiveWriteHandle const writer(archive_write_new());
     archive *a = writer.get();
-    if (!a) {
+    if (a == nullptr) {
         throw std::runtime_error("pax: cannot allocate archive writer");
     }
     check_archive_throw(archive_write_add_filter_none(a), a,
@@ -623,7 +624,7 @@ vector<std::byte> serialize_entry(archive_entry *entry, int fd) {
                         "set last block");
 
     BufCtx ctx;
-    la_int64_t entry_size = archive_entry_size(entry);
+    la_int64_t const entry_size = archive_entry_size(entry);
     if (fd >= 0 && entry_size > 0) {
         size_t reserve_size =
             static_cast<size_t>(entry_size) + PAX_ENTRY_OVERHEAD_RESERVE;
@@ -635,7 +636,7 @@ vector<std::byte> serialize_entry(archive_entry *entry, int fd) {
         archive_write_open(a, &ctx, drop_open, drop_write, drop_close), a,
         "open per-entry writer");
 
-    int r = archive_write_header(a, entry);
+    int const r = archive_write_header(a, entry);
     if (r == ARCHIVE_FATAL) {
         throw_archive("write header", a);
     }
@@ -658,9 +659,9 @@ vector<std::byte> serialize_entry(archive_entry *entry, int fd) {
 
 void stream_large_entry(BBSink &sink, archive_entry *entry, int fd) {
     sink.drop_mode = false;
-    ArchiveWriteHandle writer(archive_write_new());
+    ArchiveWriteHandle const writer(archive_write_new());
     archive *a = writer.get();
-    if (!a) {
+    if (a == nullptr) {
         throw std::runtime_error("pax: cannot allocate archive writer");
     }
     check_archive_throw(archive_write_add_filter_none(a), a,
@@ -677,7 +678,7 @@ void stream_large_entry(BBSink &sink, archive_entry *entry, int fd) {
         archive_write_open(a, &sink, drop_open, bb_sink_write, bb_sink_close),
         a, "open streaming writer");
 
-    int r = archive_write_header(a, entry);
+    int const r = archive_write_header(a, entry);
     if (r == ARCHIVE_FATAL) {
         throw_archive("write header", a);
     }
@@ -715,18 +716,18 @@ struct PipelineCancel {
     std::atomic<bool> requested{false};
 
     void request(std::exception_ptr e) {
-        std::lock_guard lock(mtx);
+        std::scoped_lock const lock(mtx);
         if (requested.load(std::memory_order_relaxed)) {
             return;
         }
-        error = e;
+        error = std::move(e);
         requested.store(true, std::memory_order_release);
     }
 
     void rethrow_if_set() {
         std::exception_ptr saved;
         {
-            std::lock_guard lock(mtx);
+            std::scoped_lock const lock(mtx);
             saved = error;
         }
         if (saved) {
@@ -745,7 +746,7 @@ void pipeline_worker_main(ClosableQueue<PipelineWorkItem> &work_queue,
             return;
         }
         try {
-            int fd = open_entry_file(item->entry.get());
+            int const fd = open_entry_file(item->entry.get());
             if (fd < 0) {
                 Result result{item->seq, {}};
                 if (!results.put(std::move(result))) {
@@ -809,7 +810,7 @@ void pipeline_serializer_main(ClosableQueue<PipelineWorkItem> &work_queue,
                 break;
             }
             case PipelineOrderKind::LargeEntry: {
-                int fd = open_entry_file(item->entry.get());
+                int const fd = open_entry_file(item->entry.get());
                 if (fd >= 0) {
                     stream_large_entry(bb1_sink, item->entry.get(), fd);
                     close(fd);
@@ -881,7 +882,7 @@ class PaxPipeline {
         started_ = true;
         try {
             output_thread_ = std::thread([this] { output_main(); });
-            unsigned nworkers =
+            auto const nworkers =
                 static_cast<unsigned>(pipeline_worker_count(opts_));
             for (unsigned i = 0; i < nworkers; ++i) {
                 workers_.emplace_back(
@@ -937,7 +938,7 @@ class PaxPipeline {
     }
 
     void request_cancel(std::exception_ptr e) {
-        cancel_.request(e);
+        cancel_.request(std::move(e));
         work_queue_.close();
         order_queue_.close();
         results_.close();
@@ -1051,7 +1052,7 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
         throw_errno(string("chdir ") + *opts.chdir_dir);
     }
 
-    vector<PlanRecord> records = read_plan_records(*opts.plan_path);
+    vector<PlanRecord> const records = read_plan_records(*opts.plan_path);
     ArchiveStats stats;
     blake3_hasher hasher;
     blake3_hasher_init(&hasher);
@@ -1085,17 +1086,17 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
                 seconds = 1.0;
             }
 
-            uint64_t current_in =
+            uint64_t const current_in =
                 stats.input_bytes.load(std::memory_order_relaxed);
-            uint64_t current_out =
+            uint64_t const current_out =
                 stats.output_bytes.load(std::memory_order_relaxed);
-            uint64_t current_files =
+            uint64_t const current_files =
                 stats.walked_entries.load(std::memory_order_relaxed);
-            uint64_t in_rate =
+            auto const in_rate =
                 static_cast<uint64_t>((current_in - last_in) / seconds);
-            uint64_t out_rate =
+            auto const out_rate =
                 static_cast<uint64_t>((current_out - last_out) / seconds);
-            uint64_t file_rate =
+            auto const file_rate =
                 static_cast<uint64_t>((current_files - last_files) / seconds);
 
             print_pax_progress(
@@ -1122,10 +1123,10 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
             cerr << format("\na {}", entry_display_path(entry.get()));
         }
 
-        bool is_reg = (archive_entry_filetype(entry.get()) == AE_IFREG);
-        la_int64_t size = archive_entry_size(entry.get());
-        bool has_data = (is_reg && size > 0);
-        FdHandle fd(has_data ? open_entry_file(entry.get()) : -1);
+        bool const is_reg = (archive_entry_filetype(entry.get()) == AE_IFREG);
+        la_int64_t const size = archive_entry_size(entry.get());
+        bool const has_data = (is_reg && size > 0);
+        FdHandle const fd(has_data ? open_entry_file(entry.get()) : -1);
         if (has_data && !fd) {
             return;
         }
@@ -1146,7 +1147,7 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
 
     try {
         disk = archive_read_disk_new();
-        if (!disk) {
+        if (disk == nullptr) {
             throw std::runtime_error("cannot allocate disk reader");
         }
         check_archive_throw(archive_read_disk_set_symlink_physical(disk), disk,
@@ -1155,11 +1156,11 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
                             "set uid/gid name lookup");
 
         resolver = archive_entry_linkresolver_new();
-        if (!resolver) {
+        if (resolver == nullptr) {
             throw std::runtime_error("cannot allocate hardlink resolver");
         }
-        ArchiveWriteHandle tmp(archive_write_new());
-        if (!tmp.get()) {
+        ArchiveWriteHandle const tmp(archive_write_new());
+        if (tmp.get() == nullptr) {
             throw std::runtime_error("cannot allocate archive writer");
         }
         check_archive_throw(archive_write_add_filter_none(tmp.get()), tmp.get(),
@@ -1206,12 +1207,12 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
             archive_entry *entry_raw = nullptr;
             archive_entry *spare_raw = nullptr;
             archive_entry_linkify(resolver, &entry_raw, &spare_raw);
-            if (!entry_raw && !spare_raw) {
+            if ((entry_raw == nullptr) && (spare_raw == nullptr)) {
                 break;
             }
             EntryHandle entry(entry_raw);
             EntryHandle spare(spare_raw);
-            uint64_t slice = current_slice.value_or(0);
+            uint64_t const slice = current_slice.value_or(0);
             emit_entry(std::move(entry), slice);
             emit_entry(std::move(spare), slice);
         }
@@ -1316,17 +1317,17 @@ PaxWriteResult write_pax_archive(const Options &opts,
                 seconds = 1.0;
             }
 
-            uint64_t current_in =
+            uint64_t const current_in =
                 stats.input_bytes.load(std::memory_order_relaxed);
-            uint64_t current_out =
+            uint64_t const current_out =
                 stats.output_bytes.load(std::memory_order_relaxed);
-            uint64_t current_files =
+            uint64_t const current_files =
                 stats.walked_entries.load(std::memory_order_relaxed);
-            uint64_t in_rate =
+            auto const in_rate =
                 static_cast<uint64_t>((current_in - last_in) / seconds);
-            uint64_t out_rate =
+            auto const out_rate =
                 static_cast<uint64_t>((current_out - last_out) / seconds);
-            uint64_t file_rate =
+            auto const file_rate =
                 static_cast<uint64_t>((current_files - last_files) / seconds);
             size_t buffered = pipeline.buffered_bytes();
             size_t capacity = pipeline.buffer_capacity();
@@ -1362,12 +1363,12 @@ PaxWriteResult write_pax_archive(const Options &opts,
     };
 
     archive_entry_linkresolver *resolver = archive_entry_linkresolver_new();
-    if (!resolver) {
+    if (resolver == nullptr) {
         abort_setup(std::make_exception_ptr(
             std::runtime_error("pax: cannot allocate hardlink resolver")));
     }
     archive *tmp = archive_write_new();
-    if (!tmp) {
+    if (tmp == nullptr) {
         archive_entry_linkresolver_free(resolver);
         abort_setup(std::make_exception_ptr(
             std::runtime_error("pax: cannot allocate archive writer")));
@@ -1387,9 +1388,9 @@ PaxWriteResult write_pax_archive(const Options &opts,
         }
         stats.walked_entries.fetch_add(1, std::memory_order_relaxed);
 
-        bool is_reg = (archive_entry_filetype(entry.get()) == AE_IFREG);
-        la_int64_t size = archive_entry_size(entry.get());
-        bool has_data = (is_reg && size > 0);
+        bool const is_reg = (archive_entry_filetype(entry.get()) == AE_IFREG);
+        la_int64_t const size = archive_entry_size(entry.get());
+        bool const has_data = (is_reg && size > 0);
 
         if (opts.verbose > 1) {
             cerr << format("\n{}", verbose_line(entry.get()));
@@ -1398,7 +1399,7 @@ PaxWriteResult write_pax_archive(const Options &opts,
         }
 
         if (!has_data) {
-            uint64_t seq = next_seq++;
+            uint64_t const seq = next_seq++;
             vector<std::byte> bytes = serialize_entry(entry.get(), -1);
             entry.reset();
             if (!pipeline.enqueue_inline(seq, std::move(bytes))) {
@@ -1409,10 +1410,10 @@ PaxWriteResult write_pax_archive(const Options &opts,
             return;
         }
 
-        uint64_t seq = next_seq++;
-        unsigned nworkers = opts.io_thread > 0 ? opts.io_thread - 1 : 0;
+        uint64_t const seq = next_seq++;
+        unsigned const nworkers = opts.io_thread > 0 ? opts.io_thread - 1 : 0;
         bool queued = false;
-        if (nworkers == 0 || static_cast<size_t>(size) > SMALL_FILE_THRESHOLD) {
+        if (nworkers == 0 || std::cmp_greater(size, SMALL_FILE_THRESHOLD)) {
             queued = pipeline.enqueue_large(seq, std::move(entry));
         } else {
             queued = pipeline.enqueue_small(seq, std::move(entry));
@@ -1431,10 +1432,11 @@ PaxWriteResult write_pax_archive(const Options &opts,
         }
 
         for (const string &source_arg : opts.sources) {
-            neotape::SourceSpec spec = neotape::make_source_spec(source_arg);
+            neotape::SourceSpec const spec =
+                neotape::make_source_spec(source_arg);
 
             archive *disk = archive_read_disk_new();
-            if (!disk) {
+            if (disk == nullptr) {
                 throw std::runtime_error("pax: cannot allocate disk reader");
             }
             try {
@@ -1471,7 +1473,7 @@ PaxWriteResult write_pax_archive(const Options &opts,
                         continue;
                     }
 
-                    if (archive_read_disk_can_descend(disk)) {
+                    if (archive_read_disk_can_descend(disk) != 0) {
                         r = archive_read_disk_descend(disk);
                         if (r == ARCHIVE_FATAL) {
                             throw_archive("descend", disk);
@@ -1482,7 +1484,7 @@ PaxWriteResult write_pax_archive(const Options &opts,
                     }
 
                     const char *src = archive_entry_sourcepath(entry.get());
-                    if (src) {
+                    if (src != nullptr) {
                         string ap = neotape::archive_path_for_source(spec, src);
                         copy_pathname_utf8(entry.get(), ap);
                     }
@@ -1509,7 +1511,7 @@ PaxWriteResult write_pax_archive(const Options &opts,
             archive_entry *entry_raw = nullptr;
             archive_entry *spare_raw = nullptr;
             archive_entry_linkify(resolver, &entry_raw, &spare_raw);
-            if (!entry_raw && !spare_raw) {
+            if ((entry_raw == nullptr) && (spare_raw == nullptr)) {
                 break;
             }
             EntryHandle entry(entry_raw);

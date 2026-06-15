@@ -104,7 +104,7 @@ Options parse_args(int argc, char **argv) {
 
     Options opts;
     bool saw_chdir = false;
-    int c;
+    int c = 0;
     optind = 1;
     while ((c = getopt_long(argc, argv, "C:o:xvh", long_opts, nullptr)) != -1) {
         switch (c) {
@@ -119,8 +119,9 @@ Options parse_args(int argc, char **argv) {
             opts.output_path = optarg;
             break;
         case 'C':
-            if (saw_chdir)
+            if (saw_chdir) {
                 fail("-C may be specified at most once");
+            }
             saw_chdir = true;
             opts.chdir_dir = optarg;
             break;
@@ -132,7 +133,7 @@ Options parse_args(int argc, char **argv) {
             break;
         case 256: {
             char *end = nullptr;
-            unsigned long n = std::strtoul(optarg, &end, 10);
+            unsigned long const n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0') {
                 fail("--io-threads requires a number");
             }
@@ -147,8 +148,9 @@ Options parse_args(int argc, char **argv) {
         }
     }
 
-    while (optind < argc)
+    while (optind < argc) {
         opts.sources.emplace_back(argv[optind++]);
+    }
 
     if (opts.output_path.empty() || opts.sources.empty()) {
         usage(argv[0]);
@@ -160,32 +162,41 @@ Options parse_args(int argc, char **argv) {
 // ====================== Filesystem Metadata ======================
 
 char kind_from_mode(mode_t mode) {
-    if (S_ISREG(mode))
+    if (S_ISREG(mode)) {
         return 'f';
-    if (S_ISDIR(mode))
+    }
+    if (S_ISDIR(mode)) {
         return 'd';
-    if (S_ISLNK(mode))
+    }
+    if (S_ISLNK(mode)) {
         return 'l';
-    if (S_ISCHR(mode))
+    }
+    if (S_ISCHR(mode)) {
         return 'c';
-    if (S_ISBLK(mode))
+    }
+    if (S_ISBLK(mode)) {
         return 'b';
-    if (S_ISFIFO(mode))
+    }
+    if (S_ISFIFO(mode)) {
         return 'p';
-    if (S_ISSOCK(mode))
+    }
+    if (S_ISSOCK(mode)) {
         return 's';
+    }
     return '?';
 }
 
 uint64_t disk_bytes_from_stat(const struct stat &st) {
-    if (st.st_blocks <= 0)
+    if (st.st_blocks <= 0) {
         return 0;
+    }
     return static_cast<uint64_t>(st.st_blocks) * 512;
 }
 
 uint64_t apparent_bytes_from_stat(const struct stat &st) {
-    if (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode))
+    if (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
         return st.st_size < 0 ? 0 : static_cast<uint64_t>(st.st_size);
+    }
     return 0;
 }
 
@@ -200,17 +211,21 @@ vector<fs::path> sorted_children(const fs::path &path) {
     for (;;) {
         errno = 0;
         dirent *entry = readdir(dir);
-        if (entry == nullptr)
+        if (entry == nullptr) {
             break;
+        }
         string_view name(entry->d_name);
-        if (name == "." || name == "..")
+        if (name == "." || name == "..") {
             continue;
+        }
         children.push_back(path / string(name));
     }
-    if (errno != 0)
+    if (errno != 0) {
         warn(format("readdir {}: {}", path.string(), std::strerror(errno)));
-    if (closedir(dir) != 0)
+    }
+    if (closedir(dir) != 0) {
         warn(format("closedir {}: {}", path.string(), std::strerror(errno)));
+    }
 
     std::ranges::sort(children);
     return children;
@@ -234,8 +249,9 @@ template <typename T> class BlockingQueue {
         not_full_.wait(l, [this] {
             return closed_ || capacity_ == 0 || queue_.size() < capacity_;
         });
-        if (closed_)
+        if (closed_) {
             return false;
+        }
         queue_.push(std::move(item));
         not_empty_.notify_one();
         return true;
@@ -244,8 +260,9 @@ template <typename T> class BlockingQueue {
     std::optional<T> pop() {
         std::unique_lock l(mtx_);
         not_empty_.wait(l, [this] { return !queue_.empty() || closed_; });
-        if (queue_.empty())
+        if (queue_.empty()) {
             return std::nullopt;
+        }
         T item = std::move(queue_.front());
         queue_.pop();
         not_full_.notify_one();
@@ -253,7 +270,7 @@ template <typename T> class BlockingQueue {
     }
 
     void close() {
-        std::lock_guard l(mtx_);
+        std::scoped_lock const l(mtx_);
         closed_ = true;
         not_empty_.notify_all();
         not_full_.notify_all();
@@ -324,10 +341,12 @@ class WorkerPool {
     void worker_loop() {
         for (;;) {
             auto opt = jobs_.pop();
-            if (!opt)
+            if (!opt) {
                 return;
-            if (!results_.push(run_lstat(*opt)))
+            }
+            if (!results_.push(run_lstat(*opt))) {
                 return;
+            }
         }
     }
 
@@ -341,15 +360,18 @@ class WorkerPool {
     ~WorkerPool() { stop(); }
 
     void start(unsigned nworkers) {
-        if (nworkers == 0)
+        if (nworkers == 0) {
             return;
-        for (unsigned i = 0; i < nworkers; i++)
+        }
+        for (unsigned i = 0; i < nworkers; i++) {
             workers_.emplace_back(&WorkerPool::worker_loop, this);
+        }
     }
 
     void submit(LstatWork w) {
-        if (!jobs_.push(std::move(w)))
+        if (!jobs_.push(std::move(w))) {
             throw std::runtime_error("worker pool is closed");
+        }
     }
 
     std::vector<LstatResult> collect(const vector<fs::path> &paths,
@@ -373,22 +395,26 @@ class WorkerPool {
         submit_more();
         while (received < count) {
             auto r = results_.pop();
-            if (!r)
+            if (!r) {
                 throw std::runtime_error(
                     "worker pool closed while waiting for lstat results");
+            }
             ++received;
-            if (r->error)
+            if (r->error) {
                 std::rethrow_exception(r->error);
-            if (!r->warning.empty())
+            }
+            if (!r->warning.empty()) {
                 warn(r->warning);
+            }
             pending[r->index] = std::move(*r);
             submit_more();
         }
 
         std::vector<LstatResult> out;
         out.reserve(count);
-        for (auto &[_, r] : pending)
+        for (auto &[_, r] : pending) {
             out.push_back(std::move(r));
+        }
         return out;
     }
 
@@ -397,9 +423,11 @@ class WorkerPool {
     void stop() {
         jobs_.close();
         results_.close();
-        for (auto &t : workers_)
-            if (t.joinable())
+        for (auto &t : workers_) {
+            if (t.joinable()) {
                 t.join();
+            }
+        }
         workers_.clear();
     }
 };
@@ -422,8 +450,9 @@ void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num,
                         neotape::humanize_number(slice.apparent_bytes));
     slice_sizes.push_back(slice.disk_bytes);
 
-    if (!opts.verbose)
+    if (!opts.verbose) {
         return;
+    }
     for (const EntryMeta &entry : slice.entries) {
         std::cerr << format("  {} disk={} apparent={} {}\n", entry.kind,
                             neotape::humanize_number(entry.disk_bytes),
@@ -432,19 +461,21 @@ void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num,
     }
 }
 
-static constexpr uint64_t entry_struct_size = sizeof(EntryMeta);
+constexpr uint64_t entry_struct_size = sizeof(EntryMeta);
 
 uint64_t slice_preadd_limit(const Options &opts) {
     const uint64_t half = opts.slice_size / 2;
-    if (opts.slice_size > std::numeric_limits<uint64_t>::max() - half)
+    if (opts.slice_size > std::numeric_limits<uint64_t>::max() - half) {
         return std::numeric_limits<uint64_t>::max();
+    }
     return opts.slice_size + half;
 }
 
 bool should_start_next_slice(const SlicePlan &slice, const EntryMeta &entry,
                              const Options &opts) {
-    if (slice.entries.empty())
+    if (slice.entries.empty()) {
         return false;
+    }
 
     const uint64_t limit = slice_preadd_limit(opts);
     return slice.disk_bytes > limit ||
@@ -463,13 +494,15 @@ void add_to_slice(SlicePlan &slice, const EntryMeta &entry, const Options &opts,
     slice.disk_bytes += entry.disk_bytes;
     slice.apparent_bytes += entry.apparent_bytes;
 
-    auto &s = entry.source_path.native();
+    const auto &s = entry.source_path.native();
     uint64_t path_heap = s.size();
-    if (path_heap <= 15)
+    if (path_heap <= 15) {
         path_heap = 0;
+    }
     uint64_t ap_heap = entry.archive_path.size();
-    if (ap_heap <= 15)
+    if (ap_heap <= 15) {
         ap_heap = 0;
+    }
     slice.allocated_bytes += entry_struct_size + path_heap + ap_heap;
 
     ++totals.entries;
@@ -483,7 +516,7 @@ void add_to_slice(SlicePlan &slice, const EntryMeta &entry, const Options &opts,
     }
 }
 
-static constexpr size_t directory_frontier_capacity = 4096;
+constexpr size_t directory_frontier_capacity = 4096;
 
 class PlannerScanner {
     struct DirectoryWork {
@@ -502,7 +535,7 @@ class PlannerScanner {
 
     LstatResult stat_child(size_t index, const fs::path &path,
                            const neotape::SourceSpec &spec,
-                           std::optional<dev_t> root_device) {
+                           std::optional<dev_t> root_device) const {
         struct stat st{};
         if (lstat(path.c_str(), &st) != 0) {
             LstatResult r{};
@@ -537,21 +570,24 @@ class PlannerScanner {
     vector<LstatResult> stat_children(const vector<fs::path> &children,
                                       const neotape::SourceSpec &spec,
                                       std::optional<dev_t> root_device) {
-        if (pool_ && pool_->nworkers() > 0)
+        if ((pool_ != nullptr) && pool_->nworkers() > 0) {
             return pool_->collect(children, opts_.one_file_system, root_device,
                                   spec);
+        }
 
         vector<LstatResult> results;
         results.reserve(children.size());
-        for (size_t i = 0; i < children.size(); ++i)
+        for (size_t i = 0; i < children.size(); ++i) {
             results.push_back(stat_child(i, children[i], spec, root_device));
+        }
         return results;
     }
 
     void enqueue_directory(fs::path path, const neotape::SourceSpec &spec,
                            std::optional<dev_t> root_device) {
-        while (frontier_.size() >= directory_frontier_capacity)
+        while (frontier_.size() >= directory_frontier_capacity) {
             process_one_directory();
+        }
         frontier_.push_back(DirectoryWork{
             .path = std::move(path),
             .spec = &spec,
@@ -560,24 +596,28 @@ class PlannerScanner {
     }
 
     void process_one_directory() {
-        DirectoryWork dir = std::move(frontier_.front());
+        DirectoryWork const dir = std::move(frontier_.front());
         frontier_.pop_front();
 
-        vector<fs::path> children = sorted_children(dir.path);
-        if (children.empty())
+        vector<fs::path> const children = sorted_children(dir.path);
+        if (children.empty()) {
             return;
+        }
 
         for (auto &r : stat_children(children, *dir.spec, dir.root_device)) {
-            if (!r.warning.empty())
+            if (!r.warning.empty()) {
                 warn(r.warning);
-            if (!r.ok)
+            }
+            if (!r.ok) {
                 continue;
+            }
 
             add_to_slice(current_slice_, r.meta, opts_, slice_num_, totals_,
                          slice_sizes_);
-            if (r.meta.kind == 'd')
+            if (r.meta.kind == 'd') {
                 enqueue_directory(r.meta.source_path, *dir.spec,
                                   dir.root_device);
+            }
         }
     }
 
@@ -590,11 +630,12 @@ class PlannerScanner {
 
     void scan_source(const neotape::SourceSpec &spec) {
         struct stat st{};
-        if (lstat(spec.open_path.c_str(), &st) != 0)
+        if (lstat(spec.open_path.c_str(), &st) != 0) {
             fail(format("lstat {}: {}", spec.open_path.string(),
                         std::strerror(errno)));
+        }
 
-        std::optional<dev_t> root_device = st.st_dev;
+        std::optional<dev_t> const root_device = st.st_dev;
         add_to_slice(current_slice_,
                      EntryMeta{
                          .source_path = spec.open_path,
@@ -607,12 +648,14 @@ class PlannerScanner {
                      },
                      opts_, slice_num_, totals_, slice_sizes_);
 
-        if (!S_ISDIR(st.st_mode))
+        if (!S_ISDIR(st.st_mode)) {
             return;
+        }
 
         enqueue_directory(spec.open_path, spec, root_device);
-        while (!frontier_.empty())
+        while (!frontier_.empty()) {
             process_one_directory();
+        }
     }
 };
 
@@ -621,13 +664,15 @@ void run_plan(Options &opts) {
         opts.meta_out = stdout;
     } else {
         opts.meta_out = fopen(opts.output_path.c_str(), "wb");
-        if (!opts.meta_out)
+        if (opts.meta_out == nullptr) {
             fail(format("open {}: {}", opts.output_path, std::strerror(errno)));
+        }
     }
 
     if (!opts.chdir_dir.empty()) {
-        if (chdir(opts.chdir_dir.c_str()) != 0)
+        if (chdir(opts.chdir_dir.c_str()) != 0) {
             fail(format("chdir {}: {}", opts.chdir_dir, std::strerror(errno)));
+        }
         string line = format("/chdir/{}", opts.chdir_dir);
         fwrite(line.data(), 1, line.size(), opts.meta_out);
         fputc('\0', opts.meta_out);
@@ -635,30 +680,35 @@ void run_plan(Options &opts) {
     }
 
     vector<neotape::SourceSpec> sources;
-    for (const fs::path &source : opts.sources)
+    sources.reserve(opts.sources.size());
+    for (const fs::path &source : opts.sources) {
         sources.push_back(neotape::make_source_spec(source.generic_string()));
+    }
 
     vector<uint64_t> slice_sizes;
     SlicePlan current_slice;
     ScanTotals totals;
     uint64_t slice_num = 0;
 
-    unsigned nworkers = opts.io_threads > 0 ? opts.io_threads - 1 : 0;
+    unsigned const nworkers = opts.io_threads > 0 ? opts.io_threads - 1 : 0;
     WorkerPool pool(nworkers);
     pool.start(nworkers);
 
     PlannerScanner scanner(opts, current_slice, slice_num, totals, slice_sizes,
                            nworkers > 0 ? &pool : nullptr);
-    for (const neotape::SourceSpec &spec : sources)
+    for (const neotape::SourceSpec &spec : sources) {
         scanner.scan_source(spec);
+    }
 
     pool.stop();
 
-    if (!current_slice.entries.empty())
+    if (!current_slice.entries.empty()) {
         emit_slice(current_slice, opts, slice_num++, slice_sizes);
+    }
 
-    if (opts.meta_out && opts.meta_out != stdout)
+    if ((opts.meta_out != nullptr) && opts.meta_out != stdout) {
         fclose(opts.meta_out);
+    }
 
     std::cerr << format("scanned entries={} total_disk={} total_apparent={} "
                         "target_slice={} buffer_size={}\n",
@@ -669,22 +719,21 @@ void run_plan(Options &opts) {
                         neotape::humanize_number(opts.metadata_buffer_size));
 
     if (!slice_sizes.empty()) {
-        uint64_t min_sz = slice_sizes[0], max_sz = slice_sizes[0];
+        uint64_t min_sz = slice_sizes[0];
+        uint64_t max_sz = slice_sizes[0];
         uint64_t sum_sz = 0;
-        for (uint64_t sz : slice_sizes) {
-            if (sz < min_sz)
-                min_sz = sz;
-            if (sz > max_sz)
-                max_sz = sz;
+        for (uint64_t const sz : slice_sizes) {
+            min_sz = std::min(sz, min_sz);
+            max_sz = std::max(sz, max_sz);
             sum_sz += sz;
         }
-        double avg = static_cast<double>(sum_sz) / slice_sizes.size();
+        double const avg = static_cast<double>(sum_sz) / slice_sizes.size();
         double var_sum = 0;
-        for (uint64_t sz : slice_sizes) {
-            double d = static_cast<double>(sz) - avg;
+        for (uint64_t const sz : slice_sizes) {
+            double const d = static_cast<double>(sz) - avg;
             var_sum += d * d;
         }
-        double stddev = std::sqrt(var_sum / slice_sizes.size());
+        double const stddev = std::sqrt(var_sum / slice_sizes.size());
         std::cerr << format(
             "slice_sizes: slices={} min={} avg={} max={} "
             "stddev={}\n",

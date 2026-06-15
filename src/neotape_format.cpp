@@ -50,8 +50,9 @@ void put_u32(HeaderBytes &bytes, size_t offset, uint32_t value) {
 }
 
 void put_u64(HeaderBytes &bytes, size_t offset, uint64_t value) {
-    for (size_t i = 0; i < 8; ++i)
+    for (size_t i = 0; i < 8; ++i) {
         bytes[offset + i] = static_cast<uint8_t>((value >> (i * 8)) & 0xffu);
+    }
 }
 
 uint16_t get_u16(const uint8_t *bytes, size_t offset) {
@@ -69,8 +70,9 @@ uint32_t get_u32(const uint8_t *bytes, size_t offset) {
 
 uint64_t get_u64(const uint8_t *bytes, size_t offset) {
     uint64_t value = 0;
-    for (size_t i = 0; i < 8; ++i)
+    for (size_t i = 0; i < 8; ++i) {
         value |= static_cast<uint64_t>(bytes[offset + i]) << (i * 8);
+    }
     return value;
 }
 
@@ -83,8 +85,9 @@ void put_fixed_string(HeaderBytes &bytes, size_t offset, size_t field_size,
 
 string get_fixed_string(const uint8_t *bytes, size_t offset,
                         size_t field_size) {
-    if (bytes[offset + field_size - 1] != 0)
+    if (bytes[offset + field_size - 1] != 0) {
         throw std::runtime_error("fixed string field without trailing NUL");
+    }
 
     const auto *begin = reinterpret_cast<const char *>(bytes + offset);
     const char *end = std::find(begin, begin + field_size, '\0');
@@ -106,29 +109,35 @@ ChannelType get_channel_type(uint8_t value) {
 
 void validate_frame_header(const FrameHeader &header) {
     const uint32_t block_size = decoded_block_size(header);
-    if (!valid_block_size(block_size))
+    if (!valid_block_size(block_size)) {
         throw std::runtime_error("invalid volume block size");
-    if (header.frame_payload_size > block_size - fixed_header_size)
+    }
+    if (header.frame_payload_size > block_size - fixed_header_size) {
         throw std::runtime_error(
             "frame payload size exceeds block payload capacity");
+    }
 
     constexpr uint64_t allowed_flags = frame_flag_start | frame_flag_end |
                                        frame_flag_signed | frame_flag_clean_end;
-    if ((header.flags & ~allowed_flags) != 0)
+    if ((header.flags & ~allowed_flags) != 0) {
         throw std::runtime_error("reserved frame flag bits set");
+    }
 
     if (header.channel_type == ChannelType::ARCHIVE_END) {
         if (!has_frame_flag_start(header.flags) ||
             !has_frame_flag_end(header.flags) ||
-            !has_frame_flag_clean_end(header.flags))
+            !has_frame_flag_clean_end(header.flags)) {
             throw std::runtime_error(
                 "archive-end frame missing required flags");
-        if (header.logical_slice_seq_num != 0)
+        }
+        if (header.logical_slice_seq_num != 0) {
             throw std::runtime_error(
                 "archive-end frame has logical slice sequence");
-        if (header.frame_seq_num_within_channel != 1)
+        }
+        if (header.frame_seq_num_within_channel != 1) {
             throw std::runtime_error(
                 "archive-end frame channel sequence must be one");
+        }
     } else if (has_frame_flag_clean_end(header.flags)) {
         throw std::runtime_error(
             "CLEAN_END is only valid on archive-end frames");
@@ -137,8 +146,9 @@ void validate_frame_header(const FrameHeader &header) {
 
 void validate_reserved(const uint8_t *data) {
     for (size_t i = off_reserved; i < off_reserved + reserved_size; ++i) {
-        if (data[i] != 0)
+        if (data[i] != 0) {
             throw std::runtime_error("reserved header bytes must be zero");
+        }
     }
 }
 
@@ -149,8 +159,9 @@ bool has_nonzero_signature(const SignatureBytes &signature) {
 
 void validate_serialized_signature(const FrameHeader &header) {
     if (!has_frame_flag_signed(header.flags) &&
-        has_nonzero_signature(header.signature))
+        has_nonzero_signature(header.signature)) {
         throw std::runtime_error("unsigned frame cannot carry signature bytes");
+    }
 }
 
 } // namespace
@@ -195,13 +206,16 @@ HeaderBytes serialize_frame_header(const FrameHeader &header) {
 }
 
 FrameHeader parse_frame_header(const uint8_t *data, std::size_t size) {
-    if (size < fixed_header_size)
+    if (size < fixed_header_size) {
         throw std::runtime_error("short fixed header");
-    if (std::memcmp(data + off_magic, magic.data(), magic.size()) != 0)
+    }
+    if (std::memcmp(data + off_magic, magic.data(), magic.size()) != 0) {
         throw std::runtime_error("bad magic");
-    if (data[off_header_version] != header_version)
+    }
+    if (data[off_header_version] != header_version) {
         throw std::runtime_error(std::format("unsupported header version {}",
                                              data[off_header_version]));
+    }
 
     validate_reserved(data);
 
@@ -247,8 +261,9 @@ std::string channel_type_name(ChannelType type) {
 
 std::string hash_hex(const Hash &hash) {
     std::string hex;
-    for (uint8_t byte : hash)
+    for (uint8_t byte : hash) {
         hex += std::format("{:02x}", static_cast<unsigned>(byte));
+    }
     return hex;
 }
 
@@ -262,14 +277,16 @@ Hash blake3_hash(const uint8_t *data, std::size_t size) {
 }
 
 Hash compute_frame_hash(const uint8_t *data, std::size_t size) {
-    FrameHeader header = parse_fixed_header(data, size);
-    if (size != decoded_block_size(header))
+    FrameHeader const header = parse_fixed_header(data, size);
+    if (size != decoded_block_size(header)) {
         throw std::runtime_error(
             "record size does not match decoded block size");
+    }
 
     std::vector<uint8_t> canonical(data, data + size);
-    for (size_t i = off_signature; i < fixed_header_size; ++i)
+    for (size_t i = off_signature; i < fixed_header_size; ++i) {
         canonical[i] = 0;
+    }
     return blake3_hash(canonical.data(), canonical.size());
 }
 
@@ -277,21 +294,24 @@ std::string utc_timestamp_now() {
     std::time_t now =
         std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     std::tm utc{};
-    if (gmtime_r(&now, &utc) == nullptr)
+    if (gmtime_r(&now, &utc) == nullptr) {
         throw std::runtime_error("gmtime_r failed");
+    }
 
     std::array<char, 20> buffer{};
     if (std::strftime(buffer.data(), buffer.size(), "%Y-%m-%dT%H:%M:%S",
-                      &utc) != 19)
+                      &utc) != 19) {
         throw std::runtime_error("strftime failed");
+    }
     return std::string(buffer.data(), 19);
 }
 
 std::string make_uuid_v4() {
     std::array<uint8_t, 16> bytes{};
     std::random_device rd;
-    for (uint8_t &byte : bytes)
+    for (uint8_t &byte : bytes) {
         byte = static_cast<uint8_t>(rd());
+    }
     bytes[6] = static_cast<uint8_t>((bytes[6] & 0x0fu) | 0x40u);
     bytes[8] = static_cast<uint8_t>((bytes[8] & 0x3fu) | 0x80u);
     return std::format("{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-"

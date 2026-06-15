@@ -62,7 +62,7 @@ CliOptions parse_args(int argc, char **argv) {
         {nullptr, 0, nullptr, 0}};
 
     CliOptions opts;
-    int c;
+    int c = 0;
     while ((c = getopt_long(argc, argv, "C:f:P:vxh", long_opts, nullptr)) !=
            -1) {
         switch (c) {
@@ -75,7 +75,7 @@ CliOptions parse_args(int argc, char **argv) {
             break;
         case 'P': {
             char *end = nullptr;
-            unsigned long n = std::strtoul(optarg, &end, 10);
+            unsigned long const n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0' || n > 100) {
                 std::cerr << "pax: -P requires a percent from 0 to 100\n";
                 std::exit(2);
@@ -100,7 +100,7 @@ CliOptions parse_args(int argc, char **argv) {
             break;
         case 257: {
             char *end = nullptr;
-            unsigned long n = std::strtoul(optarg, &end, 10);
+            unsigned long const n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0') {
                 std::cerr << "pax: --io-thread requires a number\n";
                 std::exit(2);
@@ -123,15 +123,17 @@ CliOptions parse_args(int argc, char **argv) {
         }
     }
 
-    while (optind < argc)
+    while (optind < argc) {
         opts.writer.sources.emplace_back(argv[optind++]);
+    }
 
     if (opts.plan_path.has_value() != opts.slice_output_prefix.has_value()) {
         usage(argv[0]);
         std::exit(2);
     }
-    if (opts.slice_output_prefix.has_value() && !opts.output.empty())
+    if (opts.slice_output_prefix.has_value() && !opts.output.empty()) {
         fail("-f cannot be used with --slice-output-prefix");
+    }
     if (!opts.slice_output_prefix.has_value() && opts.output.empty()) {
         usage(argv[0]);
         std::exit(2);
@@ -140,8 +142,9 @@ CliOptions parse_args(int argc, char **argv) {
         usage(argv[0]);
         std::exit(2);
     }
-    if (opts.plan_path.has_value() && !opts.writer.sources.empty())
+    if (opts.plan_path.has_value() && !opts.writer.sources.empty()) {
         fail("positional sources cannot be used with --plan");
+    }
 
     return opts;
 }
@@ -157,8 +160,9 @@ continuous_callbacks(const string &output, FILE *&out_file, bool &close_file) {
         close_file = false;
     } else {
         out_file = std::fopen(output.c_str(), "wb");
-        if (!out_file)
+        if (out_file == nullptr) {
             fail_errno(string("open ") + output);
+        }
         close_file = true;
     }
 
@@ -167,8 +171,9 @@ continuous_callbacks(const string &output, FILE *&out_file, bool &close_file) {
         .write_chunk =
             [&](neotape::PaxChunk chunk) {
                 if (std::fwrite(chunk.bytes.data(), 1, chunk.bytes.size(),
-                                out_file) != chunk.bytes.size())
+                                out_file) != chunk.bytes.size()) {
                     fail_errno("write output");
+                }
             },
         .end_slice = [](uint64_t) {},
         .progress_paused = [] { return false; },
@@ -182,21 +187,25 @@ neotape::PaxWriterCallbacks slice_callbacks(const string &prefix,
             [&](uint64_t slice) {
                 string path = slice_name(prefix, slice);
                 out_file = std::fopen(path.c_str(), "wb");
-                if (!out_file)
+                if (!out_file) {
                     fail_errno(string("open ") + path);
+                }
             },
         .write_chunk =
             [&](neotape::PaxChunk chunk) {
-                if (out_file == nullptr)
+                if (out_file == nullptr) {
                     fail("slice output is not open");
+                }
                 if (std::fwrite(chunk.bytes.data(), 1, chunk.bytes.size(),
-                                out_file) != chunk.bytes.size())
+                                out_file) != chunk.bytes.size()) {
                     fail_errno("write slice output");
+                }
             },
         .end_slice =
             [&](uint64_t) {
-                if (out_file != nullptr && std::fclose(out_file) != 0)
+                if (out_file != nullptr && std::fclose(out_file) != 0) {
                     fail_errno("close slice output");
+                }
                 out_file = nullptr;
             },
         .progress_paused = [] { return false; },
@@ -212,9 +221,10 @@ int main(int argc, char **argv) {
 
         FILE *out_file = nullptr;
         bool close_file = false;
-        if (opts.slice_output_prefix.has_value())
+        if (opts.slice_output_prefix.has_value()) {
             opts.slice_output_prefix =
                 fs::absolute(*opts.slice_output_prefix).string();
+        }
         neotape::PaxWriterCallbacks callbacks =
             opts.slice_output_prefix.has_value()
                 ? slice_callbacks(*opts.slice_output_prefix, out_file)
@@ -222,8 +232,9 @@ int main(int argc, char **argv) {
 
         neotape::PaxWriteResult result =
             neotape::write_pax(opts.writer, std::move(callbacks));
-        if (close_file && out_file != nullptr && std::fclose(out_file) != 0)
+        if (close_file && out_file != nullptr && std::fclose(out_file) != 0) {
             fail_errno(string("close ") + opts.output);
+        }
 
         std::cerr << format("\n{}  {}\n", result.blake3_hex,
                             opts.slice_output_prefix.has_value()

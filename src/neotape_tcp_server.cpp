@@ -25,6 +25,7 @@
 #include <sys/un.h>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 
 namespace neotape {
 
@@ -62,12 +63,13 @@ int create_listener(const std::string &addr) {
         hints.ai_socktype = SOCK_STREAM;
         hints.ai_flags = AI_PASSIVE;
         addrinfo *res = nullptr;
-        int gai = getaddrinfo(a.host.c_str(), a.port.c_str(), &hints, &res);
+        int const gai =
+            getaddrinfo(a.host.c_str(), a.port.c_str(), &hints, &res);
         if (gai != 0) {
             throw std::runtime_error(
                 std::format("getaddrinfo: {}", gai_strerror(gai)));
         }
-        std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> res_guard(
+        std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> const res_guard(
             res, freeaddrinfo);
         fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
         if (fd < 0) {
@@ -169,9 +171,9 @@ struct FrameBuilder {
     uint64_t current_slice = 1;
     std::vector<std::byte> pending;
 
-    explicit FrameBuilder(uint32_t bs, const std::string &uuid,
-                          const std::string &name)
-        : block_size(bs), archive_uuid(uuid), archive_name(name) {}
+    explicit FrameBuilder(uint32_t bs, std::string uuid, std::string name)
+        : block_size(bs), archive_uuid(std::move(uuid)),
+          archive_name(std::move(name)) {}
 
     void set_current_slice(uint64_t s) { current_slice = s; }
 
@@ -184,7 +186,7 @@ struct FrameBuilder {
         pending.insert(pending.end(), bytes.begin(), bytes.end());
         const uint32_t cap = payload_capacity();
         while (pending.size() >= cap) {
-            uint64_t seq = global_frame++;
+            uint64_t const seq = global_frame++;
             seq_nums.push_back(seq);
             out.push_back(build_frame(std::span(pending.begin(), cap), seq));
             pending.erase(pending.begin(), pending.begin() + cap);
@@ -197,14 +199,14 @@ struct FrameBuilder {
         if (pending.empty()) {
             return std::nullopt;
         }
-        uint64_t seq = global_frame++;
+        uint64_t const seq = global_frame++;
         auto rec = build_frame(std::span(pending), seq);
         pending.clear();
         return std::pair{std::move(rec), seq};
     }
 
     std::vector<std::byte> build_frame(std::span<const std::byte> payload,
-                                       uint64_t seq_num) {
+                                       uint64_t seq_num) const {
         assert(payload.size() <= payload_capacity());
 
         FrameHeader fh;
@@ -219,7 +221,7 @@ struct FrameBuilder {
         fh.frame_payload_size = payload.size();
         fh.flags = frame_flag_start | frame_flag_end;
 
-        HeaderBytes header = serialize_frame_header(fh);
+        HeaderBytes const header = serialize_frame_header(fh);
         std::vector<std::byte> record(block_size, std::byte{0});
         copy_header_to_record(header, record);
         std::copy(payload.begin(), payload.end(),
@@ -403,10 +405,10 @@ serve_client(int client, TcpArchiverState &state,
                     retention.get(next_send_seq);
                 uint64_t seq = 0;
                 std::vector<std::byte> record;
-                if (record_ptr) {
+                if (record_ptr != nullptr) {
                     record = *record_ptr;
                     seq = next_send_seq;
-                    FrameHeader hdr = parse_fixed_header(
+                    FrameHeader const hdr = parse_fixed_header(
                         reinterpret_cast<const uint8_t *>(record.data()),
                         record.size());
                     if (hdr.channel_type == ChannelType::ARCHIVE_END) {
@@ -510,20 +512,20 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
     }
 
     if (!opts.use_pax) {
-        int listener = create_listener(opts.listen_address);
+        int const listener = create_listener(opts.listen_address);
         std::cerr << std::format("archiver listening on {}\n",
                                  opts.listen_address);
 
-        int client = accept(listener, nullptr, nullptr);
+        int const client = accept(listener, nullptr, nullptr);
         if (client < 0) {
-            int saved_errno = errno;
+            int const saved_errno = errno;
             close(listener);
             throw std::runtime_error(
                 std::format("accept: {}", std::strerror(saved_errno)));
         }
         close(listener);
 
-        std::string archive_uuid = make_uuid_v4();
+        std::string const archive_uuid = make_uuid_v4();
         FrameBuilder builder(opts.volume_block_size, archive_uuid,
                              opts.archive_name);
 
@@ -587,11 +589,11 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
         return frames_served;
     }
 
-    int listener = create_listener(opts.listen_address);
-    FdGuard listener_guard(listener);
+    int const listener = create_listener(opts.listen_address);
+    FdGuard const listener_guard(listener);
     std::cerr << std::format("archiver listening on {}\n", opts.listen_address);
 
-    std::string archive_uuid = make_uuid_v4();
+    std::string const archive_uuid = make_uuid_v4();
     FrameBuilder builder(opts.volume_block_size, archive_uuid,
                          opts.archive_name);
     ClosableQueue<RecordOrDone> frame_queue(8);
@@ -602,7 +604,7 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
     std::atomic<bool> cancelled{false};
 
     auto capture_pax_error = [&](const std::string &text) {
-        std::lock_guard lock(pax_error_mtx);
+        std::scoped_lock const lock(pax_error_mtx);
         if (!pax_error) {
             pax_error_text = text;
             pax_error = std::current_exception();
@@ -610,12 +612,12 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
     };
 
     auto get_pax_error_text = [&]() -> std::string {
-        std::lock_guard lock(pax_error_mtx);
+        std::scoped_lock const lock(pax_error_mtx);
         return pax_error_text;
     };
 
     auto check_pax_error = [&]() {
-        std::lock_guard lock(pax_error_mtx);
+        std::scoped_lock const lock(pax_error_mtx);
         if (pax_error) {
             std::rethrow_exception(pax_error);
         }
@@ -633,9 +635,9 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                     throw std::runtime_error("frame consumer disconnected");
                 }
             }
-            uint64_t last_global_seq =
+            uint64_t const last_global_seq =
                 builder.global_frame == 1 ? 0 : builder.global_frame - 1;
-            uint64_t last_slice_seq = builder.current_slice;
+            uint64_t const last_slice_seq = builder.current_slice;
             if (!frame_queue.push(RecordOrDone{
                     {}, last_global_seq, last_slice_seq, false, true})) {
                 throw std::runtime_error("frame consumer disconnected");
@@ -648,7 +650,7 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
             frame_queue.close();
         }
     });
-    ThreadJoiner pax_joiner(pax_thread);
+    ThreadJoiner const pax_joiner(pax_thread);
 
     FrameRetentionBuffer retention(opts.retention_frame_count);
     TcpArchiverState state{opts.initial_volume_seq_num, 0, false};
@@ -657,15 +659,15 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
 
     try {
         while (!state.archive_complete) {
-            int client = accept(listener, nullptr, nullptr);
+            int const client = accept(listener, nullptr, nullptr);
             if (client < 0) {
-                int saved_errno = errno;
+                int const saved_errno = errno;
                 throw std::runtime_error(
                     std::format("accept: {}", std::strerror(saved_errno)));
             }
             NEOTAPE_DEBUG("archiver: accepted connection for volume seq={}\n",
                           state.next_volume_seq_num);
-            FdGuard client_guard(client);
+            FdGuard const client_guard(client);
 
             ServeResult result =
                 serve_client(client, state, retention, frame_queue, opts,

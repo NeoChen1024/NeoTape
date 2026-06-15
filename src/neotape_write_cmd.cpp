@@ -40,8 +40,9 @@ struct FdGuard {
     int fd = -1;
     explicit FdGuard(int f) : fd(f) {}
     ~FdGuard() {
-        if (fd >= 0)
+        if (fd >= 0) {
             ::close(fd);
+        }
     }
     FdGuard(const FdGuard &) = delete;
     FdGuard &operator=(const FdGuard &) = delete;
@@ -53,10 +54,12 @@ struct TargetLocator {
 };
 
 TargetLocator parse_target(const std::string &s) {
-    if (s.rfind("tape:", 0) == 0)
+    if (s.starts_with("tape:")) {
         return {TargetLocator::tape, s.substr(5)};
-    if (s.rfind("spool:", 0) == 0)
+    }
+    if (s.starts_with("spool:")) {
         return {TargetLocator::spool, s.substr(6)};
+    }
     throw std::runtime_error("target must be tape:<device> or spool:<dir>");
 }
 
@@ -102,7 +105,7 @@ Options parse_args(int argc, char **argv) {
         {nullptr, 0, nullptr, 0}};
 
     Options opts;
-    int c;
+    int c = 0;
     while ((c = getopt_long(argc, argv, "s:h", long_opts, nullptr)) != -1) {
         switch (c) {
         case 's':
@@ -152,18 +155,22 @@ Options parse_args(int argc, char **argv) {
         usage(argv[0]);
         std::exit(2);
     }
-    if (opts.target.kind == TargetLocator::none)
+    if (opts.target.kind == TargetLocator::none) {
         usage_error("--target is required");
-    if (opts.erase && opts.append)
+    }
+    if (opts.erase && opts.append) {
         usage_error("--erase and --append are mutually exclusive");
+    }
 
     if (opts.max_volume_bytes.has_value() &&
-        opts.target.kind != TargetLocator::spool)
+        opts.target.kind != TargetLocator::spool) {
         usage_error("--max-volume-bytes is only valid with spool targets");
+    }
 
     constexpr size_t min_output_buffer_size = 8ull * 1024 * 1024;
-    if (opts.output_buffer_size < min_output_buffer_size)
+    if (opts.output_buffer_size < min_output_buffer_size) {
         usage_error("--output-buffer-size must be at least 8 MiB");
+    }
 
     return opts;
 }
@@ -174,31 +181,38 @@ int connect_to_source(const string &addr) {
     int fd = -1;
     if (a.is_unix) {
         fd = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (fd < 0)
+        if (fd < 0) {
             fail(format("socket: {}", std::strerror(errno)));
+        }
         sockaddr_un sa{};
         sa.sun_family = AF_UNIX;
-        if (a.path.size() >= sizeof(sa.sun_path))
+        if (a.path.size() >= sizeof(sa.sun_path)) {
             fail("unix socket path too long");
+        }
         std::memcpy(sa.sun_path, a.path.data(), a.path.size());
-        if (connect(fd, reinterpret_cast<sockaddr *>(&sa), sizeof(sa)) < 0)
+        if (connect(fd, reinterpret_cast<sockaddr *>(&sa), sizeof(sa)) < 0) {
             fail(format("connect {}: {}", a.path, std::strerror(errno)));
+        }
     } else {
         addrinfo hints{};
         hints.ai_family = AF_UNSPEC;
         hints.ai_socktype = SOCK_STREAM;
         addrinfo *res = nullptr;
-        int gai = getaddrinfo(a.host.c_str(), a.port.c_str(), &hints, &res);
-        if (gai != 0)
+        int const gai =
+            getaddrinfo(a.host.c_str(), a.port.c_str(), &hints, &res);
+        if (gai != 0) {
             fail(format("getaddrinfo: {}", gai_strerror(gai)));
-        std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> res_guard(
+        }
+        std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> const res_guard(
             res, freeaddrinfo);
         fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-        if (fd < 0)
+        if (fd < 0) {
             fail(format("socket: {}", std::strerror(errno)));
-        if (connect(fd, res->ai_addr, res->ai_addrlen) < 0)
+        }
+        if (connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
             fail(format("connect {}:{}: {}", a.host, a.port,
                         std::strerror(errno)));
+        }
     }
     return fd;
 }
@@ -232,8 +246,9 @@ void write_trailing_filemark(mt::TapeDevice *dev) {
 
 std::vector<std::byte> uint64_to_le_bytes(uint64_t v) {
     std::vector<std::byte> out(8);
-    for (size_t i = 0; i < 8; ++i)
+    for (size_t i = 0; i < 8; ++i) {
         out[i] = static_cast<std::byte>((v >> (8 * i)) & 0xff);
+    }
     return out;
 }
 
@@ -247,8 +262,9 @@ class CapacityLimitedTapeDevice : public mt::TapeDevice {
     int fd() const noexcept override { return inner_->fd(); }
 
     void write_record(const void *data, std::size_t size) override {
-        if (written_ + size > max_bytes_)
+        if (written_ + size > max_bytes_) {
             throw mt::Error(device_path(), "capacity limit", ENOSPC);
+        }
         inner_->write_record(data, size);
         written_ += size;
     }
@@ -427,7 +443,7 @@ void tape_writer_thread(mt::TapeDevice *dev, int fd,
         }
 
         try {
-            std::lock_guard write_lock(socket_write_mtx);
+            std::scoped_lock const write_lock(socket_write_mtx);
             if (state.final_drain.load()) {
                 NEOTAPE_DEBUG(
                     "writer_thread: final drain, skipping ack global_seq={}\n",
@@ -467,8 +483,9 @@ struct WriterThreadJoiner {
         if (!joined && state != nullptr && thread != nullptr) {
             state->writer_stop.store(true);
             state->output_cv.notify_all();
-            if (thread->joinable())
+            if (thread->joinable()) {
                 thread->join();
+            }
             joined = true;
         }
     }
@@ -490,7 +507,7 @@ int main(int argc, char **argv) {
         Options opts = parse_args(argc, argv);
         neotape::g_debug = opts.debug;
 
-        FdGuard fd_guard(connect_to_source(opts.source_address));
+        FdGuard const fd_guard(connect_to_source(opts.source_address));
         int fd = fd_guard.fd;
 
         using neotape::tcp::Message;
@@ -523,20 +540,23 @@ int main(int argc, char **argv) {
             // Default policy: refuse to overwrite existing tape content.
             if (!opts.erase && !opts.append) {
                 auto st = dev->status();
-                if (!st.bot())
+                if (!st.bot()) {
                     fail("tape is not at BOT; use --erase or --append");
+                }
                 // BOT alone doesn't guarantee the tape is empty.  If the
                 // drive reports EOD at BOT, the tape is empty; otherwise
                 // there is at least one record after BOT.
-                if (!st.eod())
+                if (!st.eod()) {
                     fail("tape appears to contain data; use --erase or "
                          "--append");
+                }
             }
 
-            if (opts.append)
+            if (opts.append) {
                 dev->space_to_eod();
-            else
+            } else {
                 dev->rewind(); // --erase or empty tape
+            }
 
             output = TargetOutput{std::move(dev)};
         }
@@ -558,13 +578,14 @@ int main(int argc, char **argv) {
         };
 
         auto write_msg = [&](const Message &msg) {
-            std::lock_guard lock(socket_write_mtx);
+            std::scoped_lock const lock(socket_write_mtx);
             neotape::tcp::write_message(fd, msg);
         };
 
         for (;;) {
-            if (wstate.writer_error.load())
+            if (wstate.writer_error.load()) {
                 joined_fail(wstate.writer_error_text);
+            }
 
             if (wstate.eot_reached.load()) {
                 NEOTAPE_DEBUG("writer: eot_reached, joining thread\n");
@@ -584,8 +605,9 @@ int main(int argc, char **argv) {
             {
                 std::unique_lock lock(wstate.output_mtx);
                 size_t queued_bytes = 0;
-                for (const auto &f : wstate.output_queue)
+                for (const auto &f : wstate.output_queue) {
                     queued_bytes += f.record.size();
+                }
                 if (queued_bytes >= opts.output_buffer_size) {
                     lock.unlock();
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -596,8 +618,9 @@ int main(int argc, char **argv) {
             NEOTAPE_DEBUG("writer: requesting next frame\n");
             write_msg(Message{MessageType::next_frame});
             auto msg = neotape::tcp::read_message(fd);
-            if (!msg)
+            if (!msg) {
                 joined_fail("unexpected disconnect");
+            }
             NEOTAPE_DEBUG("writer: received msg type={}\n",
                           static_cast<int>(msg->type));
 
@@ -613,34 +636,38 @@ int main(int argc, char **argv) {
                         << format("writer: first frame parsed block_size={}\n",
                                   record_size);
                 }
-                if (msg->payload.size() != *volume_block_size)
+                if (msg->payload.size() != *volume_block_size) {
                     joined_fail(
                         format("frame size mismatch: expected {}, got {}",
                                *volume_block_size, msg->payload.size()));
+                }
 
                 if (header.channel_type == neotape::ChannelType::ARCHIVE_END) {
                     NEOTAPE_DEBUG(
                         "writer: archive_end frame, draining queue\n");
                     {
-                        std::lock_guard lock(wstate.output_mtx);
+                        std::scoped_lock const lock(wstate.output_mtx);
                         wstate.final_drain.store(true);
                     }
                     wstate.output_cv.notify_all();
                     for (;;) {
                         std::unique_lock lock(wstate.output_mtx);
-                        if (wstate.output_queue.empty())
+                        if (wstate.output_queue.empty()) {
                             break;
+                        }
                         lock.unlock();
-                        if (wstate.writer_error.load())
+                        if (wstate.writer_error.load()) {
                             joined_fail(wstate.writer_error_text);
+                        }
                         if (wstate.eot_reached.load()) {
                             joiner.join();
                             write_trailing_filemark(output.device.get());
                             uint64_t final_seq = wstate.last_written_seq.load();
-                            if (final_seq > 0)
+                            if (final_seq > 0) {
                                 write_msg(
                                     Message{MessageType::ack_frame,
                                             uint64_to_le_bytes(final_seq)});
+                            }
                             std::cerr << format(
                                 "writer: reached end of tape after {} frames\n",
                                 final_seq);
@@ -660,8 +687,8 @@ int main(int argc, char **argv) {
                     return 0;
                 }
 
-                uint64_t gseq = header.global_frame_seq_num;
-                std::unique_lock lock(wstate.output_mtx);
+                uint64_t const gseq = header.global_frame_seq_num;
+                std::unique_lock const lock(wstate.output_mtx);
                 wstate.output_queue.push_back(
                     PendingFrame{gseq, std::move(msg->payload)});
                 wstate.output_cv.notify_one();
@@ -669,7 +696,7 @@ int main(int argc, char **argv) {
             }
             case MessageType::tape_eof: {
                 NEOTAPE_DEBUG("writer: pushing filemark to queue\n");
-                std::unique_lock lock(wstate.output_mtx);
+                std::unique_lock const lock(wstate.output_mtx);
                 wstate.output_queue.push_back(PendingFrame{0, {}, true});
                 wstate.output_cv.notify_one();
                 break;
@@ -679,10 +706,12 @@ int main(int argc, char **argv) {
                 joiner.join();
                 string reason;
                 reason.reserve(msg->payload.size());
-                for (std::byte b : msg->payload)
+                for (std::byte const b : msg->payload) {
                     reason.push_back(static_cast<char>(b));
-                if (reason.empty())
+                }
+                if (reason.empty()) {
                     reason = "archiver reported error";
+                }
                 std::cerr << format("neotape-write: {}\n", reason);
                 std::exit(2);
             }

@@ -17,8 +17,9 @@ namespace {
 }
 
 void expect(bool ok, const std::string &msg) {
-    if (!ok)
+    if (!ok) {
         fail(msg);
+}
 }
 
 template <class Fn> void expect_throw(Fn fn, const std::string &msg) {
@@ -45,8 +46,9 @@ uint32_t le32(const neotape::HeaderBytes &b, std::size_t off) {
 
 uint64_t le64(const neotape::HeaderBytes &b, std::size_t off) {
     uint64_t v = 0;
-    for (std::size_t i = 0; i < 8; ++i)
+    for (std::size_t i = 0; i < 8; ++i) {
         v |= static_cast<uint64_t>(b[off + i]) << (8 * i);
+}
     return v;
 }
 
@@ -109,7 +111,7 @@ void test_channel_type_values() {
 }
 
 void test_layout_round_trip() {
-    neotape::FrameHeader h = make_content_header();
+    neotape::FrameHeader const h = make_content_header();
     neotape::HeaderBytes b = neotape::serialize_frame_header(h);
 
     expect(b.size() == 512, "header size should be 512");
@@ -172,7 +174,7 @@ void test_unsigned_serializer_rejects_signature() {
 }
 
 void test_validation() {
-    neotape::FrameHeader h = make_content_header();
+    neotape::FrameHeader const h = make_content_header();
     neotape::HeaderBytes b = neotape::serialize_frame_header(h);
 
     auto reserved = b;
@@ -202,7 +204,7 @@ void test_validation() {
         "CLEAN_END on content frame should be rejected");
 
     b = neotape::serialize_frame_header(make_archive_end_header());
-    neotape::FrameHeader parsed =
+    neotape::FrameHeader const parsed =
         neotape::parse_fixed_header(b.data(), b.size());
     expect(parsed.channel_type == neotape::ChannelType::ARCHIVE_END,
            "archive end should parse");
@@ -234,7 +236,7 @@ void test_validation() {
 }
 
 void test_frame_hash_canonicalization() {
-    neotape::FrameHeader h = make_content_header();
+    neotape::FrameHeader const h = make_content_header();
     neotape::HeaderBytes header = neotape::serialize_frame_header(h);
 
     std::vector<uint8_t> record(4096, 0);
@@ -242,7 +244,7 @@ void test_frame_hash_canonicalization() {
     record[512] = 0x42;
     record[513] = 0x43;
 
-    neotape::Hash hash =
+    neotape::Hash const hash =
         neotape::compute_frame_hash(record.data(), record.size());
 
     std::vector<uint8_t> canonical = record;

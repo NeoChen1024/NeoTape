@@ -70,8 +70,9 @@ class TestResultStore {
         cv_.wait(lock, [&] {
             return closed_ || max_size_ == 0 || results_.size() < max_size_;
         });
-        if (closed_)
+        if (closed_) {
             return false;
+}
         results_.emplace(seq, std::move(value));
         cv_.notify_all();
         return true;
@@ -81,8 +82,9 @@ class TestResultStore {
         std::unique_lock lock(mtx_);
         cv_.wait(lock, [&] { return closed_ || results_.contains(seq); });
         auto it = results_.find(seq);
-        if (it == results_.end())
+        if (it == results_.end()) {
             return std::nullopt;
+}
         std::string value = std::move(it->second);
         results_.erase(it);
         cv_.notify_all();
@@ -90,7 +92,7 @@ class TestResultStore {
     }
 
     void close() {
-        std::lock_guard lock(mtx_);
+        std::scoped_lock const lock(mtx_);
         closed_ = true;
         cv_.notify_all();
     }

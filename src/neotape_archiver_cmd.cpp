@@ -73,7 +73,7 @@ Options parse_args(int argc, char **argv) {
         {nullptr, 0, nullptr, 0}};
 
     Options opts;
-    int c;
+    int c = 0;
     while ((c = getopt_long(argc, argv, "l:b:n:f:C:P:vxh", long_opts,
                             nullptr)) != -1) {
         switch (c) {
@@ -96,7 +96,7 @@ Options parse_args(int argc, char **argv) {
             break;
         case 'P': {
             char *end = nullptr;
-            unsigned long n = std::strtoul(optarg, &end, 10);
+            unsigned long const n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0' || n > 100) {
                 std::cerr << "neotape-archiver: -P requires a percent from 0 "
                              "to 100\n";
@@ -122,7 +122,7 @@ Options parse_args(int argc, char **argv) {
             break;
         case 257: {
             char *end = nullptr;
-            unsigned long n = std::strtoul(optarg, &end, 10);
+            unsigned long const n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0') {
                 std::cerr
                     << "neotape-archiver: --io-thread requires a number\n";
@@ -136,7 +136,7 @@ Options parse_args(int argc, char **argv) {
             break;
         case 259: {
             char *end = nullptr;
-            unsigned long n = std::strtoul(optarg, &end, 10);
+            unsigned long const n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0' || n == 0 || n > 1000000) {
                 std::cerr << "neotape-archiver: --retention-frame-count "
                              "requires a number from 1 to 1000000\n";
@@ -156,11 +156,13 @@ Options parse_args(int argc, char **argv) {
         }
     }
 
-    while (optind < argc)
+    while (optind < argc) {
         opts.pax.sources.emplace_back(argv[optind++]);
+    }
 
-    if (!opts.listen_address.empty() && opts.explicit_output)
+    if (!opts.listen_address.empty() && opts.explicit_output) {
         fail("-f cannot be used with --listen");
+    }
     if (!opts.listen_address.empty() && opts.pax.sources.empty()) {
         usage(argv[0]);
         std::exit(2);
@@ -178,8 +180,9 @@ struct FileGuard {
     bool owned = false;
     FileGuard(FILE *f, bool own) : file(f), owned(own) {}
     ~FileGuard() {
-        if (owned && file)
+        if (owned && (file != nullptr)) {
             std::fclose(file);
+        }
     }
     FileGuard(const FileGuard &) = delete;
     FileGuard &operator=(const FileGuard &) = delete;
@@ -193,8 +196,9 @@ neotape::PaxWriterCallbacks make_local_callbacks(FILE *out_file) {
         .write_chunk =
             [out_file](neotape::PaxChunk chunk) {
                 if (std::fwrite(chunk.bytes.data(), 1, chunk.bytes.size(),
-                                out_file) != chunk.bytes.size())
+                                out_file) != chunk.bytes.size()) {
                     fail_errno("write output");
+                }
             },
         .end_slice = [](uint64_t) {},
         .progress_paused = [] { return false; },
@@ -209,8 +213,9 @@ int main(int argc, char **argv) {
         Options opts = parse_args(argc, argv);
         neotape::g_debug = opts.debug;
 
-        if (std::signal(SIGPIPE, SIG_IGN) == SIG_ERR)
+        if (std::signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
             fail("failed to ignore SIGPIPE");
+        }
 
         if (!opts.listen_address.empty()) {
             neotape::TcpArchiverOptions server_opts;
@@ -233,18 +238,20 @@ int main(int argc, char **argv) {
             raw_out = stdout;
         } else {
             raw_out = std::fopen(opts.pax.output_name.c_str(), "wb");
-            if (!raw_out)
+            if (raw_out == nullptr) {
                 fail_errno(string("open ") + opts.pax.output_name);
+            }
             owned = true;
         }
-        FileGuard out_guard(raw_out, owned);
+        FileGuard const out_guard(raw_out, owned);
 
         neotape::PaxWriterCallbacks callbacks = make_local_callbacks(raw_out);
 
         neotape::PaxWriteResult result =
             neotape::write_pax(opts.pax, std::move(callbacks));
-        if (std::fflush(raw_out) != 0)
+        if (std::fflush(raw_out) != 0) {
             fail_errno("flush output");
+        }
 
         std::cerr << format("{}  {}\n", result.blake3_hex,
                             opts.pax.output_name);

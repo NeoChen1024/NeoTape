@@ -33,16 +33,19 @@ struct TargetLocator {
 };
 
 SourceLocator parse_source(const std::string &s) {
-    if (s.rfind("tape:", 0) == 0)
+    if (s.starts_with("tape:")) {
         return {SourceLocator::tape, s.substr(5)};
-    if (s.rfind("spool:", 0) == 0)
+    }
+    if (s.starts_with("spool:")) {
         return {SourceLocator::spool, s.substr(6)};
+    }
     throw std::runtime_error("source must be tape:<device> or spool:<dir>");
 }
 
 TargetLocator parse_target(const std::string &s) {
-    if (s.rfind("spool:", 0) == 0)
+    if (s.starts_with("spool:")) {
         return {TargetLocator::spool, s.substr(6)};
+    }
     throw std::runtime_error("target must be spool:<dir>");
 }
 
@@ -75,7 +78,7 @@ Options parse_args(int argc, char **argv) {
         {nullptr, 0, nullptr, 0}};
 
     Options opts;
-    int c;
+    int c = 0;
     while ((c = getopt_long(argc, argv, "s:t:h", long_opts, nullptr)) != -1) {
         switch (c) {
         case 's':
@@ -92,10 +95,12 @@ Options parse_args(int argc, char **argv) {
         }
     }
 
-    if (opts.source.kind == SourceLocator::none)
+    if (opts.source.kind == SourceLocator::none) {
         usage_error("--source is required");
-    if (opts.target.kind == TargetLocator::none)
+    }
+    if (opts.target.kind == TargetLocator::none) {
         usage_error("--target is required");
+    }
 
     return opts;
 }
@@ -115,7 +120,7 @@ class TapeSourceReader final : public SourceReader {
     std::optional<vector<std::byte>> next_record(uint64_t &filemark_count,
                                                  bool &eod) override {
         eod = false;
-        ssize_t n = ::read(dev_->fd(), buffer_.data(), buffer_.size());
+        ssize_t const n = ::read(dev_->fd(), buffer_.data(), buffer_.size());
         if (n < 0) {
             if (errno == EIO) {
                 dev_->space_fwd_filemark(1);
@@ -148,17 +153,19 @@ class SpoolSourceReader final : public SourceReader {
                                                  bool &eod) override {
         eod = false;
 
-        if (!fill(neotape::fixed_header_size, filemark_count, eod))
+        if (!fill(neotape::fixed_header_size, filemark_count, eod)) {
             return std::nullopt;
+        }
 
-        neotape::FrameHeader header = neotape::parse_fixed_header(
+        neotape::FrameHeader const header = neotape::parse_fixed_header(
             reinterpret_cast<const uint8_t *>(pending_.data()),
             neotape::fixed_header_size);
 
-        size_t record_size = neotape::decoded_block_size(header);
+        size_t const record_size = neotape::decoded_block_size(header);
 
-        if (!fill(record_size, filemark_count, eod))
+        if (!fill(record_size, filemark_count, eod)) {
             throw std::runtime_error("truncated record in spool source");
+        }
 
         auto off = static_cast<std::ptrdiff_t>(record_size);
         vector<std::byte> record(pending_.begin(), pending_.begin() + off);
@@ -184,12 +191,13 @@ class SpoolSourceReader final : public SourceReader {
             }
 
             std::byte tmp[65536];
-            ssize_t n = ::read(dev_->fd(), tmp, sizeof(tmp));
+            ssize_t const n = ::read(dev_->fd(), tmp, sizeof(tmp));
             if (n < 0) {
                 if (errno == EIO) {
-                    if (!pending_.empty())
+                    if (!pending_.empty()) {
                         throw std::runtime_error(
                             "EIO in middle of spool record");
+                    }
                     advance_filemark(filemark_count);
                     continue;
                 }
@@ -197,9 +205,10 @@ class SpoolSourceReader final : public SourceReader {
                     format("read: {}", std::strerror(errno)));
             }
             if (n == 0) {
-                if (!pending_.empty())
+                if (!pending_.empty()) {
                     throw std::runtime_error(
                         "truncated record at spool file boundary");
+                }
                 advance_filemark(filemark_count);
                 continue;
             }
@@ -221,16 +230,18 @@ int main(int argc, char **argv) {
             auto dev =
                 std::make_unique<mt::TapeDevice>(opts.source.path, false);
             // Tape devices are opened non-blocking; reads are blocking.
-            int flags = ::fcntl(dev->fd(), F_GETFL, 0);
-            if (flags >= 0)
+            int const flags = ::fcntl(dev->fd(), F_GETFL, 0);
+            if (flags >= 0) {
                 ::fcntl(dev->fd(), F_SETFL, flags & ~O_NONBLOCK);
+            }
             dev->rewind();
             source_dev = std::move(dev);
             source_is_tape = true;
         } else {
-            if (!std::filesystem::exists(opts.source.path))
+            if (!std::filesystem::exists(opts.source.path)) {
                 fail(format("source spool directory does not exist: {}",
                             opts.source.path));
+            }
             source_dev = std::make_unique<mt::SpoolTapeDevice>(
                 std::filesystem::path(opts.source.path), false);
         }
@@ -254,26 +265,31 @@ int main(int argc, char **argv) {
         for (;;) {
             bool eod = false;
             auto record = reader->next_record(filemark_count, eod);
-            if (eod)
+            if (eod) {
                 break;
-            if (!record)
+            }
+            if (!record) {
                 continue;
+            }
 
             target_dev.write_record(record->data(), record->size());
 
             if (record->size() >= neotape::fixed_header_size) {
                 try {
-                    neotape::FrameHeader header = neotape::parse_fixed_header(
-                        reinterpret_cast<const uint8_t *>(record->data()),
-                        record->size());
+                    neotape::FrameHeader const header =
+                        neotape::parse_fixed_header(
+                            reinterpret_cast<const uint8_t *>(record->data()),
+                            record->size());
                     if (header.channel_type ==
                             neotape::ChannelType::CH_CONTENT ||
                         header.channel_type ==
-                            neotape::ChannelType::CH_METADATA)
+                            neotape::ChannelType::CH_METADATA) {
                         has_content_or_metadata_frame = true;
+                    }
                     if (header.channel_type ==
-                        neotape::ChannelType::ARCHIVE_END)
+                        neotape::ChannelType::ARCHIVE_END) {
                         has_archive_end_frame = true;
+                    }
                 } catch (const std::exception &) {
                     // Not a parseable NeoTape header.
                 }
@@ -290,8 +306,9 @@ int main(int argc, char **argv) {
                             has_archive_end_frame ? "yes" : "no");
 
         if (!has_content_or_metadata_frame || !has_archive_end_frame) {
-            if (!has_content_or_metadata_frame)
+            if (!has_content_or_metadata_frame) {
                 fail("did not see content or metadata frame");
+            }
             fail("did not see archive end frame");
         }
 

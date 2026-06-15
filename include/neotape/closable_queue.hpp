@@ -43,13 +43,13 @@ template <typename T> class ClosableQueue {
     }
 
     void close() {
-        std::lock_guard lock(mtx_);
+        std::scoped_lock const lock(mtx_);
         closed_ = true;
         cv_.notify_all();
     }
 
     bool closed() const {
-        std::lock_guard lock(mtx_);
+        std::scoped_lock lock(mtx_);
         return closed_;
     }
 
