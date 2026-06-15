@@ -42,10 +42,13 @@ done
 bin/neotape-read --source "spool:$tmp/out" --connect "$extractor_sock"
 wait "$extractor_pid"
 
-# Verify output matches reference pax.
-if cmp "$tmp/reference.pax" "$tmp/extracted.pax"; then
-	echo "smoke_tcp_extract: ok"
+# Verify: extract both pax files and compare files (timestamps differ, so raw cmp won't work).
+mkdir "$tmp/ref_out" "$tmp/ext_out"
+bsdtar -xpf "$tmp/reference.pax" -C "$tmp/ref_out"
+bsdtar -xpf "$tmp/extracted.pax" -C "$tmp/ext_out"
+if diff -rq "$tmp/ref_out" "$tmp/ext_out"; then
+    echo "smoke_tcp_extract: ok"
 else
-	echo "smoke_tcp_extract: FAIL - output differs from reference"
-	exit 1
+    echo "smoke_tcp_extract: FAIL - output differs from reference"
+    exit 1
 fi
