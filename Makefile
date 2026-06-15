@@ -9,17 +9,8 @@ EXE	= bin/mt-pax bin/neotape-plan bin/test_pax_pipeline bin/test_tcp_protocol bi
 BINDIR	= bin
 LIBDIR	= lib
 BUILDDIR= build
-FORMAT_OBJ = src/neotape_format.o
-COMMON_OBJ = src/neotape_common.o
-BOUNDEDBUF_OBJ = src/neotape_bounded_buffer.o
-PAX_WRITER_OBJ = src/neotape_pax_writer.o
-TAPE_OBJ = src/neotape_tape.o
-PLAN_CMD_OBJ = src/neotape_plan_cmd.o
-TCP_PROTO_OBJ = src/neotape_tcp_protocol.o
-TCP_SERVER_OBJ = src/neotape_tcp_server.o
-ARCHIVER_CMD_OBJ = src/neotape_archiver_cmd.o
-WRITE_CMD_OBJ = src/neotape_write_cmd.o
-READ_CMD_OBJ = src/neotape_read_cmd.o
+# All .o are built from src/*.cpp via the pattern rule below.
+# Header dependencies are listed where they matter.
 
 include 3rdparty/blake3.mk
 include 3rdparty/crc32c.mk
@@ -36,39 +27,41 @@ compile_commands.json:
 
 compile_commands: compile_commands.json
 
-all: ${EXE} $(TAPE_OBJ)
+all: ${EXE}
 
 $(BINDIR) $(LIBDIR) $(BUILDDIR) $(BUILDDIR)/blake3 $(BUILDDIR)/crc32c:
 	mkdir -p $@
 
-src/%.o : src/%.cpp Makefile
+src/%.o : src/%.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(FORMAT_OBJ): include/neotape/format.hpp
+src/neotape_format.o: include/neotape/format.hpp
 
-$(BINDIR)/mt-pax : src/mt-pax.cpp $(PAX_WRITER_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(PAX_WRITER_OBJ) $(COMMON_OBJ) $(BOUNDEDBUF_OBJ) -o $@ $(LDLIBS)
+# ── binaries ──
 
-$(BINDIR)/neotape-plan : $(PLAN_CMD_OBJ) $(FORMAT_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(PLAN_CMD_OBJ) $(FORMAT_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/mt-pax : src/mt-pax.o src/neotape_pax_writer.o src/neotape_common.o src/neotape_bounded_buffer.o | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/test_pax_pipeline : tests/test_pax_pipeline.cpp include/neotape/closable_queue.hpp Makefile | $(BINDIR)
+$(BINDIR)/neotape-plan : src/neotape_plan_cmd.o src/neotape_format.o src/neotape_common.o | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+
+$(BINDIR)/test_pax_pipeline : tests/test_pax_pipeline.cpp include/neotape/closable_queue.hpp | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< -o $@
 
-$(BINDIR)/test_tcp_protocol : tests/test_tcp_protocol.cpp $(TCP_PROTO_OBJ) Makefile | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(TCP_PROTO_OBJ) -o $@
+$(BINDIR)/test_tcp_protocol : tests/test_tcp_protocol.cpp src/neotape_tcp_protocol.o | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(filter %.o,$^) -o $@
 
-$(BINDIR)/test_format : tests/test_format.cpp include/neotape/format.hpp $(FORMAT_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $< $(FORMAT_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/test_format : tests/test_format.cpp src/neotape_format.o | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(filter %.o,$^) -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-archiver : $(ARCHIVER_CMD_OBJ) $(TCP_SERVER_OBJ) $(TCP_PROTO_OBJ) $(FORMAT_OBJ) $(COMMON_OBJ) $(PAX_WRITER_OBJ) $(BOUNDEDBUF_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(ARCHIVER_CMD_OBJ) $(TCP_SERVER_OBJ) $(TCP_PROTO_OBJ) $(FORMAT_OBJ) $(COMMON_OBJ) $(PAX_WRITER_OBJ) $(BOUNDEDBUF_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/neotape-archiver : src/neotape_archiver_cmd.o src/neotape_tcp_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_common.o src/neotape_pax_writer.o src/neotape_bounded_buffer.o | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-write : $(WRITE_CMD_OBJ) $(TCP_PROTO_OBJ) $(TAPE_OBJ) $(FORMAT_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(WRITE_CMD_OBJ) $(TCP_PROTO_OBJ) $(TAPE_OBJ) $(FORMAT_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/neotape-write : src/neotape_write_cmd.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-read : $(READ_CMD_OBJ) $(TAPE_OBJ) $(FORMAT_OBJ) $(COMMON_OBJ) Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(READ_CMD_OBJ) $(TAPE_OBJ) $(FORMAT_OBJ) $(COMMON_OBJ) -o $@ $(LDLIBS)
+$(BINDIR)/neotape-read : src/neotape_read_cmd.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_format $(BINDIR)/mt-pax $(BINDIR)/neotape-plan $(BINDIR)/neotape-archiver $(BINDIR)/neotape-write $(BINDIR)/neotape-read
 	$(BINDIR)/test_pax_pipeline
@@ -82,7 +75,7 @@ test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_for
 test_pax_cli: $(BINDIR)/mt-pax
 	sh tests/smoke_mt_pax_pipeline.sh
 
-$(BINDIR)/% : src/%.c Makefile $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+$(BINDIR)/% : src/%.c $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
 
 
