@@ -15,6 +15,7 @@
 #include <format>
 #include <getopt.h>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -433,9 +434,31 @@ void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num,
 
 static constexpr uint64_t entry_struct_size = sizeof(EntryMeta);
 
+uint64_t slice_preadd_limit(const Options &opts) {
+    const uint64_t half = opts.slice_size / 2;
+    if (opts.slice_size > std::numeric_limits<uint64_t>::max() - half)
+        return std::numeric_limits<uint64_t>::max();
+    return opts.slice_size + half;
+}
+
+bool should_start_next_slice(const SlicePlan &slice, const EntryMeta &entry,
+                             const Options &opts) {
+    if (slice.entries.empty())
+        return false;
+
+    const uint64_t limit = slice_preadd_limit(opts);
+    return slice.disk_bytes > limit ||
+           entry.disk_bytes > limit - slice.disk_bytes;
+}
+
 void add_to_slice(SlicePlan &slice, const EntryMeta &entry, const Options &opts,
                   uint64_t &slice_num, ScanTotals &totals,
                   vector<uint64_t> &slice_sizes) {
+    if (should_start_next_slice(slice, entry, opts)) {
+        emit_slice(slice, opts, slice_num++, slice_sizes);
+        slice = SlicePlan{};
+    }
+
     slice.entries.push_back(entry);
     slice.disk_bytes += entry.disk_bytes;
     slice.apparent_bytes += entry.apparent_bytes;
