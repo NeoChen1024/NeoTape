@@ -60,7 +60,7 @@ headers currently confuse clangd 22.
 - `include/neotape/bounded_buffer.hpp` — thread-safe bounded buffer used by mt-pax
 - `include/neotape/` — shared project headers (common types, format helpers)
 - `3rdparty/` — git submodules (BLAKE3, crc32c, mt-st). Init with `git submodule update --init --recursive`
-- `docs/spec/` — active format spec; `docs/ROADMAP.md` — implementation phases; `docs/mt-pax.md` — mt-pax architecture
+- `docs/spec/` — active format spec; `docs/mt-pax.md` — mt-pax architecture
 - `tests/smoke_mt_pax_pipeline.sh`, `tests/smoke_tcp_archive.sh`, `tests/smoke_mt_pax_parity.sh` — smoke tests; no test framework or CI yet
 
 ## Architecture pattern
@@ -69,7 +69,7 @@ NeoTape separates long-running data producers/consumers from short-lived tape
 I/O clients over a single TCP or Unix-domain socket:
 
 - **Listener / long-running role** (`neotape-archiver`, future `neotape-extractor`)
-  owns archive state (archive UUID, volume sequence, frame index) and serves
+  owns archive state (archive UUID, volume sequence, and frame sequence numbers) and serves
   fully-formed NeoTape records through a framed request-response protocol. It
   stays up for the lifetime of the archive and does not know about physical
   media changes.
@@ -129,9 +129,8 @@ bin/neotape-write --source <tcp://host:port|unix://path>
                   [--erase | --append]
 ```
 
-Short-lived per-volume writer client. Connects to an archiver, requests the
-Volume Header, then requests frames one at a time. Writes to a tape device or
-filesystem spool directory.
+Short-lived per-volume writer client. Connects to an archiver and requests frames
+one at a time. Writes to a tape device or filesystem spool directory.
 
 By default the writer refuses to overwrite existing content. Use `--erase` to
 rewind to BOT and overwrite, or `--append` to space to EOD and continue.
