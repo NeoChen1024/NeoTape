@@ -57,8 +57,7 @@ TargetLocator parse_target(const std::string &s) {
         return {TargetLocator::tape, s.substr(5)};
     if (s.rfind("spool:", 0) == 0)
         return {TargetLocator::spool, s.substr(6)};
-    throw std::runtime_error(
-        "target must be tape:<device> or spool:<dir>");
+    throw std::runtime_error("target must be tape:<device> or spool:<dir>");
 }
 
 struct Options {
@@ -82,13 +81,12 @@ struct Options {
 }
 
 void usage(const char *prog) {
-    std::cerr << format(
-        "usage: {} --source <tcp://host:port|unix://path>\n"
-        "       --target <tape:/dev/nst0|spool:./dir>\n"
-        "       [--erase | --append]\n"
-        "       [--output-buffer-size <bytes>]\n"
-        "       [--max-volume-bytes <bytes>] [--debug]\n",
-        prog);
+    std::cerr << format("usage: {} --source <tcp://host:port|unix://path>\n"
+                        "       --target <tape:/dev/nst0|spool:./dir>\n"
+                        "       [--erase | --append]\n"
+                        "       [--output-buffer-size <bytes>]\n"
+                        "       [--max-volume-bytes <bytes>] [--debug]\n",
+                        prog);
 }
 
 Options parse_args(int argc, char **argv) {
@@ -131,8 +129,8 @@ Options parse_args(int argc, char **argv) {
         }
         case 260: {
             try {
-                opts.max_volume_bytes = neotape::parse_size(
-                    optarg, "max volume bytes");
+                opts.max_volume_bytes =
+                    neotape::parse_size(optarg, "max volume bytes");
             } catch (const std::exception &e) {
                 std::cerr << format("neotape-write: {}\n", e.what());
                 std::exit(2);
@@ -193,13 +191,14 @@ int connect_to_source(const string &addr) {
         int gai = getaddrinfo(a.host.c_str(), a.port.c_str(), &hints, &res);
         if (gai != 0)
             fail(format("getaddrinfo: {}", gai_strerror(gai)));
-        std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> res_guard(res,
-                                                                     freeaddrinfo);
+        std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> res_guard(
+            res, freeaddrinfo);
         fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
         if (fd < 0)
             fail(format("socket: {}", std::strerror(errno)));
         if (connect(fd, res->ai_addr, res->ai_addrlen) < 0)
-            fail(format("connect {}:{}: {}", a.host, a.port, std::strerror(errno)));
+            fail(format("connect {}:{}: {}", a.host, a.port,
+                        std::strerror(errno)));
     }
     return fd;
 }
@@ -257,27 +256,68 @@ class CapacityLimitedTapeDevice : public mt::TapeDevice {
   protected:
     void do_mtop(int op, int count) override {
         switch (op) {
-        case mt::MTWEOF: inner_->write_filemark(count); return;
-        case mt::MTREW: inner_->rewind(); return;
-        case mt::MTEOM: inner_->space_to_eod(); return;
-        case mt::MTFSF: inner_->space_fwd(count); return;
-        case mt::MTBSF: inner_->space_bwd(count); return;
-        case mt::MTFSFM: inner_->space_fwd_filemark(count); return;
-        case mt::MTBSFM: inner_->space_bwd_filemark(count); return;
-        case mt::MTFSR: inner_->space_fwd_records(count); return;
-        case mt::MTBSR: inner_->space_bwd_records(count); return;
-        case mt::MTFSS: inner_->space_fwd_setmarks(count); return;
-        case mt::MTBSS: inner_->space_bwd_setmarks(count); return;
-        case mt::MTSEEK: inner_->seek_block(count); return;
-        case mt::MTSETBLK: inner_->set_block_size(count); return;
-        case mt::MTSETDENSITY: inner_->set_density(count); return;
-        case mt::MTCOMPRESSION: inner_->set_compression(count != 0); return;
-        case mt::MTLOCK: inner_->lock(); return;
-        case mt::MTUNLOCK: inner_->unlock(); return;
-        case mt::MTLOAD: inner_->load(count); return;
-        case mt::MTOFFL: inner_->offline(); return;
-        case mt::MTERASE: inner_->erase(count); return;
-        default: throw mt::Error(device_path(), "mtop", ENOTSUP);
+        case mt::MTWEOF:
+            inner_->write_filemark(count);
+            return;
+        case mt::MTREW:
+            inner_->rewind();
+            return;
+        case mt::MTEOM:
+            inner_->space_to_eod();
+            return;
+        case mt::MTFSF:
+            inner_->space_fwd(count);
+            return;
+        case mt::MTBSF:
+            inner_->space_bwd(count);
+            return;
+        case mt::MTFSFM:
+            inner_->space_fwd_filemark(count);
+            return;
+        case mt::MTBSFM:
+            inner_->space_bwd_filemark(count);
+            return;
+        case mt::MTFSR:
+            inner_->space_fwd_records(count);
+            return;
+        case mt::MTBSR:
+            inner_->space_bwd_records(count);
+            return;
+        case mt::MTFSS:
+            inner_->space_fwd_setmarks(count);
+            return;
+        case mt::MTBSS:
+            inner_->space_bwd_setmarks(count);
+            return;
+        case mt::MTSEEK:
+            inner_->seek_block(count);
+            return;
+        case mt::MTSETBLK:
+            inner_->set_block_size(count);
+            return;
+        case mt::MTSETDENSITY:
+            inner_->set_density(count);
+            return;
+        case mt::MTCOMPRESSION:
+            inner_->set_compression(count != 0);
+            return;
+        case mt::MTLOCK:
+            inner_->lock();
+            return;
+        case mt::MTUNLOCK:
+            inner_->unlock();
+            return;
+        case mt::MTLOAD:
+            inner_->load(count);
+            return;
+        case mt::MTOFFL:
+            inner_->offline();
+            return;
+        case mt::MTERASE:
+            inner_->erase(count);
+            return;
+        default:
+            throw mt::Error(device_path(), "mtop", ENOTSUP);
         }
     }
 
@@ -321,15 +361,14 @@ void tape_writer_thread(mt::TapeDevice *dev, int fd,
         }
 
         bool status_eot = false;
-        NEOTAPE_DEBUG(
-            "writer_thread: frame global_seq={} record_size={}\n",
-            frame.global_seq_num, frame.record.size());
+        NEOTAPE_DEBUG("writer_thread: frame global_seq={} record_size={}\n",
+                      frame.global_seq_num, frame.record.size());
         try {
             status_eot = dev->status().eot();
         } catch (const mt::Error &e) {
             if (e.error_code() == ENOSPC) {
-                NEOTAPE_DEBUG(
-                    "writer_thread: pre-write status ENOSPC, treating as EOT\n");
+                NEOTAPE_DEBUG("writer_thread: pre-write status ENOSPC, "
+                              "treating as EOT\n");
                 state.eot_reached.store(true);
                 return;
             }
@@ -363,17 +402,16 @@ void tape_writer_thread(mt::TapeDevice *dev, int fd,
             return;
         }
 
-        NEOTAPE_DEBUG(
-            "writer_thread: frame global_seq={} written\n",
-            frame.global_seq_num);
+        NEOTAPE_DEBUG("writer_thread: frame global_seq={} written\n",
+                      frame.global_seq_num);
 
         status_eot = false;
         try {
             status_eot = dev->status().eot();
         } catch (const mt::Error &e) {
             if (e.error_code() == ENOSPC) {
-                NEOTAPE_DEBUG(
-                    "writer_thread: post-write status ENOSPC, treating as EOT\n");
+                NEOTAPE_DEBUG("writer_thread: post-write status ENOSPC, "
+                              "treating as EOT\n");
                 state.eot_reached.store(true);
                 return;
             }
@@ -395,23 +433,21 @@ void tape_writer_thread(mt::TapeDevice *dev, int fd,
                     "writer_thread: final drain, skipping ack global_seq={}\n",
                     frame.global_seq_num);
             } else {
-                NEOTAPE_DEBUG(
-                    "writer_thread: sending ack global_seq={}\n",
-                    frame.global_seq_num);
+                NEOTAPE_DEBUG("writer_thread: sending ack global_seq={}\n",
+                              frame.global_seq_num);
                 neotape::tcp::write_message(
                     fd, Message{MessageType::ack_frame,
                                 uint64_to_le_bytes(frame.global_seq_num)});
-                NEOTAPE_DEBUG(
-                    "writer_thread: ack sent global_seq={}\n",
-                    frame.global_seq_num);
+                NEOTAPE_DEBUG("writer_thread: ack sent global_seq={}\n",
+                              frame.global_seq_num);
             }
         } catch (const std::exception &e) {
             // If the archiver has already closed its end (archive complete),
             // the ACK is not needed; treat this as a clean shutdown.
             const char *what = e.what();
-            if (std::strstr(what, "EPIPE") != nullptr || std::strstr(what, "Broken pipe") != nullptr) {
-                NEOTAPE_DEBUG(
-                    "writer_thread: ack got EPIPE, clean shutdown\n");
+            if (std::strstr(what, "EPIPE") != nullptr ||
+                std::strstr(what, "Broken pipe") != nullptr) {
+                NEOTAPE_DEBUG("writer_thread: ack got EPIPE, clean shutdown\n");
                 return;
             }
             state.writer_error_text = e.what();
@@ -493,7 +529,8 @@ int main(int argc, char **argv) {
                 // drive reports EOD at BOT, the tape is empty; otherwise
                 // there is at least one record after BOT.
                 if (!st.eod())
-                    fail("tape appears to contain data; use --erase or --append");
+                    fail("tape appears to contain data; use --erase or "
+                         "--append");
             }
 
             if (opts.append)
@@ -511,11 +548,8 @@ int main(int argc, char **argv) {
         WriterState wstate;
         std::mutex socket_write_mtx;
 
-        std::thread writer_thread(tape_writer_thread,
-                                  output.device.get(),
-                                  fd,
-                                  std::ref(socket_write_mtx),
-                                  std::ref(wstate));
+        std::thread writer_thread(tape_writer_thread, output.device.get(), fd,
+                                  std::ref(socket_write_mtx), std::ref(wstate));
         WriterThreadJoiner joiner(wstate, writer_thread);
 
         auto joined_fail = [&](const string &msg) {
@@ -554,8 +588,7 @@ int main(int argc, char **argv) {
                     queued_bytes += f.record.size();
                 if (queued_bytes >= opts.output_buffer_size) {
                     lock.unlock();
-                    std::this_thread::sleep_for(
-                        std::chrono::milliseconds(10));
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     continue;
                 }
             }
@@ -576,15 +609,18 @@ int main(int argc, char **argv) {
                 uint32_t record_size = neotape::decoded_block_size(header);
                 if (!volume_block_size.has_value()) {
                     volume_block_size = record_size;
-                    std::cerr << format("writer: first frame parsed block_size={}\n",
-                                        record_size);
+                    std::cerr
+                        << format("writer: first frame parsed block_size={}\n",
+                                  record_size);
                 }
                 if (msg->payload.size() != *volume_block_size)
-                    joined_fail(format("frame size mismatch: expected {}, got {}",
-                                       *volume_block_size, msg->payload.size()));
+                    joined_fail(
+                        format("frame size mismatch: expected {}, got {}",
+                               *volume_block_size, msg->payload.size()));
 
                 if (header.channel_type == neotape::ChannelType::ARCHIVE_END) {
-                    NEOTAPE_DEBUG("writer: archive_end frame, draining queue\n");
+                    NEOTAPE_DEBUG(
+                        "writer: archive_end frame, draining queue\n");
                     {
                         std::lock_guard lock(wstate.output_mtx);
                         wstate.final_drain.store(true);
@@ -602,26 +638,32 @@ int main(int argc, char **argv) {
                             write_trailing_filemark(output.device.get());
                             uint64_t final_seq = wstate.last_written_seq.load();
                             if (final_seq > 0)
-                                write_msg(Message{MessageType::ack_frame,
-                                                  uint64_to_le_bytes(final_seq)});
-                            std::cerr << format("writer: reached end of tape after {} frames\n",
-                                                final_seq);
+                                write_msg(
+                                    Message{MessageType::ack_frame,
+                                            uint64_to_le_bytes(final_seq)});
+                            std::cerr << format(
+                                "writer: reached end of tape after {} frames\n",
+                                final_seq);
                             return 1;
                         }
-                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                        std::this_thread::sleep_for(
+                            std::chrono::milliseconds(10));
                     }
                     joiner.join();
                     write_bytes(msg->payload);
-                    write_msg(Message{MessageType::ack_frame,
-                                      uint64_to_le_bytes(header.global_frame_seq_num)});
-                    std::cerr << format("writer: received archive end at frame {}\n",
-                                        header.global_frame_seq_num);
+                    write_msg(Message{
+                        MessageType::ack_frame,
+                        uint64_to_le_bytes(header.global_frame_seq_num)});
+                    std::cerr
+                        << format("writer: received archive end at frame {}\n",
+                                  header.global_frame_seq_num);
                     return 0;
                 }
 
                 uint64_t gseq = header.global_frame_seq_num;
                 std::unique_lock lock(wstate.output_mtx);
-                wstate.output_queue.push_back(PendingFrame{gseq, std::move(msg->payload)});
+                wstate.output_queue.push_back(
+                    PendingFrame{gseq, std::move(msg->payload)});
                 wstate.output_cv.notify_one();
                 break;
             }
@@ -646,7 +688,7 @@ int main(int argc, char **argv) {
             }
             default:
                 joined_fail(format("unexpected message type {}",
-                            static_cast<int>(msg->type)));
+                                   static_cast<int>(msg->type)));
             }
         }
     } catch (const std::exception &e) {

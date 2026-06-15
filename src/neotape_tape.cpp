@@ -1,5 +1,5 @@
-#include "neotape/format.hpp"
 #include "neotape/common.hpp"
+#include "neotape/format.hpp"
 #include "neotape/tape.hpp"
 #include "neotape/tape_ioctl.h"
 
@@ -252,29 +252,25 @@ void TapeDevice::close() {
 void TapeDevice::write_record(const void *data, std::size_t size) {
     const auto *p = static_cast<const char *>(data);
     std::size_t remaining = size;
-    NEOTAPE_DEBUG("[tape {}] write_record begin size={}\n",
-                  device_path_, size);
+    NEOTAPE_DEBUG("[tape {}] write_record begin size={}\n", device_path_, size);
     while (remaining > 0) {
         ssize_t w = ::write(fd_, p, remaining);
         if (w < 0) {
             if (errno == EINTR)
                 continue;
-            NEOTAPE_DEBUG(
-                "[tape {}] write_record error errno={} ({})\n",
-                device_path_, errno, std::strerror(errno));
+            NEOTAPE_DEBUG("[tape {}] write_record error errno={} ({})\n",
+                          device_path_, errno, std::strerror(errno));
             throw Error(device_path_, "write_record", errno);
         }
         if (w == 0) {
-            NEOTAPE_DEBUG(
-                "[tape {}] write_record error short write (w=0)\n",
-                device_path_);
+            NEOTAPE_DEBUG("[tape {}] write_record error short write (w=0)\n",
+                          device_path_);
             throw Error(device_path_, "write_record", EIO);
         }
         p += w;
         remaining -= static_cast<std::size_t>(w);
     }
-    NEOTAPE_DEBUG("[tape {}] write_record done size={}\n",
-                  device_path_, size);
+    NEOTAPE_DEBUG("[tape {}] write_record done size={}\n", device_path_, size);
 }
 
 void TapeDevice::reopen() {
@@ -292,16 +288,14 @@ void TapeDevice::do_mtop(int op, int count) {
     mt_com.mt_op = static_cast<short>(op);
     mt_com.mt_count = count;
 
-    NEOTAPE_DEBUG("[tape {}] mtop op={} count={}\n",
-                  device_path_, op, count);
+    NEOTAPE_DEBUG("[tape {}] mtop op={} count={}\n", device_path_, op, count);
     if (::ioctl(fd_, MTIOCTOP, &mt_com) < 0) {
-        NEOTAPE_DEBUG(
-            "[tape {}] mtop op={} count={} error errno={} ({})\n",
-            device_path_, op, count, errno, std::strerror(errno));
+        NEOTAPE_DEBUG("[tape {}] mtop op={} count={} error errno={} ({})\n",
+                      device_path_, op, count, errno, std::strerror(errno));
         throw Error(device_path_, "ioctl", errno);
     }
-    NEOTAPE_DEBUG("[tape {}] mtop op={} count={} done\n",
-                  device_path_, op, count);
+    NEOTAPE_DEBUG("[tape {}] mtop op={} count={} done\n", device_path_, op,
+                  count);
 }
 
 // -- positioning -------------------------------------------------------
@@ -391,21 +385,19 @@ Status TapeDevice::do_status() {
     mtget raw{};
     NEOTAPE_DEBUG("[tape {}] status ioctl begin\n", device_path_);
     if (::ioctl(fd_, MTIOCGET, &raw) < 0) {
-        NEOTAPE_DEBUG(
-            "[tape {}] status ioctl error errno={} ({})\n",
-            device_path_, errno, std::strerror(errno));
+        NEOTAPE_DEBUG("[tape {}] status ioctl error errno={} ({})\n",
+                      device_path_, errno, std::strerror(errno));
         throw Error(device_path_, "status", errno);
     }
     Status st(raw.mt_type, raw.mt_resid, raw.mt_dsreg, raw.mt_gstat,
               raw.mt_erreg, static_cast<int>(raw.mt_fileno),
               static_cast<int>(raw.mt_blkno));
-    NEOTAPE_DEBUG(
-        "[tape {}] status type=0x{:x} resid={} dsreg=0x{:x} "
-        "gstat=0x{:x} erreg=0x{:x} fileno={} blkno={} "
-        "bot={} eot={} eod={} eof={} online={}\n",
-        device_path_, st.type(), st.resid(), st.dsreg(), st.gstat(),
-        st.erreg(), st.fileno(), st.blkno(), st.bot(), st.eot(),
-        st.eod(), st.eof(), st.online());
+    NEOTAPE_DEBUG("[tape {}] status type=0x{:x} resid={} dsreg=0x{:x} "
+                  "gstat=0x{:x} erreg=0x{:x} fileno={} blkno={} "
+                  "bot={} eot={} eod={} eof={} online={}\n",
+                  device_path_, st.type(), st.resid(), st.dsreg(), st.gstat(),
+                  st.erreg(), st.fileno(), st.blkno(), st.bot(), st.eot(),
+                  st.eod(), st.eof(), st.online());
     return st;
 }
 

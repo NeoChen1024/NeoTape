@@ -98,7 +98,8 @@ Options parse_args(int argc, char **argv) {
             char *end = nullptr;
             unsigned long n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0' || n > 100) {
-                std::cerr << "neotape-archiver: -P requires a percent from 0 to 100\n";
+                std::cerr << "neotape-archiver: -P requires a percent from 0 "
+                             "to 100\n";
                 std::exit(2);
             }
             opts.pax.buffer_percent = static_cast<unsigned>(n);
@@ -123,7 +124,8 @@ Options parse_args(int argc, char **argv) {
             char *end = nullptr;
             unsigned long n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0') {
-                std::cerr << "neotape-archiver: --io-thread requires a number\n";
+                std::cerr
+                    << "neotape-archiver: --io-thread requires a number\n";
                 std::exit(2);
             }
             opts.pax.io_thread = static_cast<unsigned>(n);
@@ -136,7 +138,8 @@ Options parse_args(int argc, char **argv) {
             char *end = nullptr;
             unsigned long n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0' || n == 0 || n > 1000000) {
-                std::cerr << "neotape-archiver: --retention-frame-count requires a number from 1 to 1000000\n";
+                std::cerr << "neotape-archiver: --retention-frame-count "
+                             "requires a number from 1 to 1000000\n";
                 std::exit(2);
             }
             opts.retention_frame_count = static_cast<uint64_t>(n);
@@ -184,15 +187,15 @@ struct FileGuard {
     FileGuard &operator=(FileGuard &&) = delete;
 };
 
-neotape::PaxWriterCallbacks
-make_local_callbacks(FILE *out_file) {
+neotape::PaxWriterCallbacks make_local_callbacks(FILE *out_file) {
     return neotape::PaxWriterCallbacks{
         .begin_slice = [](uint64_t) {},
-        .write_chunk = [out_file](neotape::PaxChunk chunk) {
-            if (std::fwrite(chunk.bytes.data(), 1, chunk.bytes.size(),
-                            out_file) != chunk.bytes.size())
-                fail_errno("write output");
-        },
+        .write_chunk =
+            [out_file](neotape::PaxChunk chunk) {
+                if (std::fwrite(chunk.bytes.data(), 1, chunk.bytes.size(),
+                                out_file) != chunk.bytes.size())
+                    fail_errno("write output");
+            },
         .end_slice = [](uint64_t) {},
         .progress_paused = [] { return false; },
     };
@@ -244,7 +247,7 @@ int main(int argc, char **argv) {
             fail_errno("flush output");
 
         std::cerr << format("{}  {}\n", result.blake3_hex,
-                                opts.pax.output_name);
+                            opts.pax.output_name);
         return 0;
     } catch (const std::exception &e) {
         fail(e.what());

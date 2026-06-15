@@ -26,7 +26,8 @@ struct Message {
         : type(t), payload(std::move(p)) {}
 };
 
-constexpr std::size_t message_header_size = 1 + 8; // type (1 byte) + little-endian length (8 bytes)
+constexpr std::size_t message_header_size =
+    1 + 8; // type (1 byte) + little-endian length (8 bytes)
 
 // Throws std::runtime_error on I/O or protocol errors.
 // Returns std::nullopt if the peer closed cleanly before any message.

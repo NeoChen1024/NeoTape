@@ -37,8 +37,7 @@ SourceLocator parse_source(const std::string &s) {
         return {SourceLocator::tape, s.substr(5)};
     if (s.rfind("spool:", 0) == 0)
         return {SourceLocator::spool, s.substr(6)};
-    throw std::runtime_error(
-        "source must be tape:<device> or spool:<dir>");
+    throw std::runtime_error("source must be tape:<device> or spool:<dir>");
 }
 
 TargetLocator parse_target(const std::string &s) {
@@ -63,10 +62,9 @@ struct Options {
 }
 
 void usage(const char *prog) {
-    std::cerr << format(
-        "usage: {} --source <tape:/dev/nst0|spool:./dir>\n"
-        "       --target <spool:./out>\n",
-        prog);
+    std::cerr << format("usage: {} --source <tape:/dev/nst0|spool:./dir>\n"
+                        "       --target <spool:./out>\n",
+                        prog);
 }
 
 Options parse_args(int argc, char **argv) {
@@ -105,8 +103,8 @@ Options parse_args(int argc, char **argv) {
 class SourceReader {
   public:
     virtual ~SourceReader() = default;
-    virtual std::optional<vector<std::byte>> next_record(
-        uint64_t &filemark_count, bool &eod) = 0;
+    virtual std::optional<vector<std::byte>>
+    next_record(uint64_t &filemark_count, bool &eod) = 0;
 };
 
 class TapeSourceReader final : public SourceReader {
@@ -114,8 +112,8 @@ class TapeSourceReader final : public SourceReader {
     explicit TapeSourceReader(mt::TapeDevice *dev)
         : dev_(dev), buffer_(neotape::max_block_size) {}
 
-    std::optional<vector<std::byte>> next_record(
-        uint64_t &filemark_count, bool &eod) override {
+    std::optional<vector<std::byte>> next_record(uint64_t &filemark_count,
+                                                 bool &eod) override {
         eod = false;
         ssize_t n = ::read(dev_->fd(), buffer_.data(), buffer_.size());
         if (n < 0) {
@@ -146,8 +144,8 @@ class SpoolSourceReader final : public SourceReader {
   public:
     explicit SpoolSourceReader(mt::SpoolTapeDevice *dev) : dev_(dev) {}
 
-    std::optional<vector<std::byte>> next_record(
-        uint64_t &filemark_count, bool &eod) override {
+    std::optional<vector<std::byte>> next_record(uint64_t &filemark_count,
+                                                 bool &eod) override {
         eod = false;
 
         if (!fill(neotape::fixed_header_size, filemark_count, eod))
@@ -220,7 +218,8 @@ int main(int argc, char **argv) {
         std::unique_ptr<mt::TapeDevice> source_dev;
         bool source_is_tape = false;
         if (opts.source.kind == SourceLocator::tape) {
-            auto dev = std::make_unique<mt::TapeDevice>(opts.source.path, false);
+            auto dev =
+                std::make_unique<mt::TapeDevice>(opts.source.path, false);
             // Tape devices are opened non-blocking; reads are blocking.
             int flags = ::fcntl(dev->fd(), F_GETFL, 0);
             if (flags >= 0)
@@ -267,10 +266,13 @@ int main(int argc, char **argv) {
                     neotape::FrameHeader header = neotape::parse_fixed_header(
                         reinterpret_cast<const uint8_t *>(record->data()),
                         record->size());
-                    if (header.channel_type == neotape::ChannelType::CH_CONTENT ||
-                        header.channel_type == neotape::ChannelType::CH_METADATA)
+                    if (header.channel_type ==
+                            neotape::ChannelType::CH_CONTENT ||
+                        header.channel_type ==
+                            neotape::ChannelType::CH_METADATA)
                         has_content_or_metadata_frame = true;
-                    if (header.channel_type == neotape::ChannelType::ARCHIVE_END)
+                    if (header.channel_type ==
+                        neotape::ChannelType::ARCHIVE_END)
                         has_archive_end_frame = true;
                 } catch (const std::exception &) {
                     // Not a parseable NeoTape header.

@@ -67,7 +67,8 @@ void put_fixed_string(HeaderBytes &bytes, size_t offset, size_t field_size,
     std::memset(bytes.data() + offset + n, 0, field_size - n);
 }
 
-string get_fixed_string(const uint8_t *bytes, size_t offset, size_t field_size) {
+string get_fixed_string(const uint8_t *bytes, size_t offset,
+                        size_t field_size) {
     if (bytes[offset + field_size - 1] != 0)
         throw std::runtime_error("fixed string field without trailing NUL");
 
@@ -94,7 +95,8 @@ void validate_frame_header(const FrameHeader &header) {
     if (!valid_block_size(block_size))
         throw std::runtime_error("invalid volume block size");
     if (header.frame_payload_size > block_size - fixed_header_size)
-        throw std::runtime_error("frame payload size exceeds block payload capacity");
+        throw std::runtime_error(
+            "frame payload size exceeds block payload capacity");
 
     constexpr uint64_t allowed_flags = frame_flag_start | frame_flag_end |
                                        frame_flag_signed | frame_flag_clean_end;
@@ -105,13 +107,17 @@ void validate_frame_header(const FrameHeader &header) {
         if (!has_frame_flag_start(header.flags) ||
             !has_frame_flag_end(header.flags) ||
             !has_frame_flag_clean_end(header.flags))
-            throw std::runtime_error("archive-end frame missing required flags");
+            throw std::runtime_error(
+                "archive-end frame missing required flags");
         if (header.logical_slice_seq_num != 0)
-            throw std::runtime_error("archive-end frame has logical slice sequence");
+            throw std::runtime_error(
+                "archive-end frame has logical slice sequence");
         if (header.frame_seq_num_within_channel != 1)
-            throw std::runtime_error("archive-end frame channel sequence must be one");
+            throw std::runtime_error(
+                "archive-end frame channel sequence must be one");
     } else if (has_frame_flag_clean_end(header.flags)) {
-        throw std::runtime_error("CLEAN_END is only valid on archive-end frames");
+        throw std::runtime_error(
+            "CLEAN_END is only valid on archive-end frames");
     }
 }
 
@@ -123,11 +129,13 @@ void validate_reserved(const uint8_t *data) {
 }
 
 bool has_nonzero_signature(const SignatureBytes &signature) {
-    return std::ranges::any_of(signature, [](uint8_t byte) { return byte != 0; });
+    return std::ranges::any_of(signature,
+                               [](uint8_t byte) { return byte != 0; });
 }
 
 void validate_serialized_signature(const FrameHeader &header) {
-    if (!has_frame_flag_signed(header.flags) && has_nonzero_signature(header.signature))
+    if (!has_frame_flag_signed(header.flags) &&
+        has_nonzero_signature(header.signature))
         throw std::runtime_error("unsigned frame cannot carry signature bytes");
 }
 
@@ -152,7 +160,8 @@ HeaderBytes serialize_frame_header(const FrameHeader &header) {
     bytes[off_header_version] = header_version;
     bytes[off_channel_type] = static_cast<uint8_t>(header.channel_type);
     put_u16(bytes, off_volume_block_size_kib, header.volume_block_size_kib);
-    put_fixed_string(bytes, off_archive_uuid, nt_uuid_size, header.archive_uuid);
+    put_fixed_string(bytes, off_archive_uuid, nt_uuid_size,
+                     header.archive_uuid);
     put_fixed_string(bytes, off_archive_label, archive_label_size,
                      header.archive_label);
     put_u64(bytes, off_volume_seq_num, header.volume_seq_num);
@@ -177,15 +186,16 @@ FrameHeader parse_frame_header(const uint8_t *data, std::size_t size) {
     if (std::memcmp(data + off_magic, magic.data(), magic.size()) != 0)
         throw std::runtime_error("bad magic");
     if (data[off_header_version] != header_version)
-        throw std::runtime_error(
-            std::format("unsupported header version {}", data[off_header_version]));
+        throw std::runtime_error(std::format("unsupported header version {}",
+                                             data[off_header_version]));
 
     validate_reserved(data);
 
     FrameHeader header;
     header.channel_type = get_channel_type(data[off_channel_type]);
     header.volume_block_size_kib = get_u16(data, off_volume_block_size_kib);
-    header.archive_uuid = get_fixed_string(data, off_archive_uuid, nt_uuid_size);
+    header.archive_uuid =
+        get_fixed_string(data, off_archive_uuid, nt_uuid_size);
     header.archive_label =
         get_fixed_string(data, off_archive_label, archive_label_size);
     header.volume_seq_num = get_u64(data, off_volume_seq_num);
@@ -197,7 +207,8 @@ FrameHeader parse_frame_header(const uint8_t *data, std::size_t size) {
     header.flags = get_u64(data, off_flags);
     std::copy(data + off_signature, data + off_signature + signature_size,
               header.signature.begin());
-    std::copy(data + off_frame_hash, data + off_frame_hash + header.frame_hash.size(),
+    std::copy(data + off_frame_hash,
+              data + off_frame_hash + header.frame_hash.size(),
               header.frame_hash.begin());
 
     validate_frame_header(header);
@@ -239,7 +250,8 @@ Hash blake3_hash(const uint8_t *data, std::size_t size) {
 Hash compute_frame_hash(const uint8_t *data, std::size_t size) {
     FrameHeader header = parse_fixed_header(data, size);
     if (size != decoded_block_size(header))
-        throw std::runtime_error("record size does not match decoded block size");
+        throw std::runtime_error(
+            "record size does not match decoded block size");
 
     std::vector<uint8_t> canonical(data, data + size);
     for (size_t i = off_signature; i < fixed_header_size; ++i)

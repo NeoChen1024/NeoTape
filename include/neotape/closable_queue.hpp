@@ -19,12 +19,12 @@ template <typename T> class ClosableQueue {
     bool push(T item) {
         std::unique_lock lock(mtx_);
         if (max_size_ > 0) {
-            cv_.wait(lock, [this] {
-                return closed_ || queue_.size() < max_size_;
-            });
+            cv_.wait(lock,
+                     [this] { return closed_ || queue_.size() < max_size_; });
         }
-        if (closed_)
+        if (closed_) {
             return false;
+        }
         queue_.push(std::move(item));
         cv_.notify_all();
         return true;
@@ -33,8 +33,9 @@ template <typename T> class ClosableQueue {
     std::optional<T> pop() {
         std::unique_lock lock(mtx_);
         cv_.wait(lock, [this] { return closed_ || !queue_.empty(); });
-        if (queue_.empty())
+        if (queue_.empty()) {
             return std::nullopt;
+        }
         T item = std::move(queue_.front());
         queue_.pop();
         cv_.notify_all();
