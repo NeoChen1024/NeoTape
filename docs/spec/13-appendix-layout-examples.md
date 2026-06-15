@@ -103,8 +103,8 @@ Each archive is independent; `archive_uuid` distinguishes instances. `volume_seq
   |       archive_uuid (37) | archive_label (65) | volume_seq_num (8)
   |       global_frame_seq_num (8) | logical_slice_seq_num (8)
   |       frame_seq_num_within_channel (8)
-  |       frame_payload_size (8) | flags (8) | _reserved (190)
-  |       signature (128) | frame_hash (32)
+  |       frame_payload_size (8) | flags (8) | _reserved (246)
+  |       signature (72) | frame_hash (32)
   +-- frame_payload_size payload bytes
   +-- zero padding to volume_block_size_kib * 1024
 ```

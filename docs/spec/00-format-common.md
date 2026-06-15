@@ -75,7 +75,7 @@ frame_hash = BLAKE3(canonical_image)
 
 where `canonical_image` is the full `volume_block_size_kib * 1024`-byte frame with two fields treated as all-zero bytes:
 
-- `signature` (128 bytes)
+- `signature` (72 bytes)
 - `frame_hash` (32 bytes)
 
 All other fixed header fields, payload bytes, and padding bytes are included exactly as stored.
@@ -84,14 +84,14 @@ Padding bytes after `frame_payload_size` and before the end of the decoded recor
 
 ## Signing Sequence
 
-The `signature` field (128 bytes) holds a binary, unarmored signify-style signature over `frame_hash` when the `SIGNED` flag is set. The signature payload is 74 bytes and is written at the beginning of the `signature` field; the remaining bytes MUST be zero. When `SIGNED` is clear, writers MUST write the entire `signature` field as zero and readers MUST ignore it.
+The `signature` field (72 bytes) holds a binary, unarmored Ed25519 signature payload over `frame_hash` when the `SIGNED` flag is set. Bytes 0-7 hold a 64-bit key ID. Bytes 8-71 hold the raw 64-byte Ed25519 signature. This mirrors OpenBSD signify's Ed25519 signature payload without the leading two `Ed` bytes. When `SIGNED` is clear, writers MUST write the entire `signature` field as zero and readers MUST ignore it.
 
 The writer-side sequence is:
 
 1. Fill the final header fields, including the final `SIGNED` flag value.
 2. Write payload bytes and zero-fill all padding bytes through the decoded record size.
 3. Compute `frame_hash` over the canonical image (see above).
-4. If `SIGNED` is set, sign `frame_hash` and write the 74-byte binary signify-style signature into `signature`, followed by zero padding.
+4. If `SIGNED` is set, sign `frame_hash` and write the 8-byte key ID followed by the 64-byte Ed25519 signature into `signature`.
 5. Write `frame_hash` into the final 32 bytes of the header.
 
 ## Data Continuation Rule

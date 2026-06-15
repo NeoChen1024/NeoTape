@@ -4,25 +4,25 @@ Status: normative.
 
 All NeoTape records use a single unified 512-byte fixed header. The final 32 bytes are `frame_hash`, a BLAKE3 digest over the canonical image of the entire frame.
 
-## Fixed Header Layout
+## Fixed Fields
 
-| Field                          | Size (bytes) | Notes                                                                           |
-| ------------------------------ | ------------ | ------------------------------------------------------------------------------- |
-| `magic`                        | 8            | `NeoTape\0`                                                                     |
-| `header_version`               | 1            | Currently `1`; bump on layout-breaking changes.                                 |
-| `channel_type`                 | 1            | `uint8` enum.  See Channel Types below.                                         |
-| `volume_block_size_kib`        | 2            | Record size for this volume, encoded in KiB.                                    |
-| `archive_uuid`                 | 37           | NUL-terminated UUID string.                                                     |
-| `archive_label`                | 65           | NUL-terminated/padded human-readable archive label.                             |
-| `volume_seq_num`               | 8            | Advisory volume sequence number; part of the volume label/name.                 |
-| `global_frame_seq_num`         | 8            | Monotonically increasing across **all** frames, including `archive_end`.        |
-| `logical_slice_seq_num`        | 8            | `0` for the `archive_end` control frame.                                        |
-| `frame_seq_num_within_channel` | 8            | `1` for the `archive_end` control frame.                                        |
-| `frame_payload_size`           | 8            | Meaningful payload bytes after the fixed header.                                |
-| `flags`                        | 8            | `uint64`.  See Flags below.                                                     |
-| `_reserved`                    | 190          | Zero-filled Padding.                                                            |
-| `signature`                    | 128          | Binary signify-style signature over `frame_hash`; used when `SIGNED` is set.    |
-| `frame_hash`                   | 32           | BLAKE3 over the canonical image of the whole frame.                             |
+| Field                            | datatype       | size (in bytes) | Requirement | Notes                                                                                    |
+| -------------------------------- | -------------- | --------------- | ----------- | ---------------------------------------------------------------------------------------- |
+| `magic`                        | `char[8]`    | 8               | MUST        | Fixed NeoTape identifier:`NeoTape\0`.                                                  |
+| `header_version`               | `uint8`      | 1               | MUST        | Currently `1`; bump on layout-breaking changes.                                        |
+| `channel_type`                 | `uint8_enum` | 1               | MUST        | Frame role. See [Channel Types](#channel-types).                                           |
+| `volume_block_size_kib`        | `uint16`     | 2               | MUST        | Record size for this volume, encoded in KiB.                                             |
+| `archive_uuid`                 | `nt_uuid`    | 37              | MUST        | NUL-terminated UUID string.                                                              |
+| `archive_label`                | `nt_name`    | 65              | SHOULD      | NUL-terminated/padded human-readable archive label.                                      |
+| `volume_seq_num`               | `uint64`     | 8               | SHOULD      | Advisory volume sequence number; part of the volume label/name.                          |
+| `global_frame_seq_num`         | `uint64`     | 8               | MUST        | Monotonically increasing across **all** frames, including `archive_end`.          |
+| `logical_slice_seq_num`        | `uint64`     | 8               | MUST        | `0` for the `archive_end` control frame.                                             |
+| `frame_seq_num_within_channel` | `uint64`     | 8               | MUST        | `1` for the `archive_end` control frame.                                             |
+| `frame_payload_size`           | `uint64`     | 8               | MUST        | Meaningful payload bytes after the fixed header.                                         |
+| `flags`                        | `uint64`     | 8               | MUST        | Frame flags. See [Flags](#flags).                                                            |
+| `_reserved`                    | `byte[246]`  | 246             | MUST        | Zero-filled padding.                                                                     |
+| `signature`                    | `byte[72]`   | 72              | MAY         | 8-byte key ID plus 64-byte Ed25519 signature over `frame_hash` when `SIGNED` is set. |
+| `frame_hash`                   | `nt_hash`    | 32              | MUST        | BLAKE3 over the canonical image of the whole frame.                                      |
 
 Total: 512 bytes.
 
@@ -45,14 +45,14 @@ A UTF-8 label, not an archive identifier. It is encoded as a 65-byte NUL-termina
 The `signature` and `frame_hash` fields are defined in [docs/spec/00-format-common.md](00-format-common.md):
 
 - `frame_hash` is a BLAKE3 digest over the canonical image of the entire frame.
-- `signature` holds a binary signify-style signature over `frame_hash` when the `SIGNED` flag is set.
+- `signature` is a 72-byte field used when the `SIGNED` flag is set. Bytes 0-7 hold a 64-bit key ID; bytes 8-71 hold a raw 64-byte Ed25519 signature over `frame_hash`. This mirrors OpenBSD signify's Ed25519 signature payload without the leading two `Ed` bytes.
 
 ## Channel Types
 
 The `channel_type` field identifies the frame's role:
 
-| Value | Name          | Meaning                                                      |
-| ----- | ------------- | ------------------------------------------------------------ |
+| Value | Name            | Meaning                                                      |
+| ----- | --------------- | ------------------------------------------------------------ |
 | 1     | `ch_content`  | Payload bytes belonging to the logical slice content stream. |
 | 2     | `ch_metadata` | Advisory metadata bytes for the logical slice.               |
 | 255   | `archive_end` | Clean end-of-archive marker.                                 |
@@ -63,13 +63,13 @@ Values 0, 3–254 are reserved for future channels. A reader that encounters an 
 
 `flags` is a 64-bit field.
 
-| Bit   | Name        | Meaning                                                                     |
-| ----- | ----------- | --------------------------------------------------------------------------- |
-| 0     | `START`     | First frame of the current channel group.                                   |
-| 1     | `END`       | Last frame of the current channel group.                                    |
-| 2     | `SIGNED`    | `signature` contains a binary signify-style signature over `frame_hash`.    |
-| 3–62  | _reserved_  | Must be zero.                                                               |
-| 63    | `CLEAN_END` | Only valid for `archive_end`. Must be `1` on a valid end-of-archive frame.  |
+| Bit  | Name          | Meaning                                                                             |
+| ---- | ------------- | ----------------------------------------------------------------------------------- |
+| 0    | `START`     | First frame of the current channel group.                                           |
+| 1    | `END`       | Last frame of the current channel group.                                            |
+| 2    | `SIGNED`    | `signature` contains an 8-byte key ID plus Ed25519 signature over `frame_hash`. |
+| 3-62 | _reserved_  | Must be zero.                                                                       |
+| 63   | `CLEAN_END` | Only valid for `archive_end`. Must be `1` on a valid end-of-archive frame.      |
 
 The `archive_end` control frame sets `START = 1`, `END = 1`, and `CLEAN_END = 1`.
 

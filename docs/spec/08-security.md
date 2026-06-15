@@ -25,7 +25,7 @@ The catalog is an advisory index, not authoritative metadata. Readers MUST:
 
 BLAKE3 (`frame_hash`) is used for per-frame integrity verification, not authentication.
 
-The `signature` field (128 bytes) holds a binary signify-style signature over `frame_hash`. When the `SIGNED` flag is set, the signature provides authenticity and tamper resistance. When the flag is clear, the entire `signature` field MUST be zero.
+The `signature` field (72 bytes) holds an 8-byte key ID plus a 64-byte Ed25519 signature over `frame_hash`. When the `SIGNED` flag is set, the signature provides authenticity and tamper resistance. When the flag is clear, the entire `signature` field MUST be zero.
 
 ## Executable Content
 

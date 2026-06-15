@@ -102,7 +102,7 @@ The fundamental I/O unit. Every frame header, every frame payload, and every pad
 
 The 512-byte fixed field area at the start of every frame.
 
-The final 32 bytes of the header are `frame_hash`, a BLAKE3 digest over the canonical image of the entire frame. The 128-byte `signature` field holds a binary signify-style signature over `frame_hash` when the `SIGNED` flag is set.
+The final 32 bytes of the header are `frame_hash`, a BLAKE3 digest over the canonical image of the entire frame. The 72-byte `signature` field holds an 8-byte key ID followed by a 64-byte Ed25519 signature over `frame_hash` when the `SIGNED` flag is set.
 
 ### Common Header Prefix
 
@@ -124,7 +124,7 @@ BLAKE3 hash computed over the canonical image of the entire frame (`volume_block
 
 ### signature
 
-128-byte field in the fixed header that holds a binary signify-style signature over `frame_hash` when the `SIGNED` flag is set. The signature payload is 74 bytes at the beginning of this field; remaining bytes must be zero. When `SIGNED` is clear, the entire field must be zero.
+72-byte field in the fixed header used when the `SIGNED` flag is set. Bytes 0-7 hold a 64-bit key ID; bytes 8-71 hold a raw 64-byte Ed25519 signature over `frame_hash`. This mirrors OpenBSD signify's Ed25519 signature payload without the leading two `Ed` bytes. When `SIGNED` is clear, the entire field must be zero.
 
 ## Encoding Rules
 
@@ -205,8 +205,8 @@ All frames share the same fixed header layout:
 | `frame_seq_num_within_channel` | `uint64`   | Frame sequence number within the current channel.              |
 | `frame_payload_size`           | `uint64`   | Meaningful payload bytes after the 512-byte header.            |
 | `flags`                        | `uint64`   | START, END, SIGNED, CLEAN_END.                                 |
-| `_reserved`                    | `byte[190]`| Zero-filled padding.                                           |
-| `signature`                    | `byte[128]`| Binary signify-style signature over `frame_hash`.              |
+| `_reserved`                    | `byte[246]`| Zero-filled padding.                                           |
+| `signature`                    | `byte[72]` | 8-byte key ID plus Ed25519 signature over `frame_hash`.        |
 | `frame_hash`                   | `nt_hash`  | BLAKE3 over the canonical image of the entire frame.           |
 
 ## Channel Type Enum
@@ -225,7 +225,7 @@ Values 0, 3–254 are reserved.
 | ----- | ----------- | --------------------------------------------------------- |
 | 0     | `START`     | First frame of the current channel group.                 |
 | 1     | `END`       | Last frame of the current channel group.                  |
-| 2     | `SIGNED`    | `signature` contains a binary signify-style signature over `frame_hash`. |
+| 2     | `SIGNED`    | `signature` contains an 8-byte key ID plus Ed25519 signature over `frame_hash`. |
 | 3–62  | _reserved_  | Must be zero.                                             |
 | 63    | `CLEAN_END` | Archive completed cleanly (only `archive_end`).           |
 
