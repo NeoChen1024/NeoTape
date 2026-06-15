@@ -28,9 +28,9 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <thread>
+#include <unistd.h>
 #include <unordered_map>
 #include <unordered_set>
-#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -74,14 +74,12 @@ struct EntryMeta {
 
 struct SlicePlan {
     vector<EntryMeta> entries;
-    uint64_t disk_bytes = 0;
     uint64_t apparent_bytes = 0;
     uint64_t allocated_bytes = 0;
 };
 
 struct ScanTotals {
     uint64_t entries = 0;
-    uint64_t disk_bytes = 0;
     uint64_t apparent_bytes = 0;
 };
 
@@ -484,8 +482,7 @@ class NameCache {
         string buf(sz, '\0');
         struct passwd pwd{};
         struct passwd *result = nullptr;
-        int const rc = getpwuid_r(
-            uid, &pwd, buf.data(), sz, &result);
+        int const rc = getpwuid_r(uid, &pwd, buf.data(), sz, &result);
         if (rc != 0 || result == nullptr) {
             return {};
         }
@@ -498,8 +495,7 @@ class NameCache {
         string buf(sz, '\0');
         struct group grp{};
         struct group *result = nullptr;
-        int const rc = getgrgid_r(
-            gid, &grp, buf.data(), sz, &result);
+        int const rc = getgrgid_r(gid, &grp, buf.data(), sz, &result);
         if (rc != 0 || result == nullptr) {
             return {};
         }
@@ -517,8 +513,7 @@ struct InodeKey {
 
 struct InodeKeyHash {
     size_t operator()(const InodeKey &k) const {
-        return std::hash<dev_t>{}(k.dev) ^
-               (std::hash<ino_t>{}(k.ino) << 1);
+        return std::hash<dev_t>{}(k.dev) ^ (std::hash<ino_t>{}(k.ino) << 1);
     }
 };
 
@@ -541,26 +536,24 @@ void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num,
                 vector<uint64_t> &slice_sizes) {
     for (size_t i = 0; i < slice.entries.size(); ++i) {
         const EntryMeta &e = slice.entries[i];
-        string line = format("/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}", slice_num, i,
-                             e.kind, e.apparent_bytes, e.mtime, e.uid,
-                             e.uname, e.gid, e.gname,
-                             e.hardlink ? 1 : 0, e.archive_path);
+        string line =
+            format("/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}", slice_num, i, e.kind,
+                   e.apparent_bytes, e.mtime, e.uid, e.uname, e.gid, e.gname,
+                   e.hardlink ? 1 : 0, e.archive_path);
         fwrite(line.data(), 1, line.size(), opts.meta_out);
         fputc('\0', opts.meta_out);
         fputc('\n', opts.meta_out);
     }
-    std::cerr << format("slice {}: entries={} disk={} apparent={}\n", slice_num,
+    std::cerr << format("slice {}: entries={} size={}\n", slice_num,
                         slice.entries.size(),
-                        neotape::humanize_number(slice.disk_bytes),
                         neotape::humanize_number(slice.apparent_bytes));
-    slice_sizes.push_back(slice.disk_bytes);
+    slice_sizes.push_back(slice.apparent_bytes);
 
     if (!opts.verbose) {
         return;
     }
     for (const EntryMeta &entry : slice.entries) {
-        std::cerr << format("  {} disk={} apparent={} {}:{} {}:{} {}\n", entry.kind,
-                            neotape::humanize_number(entry.disk_bytes),
+        std::cerr << format("  {} size={} {}:{} {}:{} {}\n", entry.kind,
                             neotape::humanize_number(entry.apparent_bytes),
                             entry.uid, entry.uname, entry.gid, entry.gname,
                             entry.source_path.generic_string());
@@ -584,8 +577,8 @@ bool should_start_next_slice(const SlicePlan &slice, const EntryMeta &entry,
     }
 
     const uint64_t limit = slice_preadd_limit(opts);
-    return slice.disk_bytes > limit ||
-           entry.disk_bytes > limit - slice.disk_bytes;
+    return slice.apparent_bytes > limit ||
+           entry.apparent_bytes > limit - slice.apparent_bytes;
 }
 
 void add_to_slice(SlicePlan &slice, const EntryMeta &entry, const Options &opts,
@@ -597,7 +590,6 @@ void add_to_slice(SlicePlan &slice, const EntryMeta &entry, const Options &opts,
     }
 
     slice.entries.push_back(entry);
-    slice.disk_bytes += entry.disk_bytes;
     slice.apparent_bytes += entry.apparent_bytes;
 
     const auto &s = entry.source_path.native();
@@ -612,11 +604,10 @@ void add_to_slice(SlicePlan &slice, const EntryMeta &entry, const Options &opts,
     slice.allocated_bytes += entry_struct_size + path_heap + ap_heap;
 
     ++totals.entries;
-    totals.disk_bytes += entry.disk_bytes;
     totals.apparent_bytes += entry.apparent_bytes;
 
     if (slice.allocated_bytes >= opts.metadata_buffer_size ||
-        slice.disk_bytes >= opts.slice_size) {
+        slice.apparent_bytes >= opts.slice_size) {
         emit_slice(slice, opts, slice_num++, slice_sizes);
         slice = SlicePlan{};
     }
@@ -773,8 +764,8 @@ class PlannerScanner {
             .gname = {},
         };
         resolve_names(root_meta);
-        add_to_slice(current_slice_, root_meta,
-                     opts_, slice_num_, totals_, slice_sizes_);
+        add_to_slice(current_slice_, root_meta, opts_, slice_num_, totals_,
+                     slice_sizes_);
 
         if (!S_ISDIR(st.st_mode)) {
             return;
@@ -838,10 +829,9 @@ void run_plan(Options &opts) {
         fclose(opts.meta_out);
     }
 
-    std::cerr << format("scanned entries={} total_disk={} total_apparent={} "
+    std::cerr << format("scanned entries={} total_size={} "
                         "target_slice={} buffer_size={}\n",
                         totals.entries,
-                        neotape::humanize_number(totals.disk_bytes),
                         neotape::humanize_number(totals.apparent_bytes),
                         neotape::humanize_number(opts.slice_size),
                         neotape::humanize_number(opts.metadata_buffer_size));
