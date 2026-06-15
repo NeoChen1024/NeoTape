@@ -90,21 +90,19 @@ std::vector<fs::path> scan_spool_files(const fs::path &root) {
     return files;
 }
 
-std::string spool_suffix_for_header(const neotape::ParsedHeader &header) {
-    switch (header.type) {
-    case neotape::HeaderType::volume:
-        return "volume-header";
-    case neotape::HeaderType::frame:
-        return format("slice-{:06}", header.frame->logical_slice_seq_num);
-    case neotape::HeaderType::archive_end:
+std::string spool_suffix_for_header(const neotape::FrameHeader &header) {
+    switch (header.channel_type) {
+    case neotape::ChannelType::CH_CONTENT:
+    case neotape::ChannelType::CH_METADATA:
+        return format("slice-{:06}", header.logical_slice_seq_num);
+    case neotape::ChannelType::ARCHIVE_END:
         return "archive-end";
-    default:
-        throw std::runtime_error("unsupported spool header type");
     }
+    throw std::runtime_error("unsupported spool channel type");
 }
 
 fs::path spool_final_path(const fs::path &root, uint64_t file_num,
-                          const neotape::ParsedHeader &header) {
+                          const neotape::FrameHeader &header) {
     return root / format("{}{:06}.{}.nts", spool_prefix, file_num,
                          spool_suffix_for_header(header));
 }
@@ -113,7 +111,7 @@ fs::path spool_temp_path(const fs::path &root, uint64_t file_num) {
     return root / format("{}{:06}.pending", spool_prefix, file_num);
 }
 
-neotape::ParsedHeader parse_spool_header_file(const fs::path &path) {
+neotape::FrameHeader parse_spool_header_file(const fs::path &path) {
     std::ifstream in(path, std::ios::binary);
     if (!in)
         throw std::runtime_error(format("open {}", path.string()));
@@ -473,12 +471,7 @@ void SpoolTapeDevice::finalize_current_file() {
         return;
 
     auto header = parse_spool_header_file(current_path_);
-    if (header.volume)
-        current_block_size_ = header.volume->volume_block_size;
-    else if (header.frame)
-        current_block_size_ = header.frame->volume_block_size;
-    else if (header.archive_end)
-        current_block_size_ = header.archive_end->volume_block_size;
+    current_block_size_ = neotape::decoded_block_size(header);
     fs::path final_path = spool_final_path(root_, current_file_num_, header);
     fs::rename(current_path_, final_path);
     current_is_temp_ = false;

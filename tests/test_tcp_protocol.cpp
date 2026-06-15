@@ -20,13 +20,13 @@ int main() {
 
     // Empty payload round-trip.
     {
-        Message out{MessageType::get_volume_header, {}};
+        Message out{MessageType::next_frame, {}};
         neotape::tcp::write_message(fds[1], out);
 
         auto in = neotape::tcp::read_message(fds[0]);
         if (!in.has_value())
             fail("expected a message for empty payload");
-        if (in->type != MessageType::get_volume_header)
+        if (in->type != MessageType::next_frame)
             fail("wrong message type for empty payload");
         if (!in->payload.empty())
             fail("expected empty payload");

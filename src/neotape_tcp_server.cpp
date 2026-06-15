@@ -82,25 +82,19 @@ int create_listener(const std::string &addr) {
     return fd;
 }
 
-VolumeHeader make_volume_header(uint32_t block_size, uint64_t volume_seq_num,
-                                const std::string &archive_name) {
-    VolumeHeader vh;
-    vh.volume_block_size = block_size;
-    vh.archive_uuid = make_uuid_v4();
-    vh.archive_name = archive_name;
-    vh.volume_seq_num = volume_seq_num;
-    vh.payload_profile = PayloadProfile::pax;
-    vh.volume_write_at_utc = utc_timestamp_now();
-    vh.flags = 0;
-    return vh;
+void copy_header_to_record(const HeaderBytes &header,
+                           std::vector<std::byte> &record) {
+    for (std::size_t i = 0; i < header.size(); ++i)
+        record[i] = static_cast<std::byte>(header[i]);
 }
 
-std::vector<std::byte> bytes_from_header_bytes(const HeaderBytes &bytes) {
-    std::vector<std::byte> out;
-    out.reserve(bytes.size());
-    for (uint8_t b : bytes)
-        out.push_back(static_cast<std::byte>(b));
-    return out;
+void finalize_record_hash(FrameHeader &header, std::vector<std::byte> &record) {
+    HeaderBytes header_bytes = serialize_frame_header(header);
+    copy_header_to_record(header_bytes, record);
+    header.frame_hash = compute_frame_hash(
+        reinterpret_cast<const uint8_t *>(record.data()), record.size());
+    header_bytes = serialize_frame_header(header);
+    copy_header_to_record(header_bytes, record);
 }
 
 struct RetainedFrame {
@@ -201,40 +195,51 @@ struct FrameBuilder {
     std::vector<std::byte> build_frame(std::span<const std::byte> payload,
                                        uint64_t seq_num) {
         assert(payload.size() <= payload_capacity());
-
-        // For the first implementation, each frame is its own single-frame
-        // slice.  Sequence numbers are 1-indexed.
         ++slice;
 
         FrameHeader fh;
-        fh.volume_block_size = block_size;
+        fh.channel_type = ChannelType::CH_CONTENT;
+        fh.volume_block_size_kib = static_cast<uint16_t>(block_size / 1024u);
         fh.archive_uuid = archive_uuid;
-        fh.archive_name = archive_name;
+        fh.archive_label = archive_name;
         fh.volume_seq_num = volume_seq_num;
-        fh.payload_profile = PayloadProfile::pax;
-        fh.logical_slice_seq_num = slice;
         fh.global_frame_seq_num = seq_num;
-        fh.frame_seq_num_within_slice = 1;
+        fh.logical_slice_seq_num = slice;
+        fh.frame_seq_num_within_channel = 1;
         fh.frame_payload_size = payload.size();
-        fh.frame_content_type = FrameContentType::slice_content;
-        fh.frame_payload_blake3 = blake3_hash(
-            reinterpret_cast<const uint8_t *>(payload.data()),
-            payload.size());
         fh.flags = frame_flag_start | frame_flag_end;
-        fh.slice_content_size = payload.size();
-        fh.slice_content_blake3 = fh.frame_payload_blake3;
 
         HeaderBytes header = serialize_frame_header(fh);
-        std::vector<std::byte> record;
-        record.reserve(block_size);
-        for (uint8_t b : header)
-            record.push_back(static_cast<std::byte>(b));
-        record.insert(record.end(), payload.begin(), payload.end());
-        record.resize(block_size); // pad with zero bytes
-
+        std::vector<std::byte> record(block_size, std::byte{0});
+        copy_header_to_record(header, record);
+        std::copy(payload.begin(), payload.end(), record.begin() +
+                  static_cast<std::ptrdiff_t>(fixed_header_size));
+        finalize_record_hash(fh, record);
         return record;
     }
 };
+
+std::vector<std::byte> build_archive_end_record(uint32_t block_size,
+                                                uint64_t volume_seq_num,
+                                                const std::string &archive_uuid,
+                                                const std::string &archive_name,
+                                                uint64_t global_seq_num) {
+    FrameHeader h;
+    h.channel_type = ChannelType::ARCHIVE_END;
+    h.volume_block_size_kib = static_cast<uint16_t>(block_size / 1024u);
+    h.archive_uuid = archive_uuid;
+    h.archive_label = archive_name;
+    h.volume_seq_num = volume_seq_num;
+    h.global_frame_seq_num = global_seq_num;
+    h.logical_slice_seq_num = 0;
+    h.frame_seq_num_within_channel = 1;
+    h.frame_payload_size = 0;
+    h.flags = frame_flag_start | frame_flag_end | frame_flag_clean_end;
+
+    std::vector<std::byte> record(block_size, std::byte{0});
+    finalize_record_hash(h, record);
+    return record;
+}
 
 struct RecordOrDone {
     std::vector<std::byte> record;
@@ -328,17 +333,7 @@ ServeResult serve_client(int client, TcpArchiverState &state,
     uint64_t next_send_seq = state.last_acked_global_frame == 0
                                  ? 1
                                  : state.last_acked_global_frame + 1;
-    std::vector<std::byte> vh_payload;
-
-    auto build_volume_header_payload = [&]() {
-        VolumeHeader vh = make_volume_header(opts.volume_block_size,
-                                             state.next_volume_seq_num,
-                                             opts.archive_name);
-        vh.archive_uuid = archive_uuid;
-        vh_payload = bytes_from_header_bytes(serialize_volume_header(vh));
-    };
-
-    bool archive_end_sent = false;
+    std::optional<uint64_t> archive_end_seq;
 
     try {
         for (;;) {
@@ -346,24 +341,13 @@ ServeResult serve_client(int client, TcpArchiverState &state,
             if (!req.has_value())
                 break;
 
-            if (archive_end_sent && req->type != MessageType::ack_frame) {
+            if (archive_end_seq.has_value() &&
+                req->type != MessageType::ack_frame) {
                 send_error(client, "unexpected request after archive end");
                 return ServeResult{true, volume_committed, frames_served};
             }
 
             switch (req->type) {
-            case MessageType::get_volume_header:
-                NEOTAPE_DEBUG(
-                    "archiver: sending volume header seq={}\n",
-                    state.next_volume_seq_num);
-                if (vh_payload.empty())
-                    build_volume_header_payload();
-                neotape::tcp::write_message(
-                    client, Message{MessageType::volume_header,
-                                    std::move(vh_payload)});
-                build_volume_header_payload();
-                break;
-
             case MessageType::next_frame: {
                 if (!volume_committed) {
                     volume_committed = true;
@@ -379,6 +363,11 @@ ServeResult serve_client(int client, TcpArchiverState &state,
                 if (record_ptr) {
                     record = *record_ptr;
                     seq = next_send_seq;
+                    FrameHeader hdr = parse_fixed_header(
+                        reinterpret_cast<const uint8_t *>(record.data()),
+                        record.size());
+                    if (hdr.channel_type == ChannelType::ARCHIVE_END)
+                        archive_end_seq = seq;
                 } else {
                     auto next = frame_queue.pop();
                     if (!next.has_value()) {
@@ -390,32 +379,20 @@ ServeResult serve_client(int client, TcpArchiverState &state,
                                            frames_served};
                     }
                     if (next->done) {
-                        ArchiveEndHeader ae;
-                        ae.volume_block_size = opts.volume_block_size;
-                        ae.archive_uuid = archive_uuid;
-                        ae.archive_name = opts.archive_name;
-                        ae.volume_seq_num = state.next_volume_seq_num;
-                        ae.payload_profile = PayloadProfile::pax;
-                        ae.last_logical_slice_seq_num =
-                            next->last_slice_seq_num;
-                        ae.last_global_frame_seq_num = next->global_seq_num;
-                        ae.created_by_implementation = "neotape-archiver";
-                        ae.created_by_build_id = "";
-                        ae.archive_end_at_utc = utc_timestamp_now();
-                        ae.flags = archive_end_flag_clean_end;
-                        NEOTAPE_DEBUG(
-                            "archiver: sending archive end header "
-                            "last_global_frame={}\n",
-                            ae.last_global_frame_seq_num);
+                        uint64_t ae_seq = next->global_seq_num + 1;
+                        auto ae_record = build_archive_end_record(
+                            opts.volume_block_size,
+                            opts.initial_volume_seq_num,
+                            archive_uuid,
+                            opts.archive_name,
+                            ae_seq);
+                        retention.add(ae_seq, ae_record);
+                        seq = ae_seq;
+                        archive_end_seq = ae_seq;
                         neotape::tcp::write_message(
                             client,
-                            Message{MessageType::archive_end_header,
-                                    bytes_from_header_bytes(
-                                        serialize_archive_end_header(ae))});
-                        NEOTAPE_DEBUG(
-                            "archiver: archive end header sent, waiting for "
-                            "final ack or close\n");
-                        archive_end_sent = true;
+                            Message{MessageType::frame_record,
+                                    std::move(ae_record)});
                         break;
                     }
                     seq = next->global_seq_num;
@@ -429,8 +406,10 @@ ServeResult serve_client(int client, TcpArchiverState &state,
                     retention.add(seq, record);
                 }
 
-                if (record.size() != opts.volume_block_size)
-                    throw std::runtime_error("frame size mismatch");
+                if (record.size() != opts.volume_block_size) {
+                    send_error(client, "frame size mismatch");
+                    return ServeResult{false, volume_committed, frames_served};
+                }
                 NEOTAPE_DEBUG(
                     "archiver: sending frame global_seq={}\n", seq);
                 neotape::tcp::write_message(
@@ -451,6 +430,10 @@ ServeResult serve_client(int client, TcpArchiverState &state,
                 state.last_acked_global_frame =
                     std::max(state.last_acked_global_frame, g);
                 retention.ack(state.last_acked_global_frame);
+                if (archive_end_seq.has_value() && g >= *archive_end_seq) {
+                    NEOTAPE_DEBUG("archiver: archive end acked\n");
+                    return ServeResult{true, volume_committed, frames_served};
+                }
                 break;
             }
 
@@ -469,7 +452,7 @@ ServeResult serve_client(int client, TcpArchiverState &state,
         return ServeResult{false, volume_committed, frames_served};
     }
 
-    return ServeResult{archive_end_sent, volume_committed, frames_served};
+    return ServeResult{false, volume_committed, frames_served};
 }
 
 } // namespace
@@ -479,7 +462,6 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
         throw std::runtime_error("invalid volume block size");
 
     if (!opts.use_pax) {
-        // Original skeleton loop using a local dummy producer.
         int listener = create_listener(opts.listen_address);
         std::cerr << std::format("archiver listening on {}\n",
                                  opts.listen_address);
@@ -493,89 +475,70 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
         }
         close(listener);
 
+        std::string archive_uuid = make_uuid_v4();
+        FrameBuilder builder(opts.volume_block_size, opts.initial_volume_seq_num,
+                             archive_uuid, opts.archive_name);
+
+        constexpr uint64_t dummy_frame_count = 8;
+        auto has_more_frames = [](uint64_t idx) {
+            return idx < dummy_frame_count;
+        };
+        auto produce_record = [&](uint64_t idx) {
+            const uint32_t cap = builder.payload_capacity();
+            std::vector<std::byte> payload(cap);
+            for (uint32_t i = 0; i < cap; ++i)
+                payload[i] = static_cast<std::byte>(
+                    static_cast<uint8_t>(idx + i));
+            return builder.build_frame(std::span(payload), idx + 1);
+        };
+        uint64_t request_count = 0;
         uint64_t frames_served = 0;
-        try {
-            VolumeHeader vh = make_volume_header(opts.volume_block_size,
-                                                 opts.initial_volume_seq_num,
-                                                 opts.archive_name);
-            HeaderBytes vh_bytes = serialize_volume_header(vh);
-            std::vector<std::byte> vh_payload = bytes_from_header_bytes(vh_bytes);
 
-            constexpr uint64_t dummy_frame_count = 8;
-            auto has_more_frames = [](uint64_t idx) {
-                return idx < dummy_frame_count;
-            };
-            auto produce_record = [&](uint64_t idx) {
-                std::vector<std::byte> rec(opts.volume_block_size);
-                for (uint32_t i = 0; i < opts.volume_block_size; ++i)
-                    rec[i] = static_cast<std::byte>(
-                        static_cast<uint8_t>(idx + i));
-                return rec;
-            };
-            uint64_t request_count = 0;
+        for (;;) {
+            auto req = neotape::tcp::read_message(client);
+            if (!req.has_value())
+                break;
 
-            for (;;) {
-                auto req = neotape::tcp::read_message(client);
-                if (!req.has_value())
-                    break;
-
-                switch (req->type) {
-                case MessageType::get_volume_header:
+            switch (req->type) {
+            case MessageType::next_frame:
+                if (!has_more_frames(frames_served)) {
+                    auto ae_record = build_archive_end_record(
+                        opts.volume_block_size,
+                        opts.initial_volume_seq_num,
+                        archive_uuid,
+                        opts.archive_name,
+                        frames_served + 1);
                     neotape::tcp::write_message(
-                        client, Message{MessageType::volume_header,
-                                        std::move(vh_payload)});
-                    vh_payload = bytes_from_header_bytes(vh_bytes);
-                    break;
-                case MessageType::next_frame:
-                    if (!has_more_frames(frames_served)) {
-                        ArchiveEndHeader ae;
-                        ae.volume_block_size = opts.volume_block_size;
-                        ae.archive_uuid = vh.archive_uuid;
-                        ae.archive_name = opts.archive_name;
-                        ae.volume_seq_num = opts.initial_volume_seq_num;
-                        ae.payload_profile = PayloadProfile::pax;
-                        ae.last_logical_slice_seq_num = 0;
-                        ae.last_global_frame_seq_num = frames_served;
-                        ae.created_by_implementation = "neotape-archiver";
-                        ae.created_by_build_id = "";
-                        ae.archive_end_at_utc = utc_timestamp_now();
-                        ae.flags = archive_end_flag_clean_end;
-                        HeaderBytes ae_bytes = serialize_archive_end_header(ae);
-                        neotape::tcp::write_message(
-                            client,
-                            Message{MessageType::archive_end_header,
-                                    bytes_from_header_bytes(ae_bytes)});
-                        close(client);
-                        return frames_served;
-                    }
-                    if (request_count % 4 == 3) {
-                        neotape::tcp::write_message(
-                            client, Message{MessageType::tape_eof, {}});
-                    } else {
-                        auto rec = produce_record(frames_served);
-                        if (rec.size() != opts.volume_block_size)
-                            throw std::runtime_error(
-                                "produce_record size mismatch");
-                        neotape::tcp::write_message(
-                            client,
-                            Message{MessageType::frame_record,
-                                    std::move(rec)});
-                        ++frames_served;
-                    }
-                    ++request_count;
-                    break;
-                default:
-                    send_error(client, "unexpected request type");
+                        client,
+                        Message{MessageType::frame_record,
+                                std::move(ae_record)});
                     close(client);
                     return frames_served;
                 }
+                if (request_count % 4 == 3) {
+                    neotape::tcp::write_message(
+                        client, Message{MessageType::tape_eof, {}});
+                } else {
+                    auto rec = produce_record(frames_served);
+                    if (rec.size() != opts.volume_block_size)
+                        throw std::runtime_error(
+                            "produce_record size mismatch");
+                    neotape::tcp::write_message(
+                        client,
+                        Message{MessageType::frame_record,
+                                std::move(rec)});
+                    ++frames_served;
+                }
+                ++request_count;
+                break;
+            default:
+                send_error(client, "unexpected request type");
+                close(client);
+                return frames_served;
             }
-            close(client);
-            return frames_served;
-        } catch (...) {
-            close(client);
-            throw;
         }
+        close(client);
+        return frames_served;
     }
 
     int listener = create_listener(opts.listen_address);
@@ -607,8 +570,6 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
     };
 
     auto check_pax_error = [&]() {
-        if (cancelled.load())
-            return;
         std::lock_guard lock(pax_error_mtx);
         if (pax_error)
             std::rethrow_exception(pax_error);

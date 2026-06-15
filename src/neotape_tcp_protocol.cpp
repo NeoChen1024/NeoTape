@@ -88,16 +88,10 @@ void write_message(int fd, const Message &msg) {
 
 std::string message_type_name(MessageType type) {
     switch (type) {
-    case MessageType::get_volume_header:
-        return "GET_VOLUME_HEADER";
-    case MessageType::volume_header:
-        return "VOLUME_HEADER";
     case MessageType::next_frame:
         return "NEXT_FRAME";
     case MessageType::frame_record:
         return "FRAME_RECORD";
-    case MessageType::archive_end_header:
-        return "ARCHIVE_END_HEADER";
     case MessageType::tape_eof:
         return "TAPE_EOF";
     case MessageType::error:

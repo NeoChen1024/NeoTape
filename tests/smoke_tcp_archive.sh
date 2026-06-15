@@ -31,7 +31,7 @@ done
 wait "$ARCHIVER_PID"
 
 # NeoTape fixed header size; volume and archive-end headers are each this size.
-HEADER_SIZE=1024
+HEADER_SIZE=512
 
 # The spool should contain exactly one finalized tape file for a small archive.
 FILE_COUNT=$(find "$SPOOL" -maxdepth 1 -type f -name '*.nts' | wc -l)
@@ -42,7 +42,7 @@ fi
 
 OUT=$(find "$SPOOL" -maxdepth 1 -type f -name '*.nts' | head -n1)
 ACTUAL=$(stat -c%s "$OUT")
-if [ "$ACTUAL" -lt $((HEADER_SIZE * 2 + BLOCK)) ]; then
+if [ "$ACTUAL" -lt $((BLOCK * 2)) ]; then
     echo "smoke_tcp_archive: output too small: $ACTUAL"
     exit 1
 fi
@@ -54,26 +54,19 @@ if [ "$MAGIC" != "4e656f5461706500" ]; then
     exit 1
 fi
 
-# Byte at offset 9 is the header type; the first header is a volume header (0x01).
-HTYPE=$(od -An -tx1 -N1 -j9 "$OUT" | tr -d ' \n')
-if [ "$HTYPE" != "01" ]; then
-    echo "smoke_tcp_archive: expected volume header type 0x01, got $HTYPE"
+# Byte at offset 9 is the channel type; the first record is ch_content (0x01).
+CTYPE=$(od -An -tx1 -N1 -j9 "$OUT" | tr -d ' \n')
+if [ "$CTYPE" != "01" ]; then
+    echo "smoke_tcp_archive: expected ch_content channel 0x01, got $CTYPE"
     exit 1
 fi
 
-# Byte at offset 1024+9 is the header type of the first frame header (0x02).
-FHTYPE=$(od -An -tx1 -N1 -j$((HEADER_SIZE + 9)) "$OUT" | tr -d ' \n')
-if [ "$FHTYPE" != "02" ]; then
-    echo "smoke_tcp_archive: expected frame header type 0x02, got $FHTYPE"
-    exit 1
-fi
-
-# The archive end header follows all frame payloads and is type 0x03.
-AE_OFFSET=$((ACTUAL - HEADER_SIZE))
+# The archive end frame follows all frame payloads and is type 0xff.
+AE_OFFSET=$((ACTUAL - BLOCK))
 AE_MAGIC=$(od -An -tx1 -N8 -j$AE_OFFSET "$OUT" | tr -d ' \n')
 AE_TYPE=$(od -An -tx1 -N1 -j$((AE_OFFSET + 9)) "$OUT" | tr -d ' \n')
-if [ "$AE_MAGIC" != "4e656f5461706500" ] || [ "$AE_TYPE" != "03" ]; then
-    echo "smoke_tcp_archive: archive end header mismatch"
+if [ "$AE_MAGIC" != "4e656f5461706500" ] || [ "$AE_TYPE" != "ff" ]; then
+    echo "smoke_tcp_archive: archive end frame mismatch"
     exit 1
 fi
 

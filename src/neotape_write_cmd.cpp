@@ -222,11 +222,10 @@ struct WriterState {
     std::atomic<bool> final_drain{false};
 };
 
-// Do not write a trailing filemark when EOT has been reached.  On real tape
-// hardware, issuing MTWEOF near the physical end of the medium can put the
-// process into an uninterruptible D state while the kernel tries to flush data
-// that cannot fit.  The end of the volume is implicitly marked by EOD; the next
-// volume begins with its own Volume Header.
+// Do not write a trailing filemark when EOT has been reached. On real tape
+// hardware, issuing MTWEOF near the physical end of the medium can block while
+// the kernel tries to flush data that cannot fit. The next volume resumes with
+// the next uncommitted frame.
 void write_trailing_filemark(mt::TapeDevice *dev) {
     (void)dev;
     NEOTAPE_DEBUG("writer: omitting trailing filemark at EOT/EOD\n");
@@ -461,19 +460,7 @@ int main(int argc, char **argv) {
         using neotape::tcp::Message;
         using neotape::tcp::MessageType;
 
-        neotape::tcp::write_message(fd, Message{MessageType::get_volume_header});
-        auto vh = neotape::tcp::read_message(fd);
-        if (!vh || vh->type != MessageType::volume_header)
-            fail("did not receive volume header");
-
-        neotape::ParsedHeader vh_parsed = neotape::parse_fixed_header(
-            reinterpret_cast<const uint8_t *>(vh->payload.data()),
-            vh->payload.size());
-        if (vh_parsed.type != neotape::HeaderType::volume || !vh_parsed.volume)
-            fail("volume header did not parse");
-        const uint32_t volume_block_size = vh_parsed.volume->volume_block_size;
-        std::cerr << format("writer: volume header parsed block_size={}\n",
-                            volume_block_size);
+        std::optional<uint32_t> volume_block_size;
 
         // Output abstraction: a tape or spool device.  There is no raw file
         // mode; spool is the filesystem surrogate for tape.
@@ -520,12 +507,6 @@ int main(int argc, char **argv) {
         auto write_bytes = [&](const std::vector<std::byte> &bytes) {
             output.device->write_record(bytes.data(), bytes.size());
         };
-
-        // Write the volume header synchronously so it is the first record on
-        // the tape; frame records are pipelined through the writer thread.
-        NEOTAPE_DEBUG("writer: writing volume header\n");
-        write_bytes(vh->payload);
-        NEOTAPE_DEBUG("writer: volume header written\n");
 
         WriterState wstate;
         std::mutex socket_write_mtx;
@@ -589,22 +570,58 @@ int main(int argc, char **argv) {
 
             switch (msg->type) {
             case MessageType::frame_record: {
-                if (msg->payload.size() != volume_block_size)
-                    joined_fail(format("frame size mismatch: expected {}, got {}",
-                                volume_block_size, msg->payload.size()));
-
-                neotape::ParsedHeader header = neotape::parse_fixed_header(
+                neotape::FrameHeader header = neotape::parse_fixed_header(
                     reinterpret_cast<const uint8_t *>(msg->payload.data()),
                     msg->payload.size());
-                if (header.type != neotape::HeaderType::frame || !header.frame)
-                    joined_fail("frame record did not parse as frame header");
-                uint64_t gseq = header.frame->global_frame_seq_num;
-                NEOTAPE_DEBUG(
-                    "writer: pushing frame global_seq={} to queue\n", gseq);
+                uint32_t record_size = neotape::decoded_block_size(header);
+                if (!volume_block_size.has_value()) {
+                    volume_block_size = record_size;
+                    std::cerr << format("writer: first frame parsed block_size={}\n",
+                                        record_size);
+                }
+                if (msg->payload.size() != *volume_block_size)
+                    joined_fail(format("frame size mismatch: expected {}, got {}",
+                                       *volume_block_size, msg->payload.size()));
 
+                if (header.channel_type == neotape::ChannelType::ARCHIVE_END) {
+                    NEOTAPE_DEBUG("writer: archive_end frame, draining queue\n");
+                    {
+                        std::lock_guard lock(wstate.output_mtx);
+                        wstate.final_drain.store(true);
+                    }
+                    wstate.output_cv.notify_all();
+                    for (;;) {
+                        std::unique_lock lock(wstate.output_mtx);
+                        if (wstate.output_queue.empty())
+                            break;
+                        lock.unlock();
+                        if (wstate.writer_error.load())
+                            joined_fail(wstate.writer_error_text);
+                        if (wstate.eot_reached.load()) {
+                            joiner.join();
+                            write_trailing_filemark(output.device.get());
+                            uint64_t final_seq = wstate.last_written_seq.load();
+                            if (final_seq > 0)
+                                write_msg(Message{MessageType::ack_frame,
+                                                  uint64_to_le_bytes(final_seq)});
+                            std::cerr << format("writer: reached end of tape after {} frames\n",
+                                                final_seq);
+                            return 1;
+                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    }
+                    joiner.join();
+                    write_bytes(msg->payload);
+                    write_msg(Message{MessageType::ack_frame,
+                                      uint64_to_le_bytes(header.global_frame_seq_num)});
+                    std::cerr << format("writer: received archive end at frame {}\n",
+                                        header.global_frame_seq_num);
+                    return 0;
+                }
+
+                uint64_t gseq = header.global_frame_seq_num;
                 std::unique_lock lock(wstate.output_mtx);
-                wstate.output_queue.push_back(
-                    PendingFrame{gseq, std::move(msg->payload)});
+                wstate.output_queue.push_back(PendingFrame{gseq, std::move(msg->payload)});
                 wstate.output_cv.notify_one();
                 break;
             }
@@ -615,58 +632,7 @@ int main(int argc, char **argv) {
                 wstate.output_cv.notify_one();
                 break;
             }
-            case MessageType::archive_end_header: {
-                NEOTAPE_DEBUG(
-                    "writer: archive_end_header, draining queue\n");
-                {
-                    std::lock_guard lock(wstate.output_mtx);
-                    wstate.final_drain.store(true);
-                }
-                wstate.output_cv.notify_all();
-                // Drain any queued frames so the archive end header is the
-                // very last record on the tape.
-                for (;;) {
-                    std::unique_lock lock(wstate.output_mtx);
-                    if (wstate.output_queue.empty())
-                        break;
-                    lock.unlock();
-                    if (wstate.writer_error.load())
-                        joined_fail(wstate.writer_error_text);
-                    if (wstate.eot_reached.load()) {
-                        NEOTAPE_DEBUG(
-                            "writer: eot reached while draining, joining thread\n");
-                        joiner.join();
-                        write_trailing_filemark(output.device.get());
-                        uint64_t final_seq = wstate.last_written_seq.load();
-                        if (final_seq > 0) {
-                            write_msg(Message{MessageType::ack_frame,
-                                              uint64_to_le_bytes(final_seq)});
-                        }
-                        std::cerr << format(
-                            "writer: reached end of tape after {} frames\n",
-                            final_seq);
-                        return 1;
-                    }
-                    std::this_thread::sleep_for(
-                        std::chrono::milliseconds(10));
-                }
-                NEOTAPE_DEBUG("writer: queue drained, joining thread\n");
-                joiner.join();
-                NEOTAPE_DEBUG("writer: writing archive end header\n");
-                write_bytes(msg->payload);
-                uint64_t final_seq = wstate.last_written_seq.load();
-                if (final_seq > 0) {
-                    NEOTAPE_DEBUG(
-                        "writer: sending final ack global_seq={}\n", final_seq);
-                    write_msg(Message{MessageType::ack_frame,
-                                      uint64_to_le_bytes(final_seq)});
-                    NEOTAPE_DEBUG("writer: final ack sent\n");
-                }
-                std::cerr << format(
-                    "writer: received archive end after {} frames\n",
-                    final_seq);
-                return 0;
-            }
+
             case MessageType::error: {
                 joiner.join();
                 string reason;

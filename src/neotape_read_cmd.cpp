@@ -153,13 +153,11 @@ class SpoolSourceReader final : public SourceReader {
         if (!fill(neotape::fixed_header_size, filemark_count, eod))
             return std::nullopt;
 
-        neotape::ParsedHeader header = neotape::parse_fixed_header(
+        neotape::FrameHeader header = neotape::parse_fixed_header(
             reinterpret_cast<const uint8_t *>(pending_.data()),
             neotape::fixed_header_size);
 
-        size_t record_size = neotape::fixed_header_size;
-        if (header.type == neotape::HeaderType::frame)
-            record_size = header.frame->volume_block_size;
+        size_t record_size = neotape::decoded_block_size(header);
 
         if (!fill(record_size, filemark_count, eod))
             throw std::runtime_error("truncated record in spool source");
@@ -251,8 +249,8 @@ int main(int argc, char **argv) {
 
         uint64_t record_count = 0;
         uint64_t filemark_count = 0;
-        bool has_volume_header = false;
-        bool has_archive_end_header = false;
+        bool has_content_or_metadata_frame = false;
+        bool has_archive_end_frame = false;
 
         for (;;) {
             bool eod = false;
@@ -266,13 +264,14 @@ int main(int argc, char **argv) {
 
             if (record->size() >= neotape::fixed_header_size) {
                 try {
-                    neotape::ParsedHeader header = neotape::parse_fixed_header(
+                    neotape::FrameHeader header = neotape::parse_fixed_header(
                         reinterpret_cast<const uint8_t *>(record->data()),
                         record->size());
-                    if (header.type == neotape::HeaderType::volume)
-                        has_volume_header = true;
-                    if (header.type == neotape::HeaderType::archive_end)
-                        has_archive_end_header = true;
+                    if (header.channel_type == neotape::ChannelType::CH_CONTENT ||
+                        header.channel_type == neotape::ChannelType::CH_METADATA)
+                        has_content_or_metadata_frame = true;
+                    if (header.channel_type == neotape::ChannelType::ARCHIVE_END)
+                        has_archive_end_frame = true;
                 } catch (const std::exception &) {
                     // Not a parseable NeoTape header.
                 }
@@ -283,15 +282,15 @@ int main(int argc, char **argv) {
 
         std::cerr << format("neotape-read: {} records, {} filemarks\n",
                             record_count, filemark_count);
-        std::cerr << format("  volume header: {}\n",
-                            has_volume_header ? "yes" : "no");
-        std::cerr << format("  archive end header: {}\n",
-                            has_archive_end_header ? "yes" : "no");
+        std::cerr << format("  content/metadata frame: {}\n",
+                            has_content_or_metadata_frame ? "yes" : "no");
+        std::cerr << format("  archive end frame: {}\n",
+                            has_archive_end_frame ? "yes" : "no");
 
-        if (!has_volume_header || !has_archive_end_header) {
-            if (!has_volume_header)
-                fail("did not see volume header");
-            fail("did not see archive end header");
+        if (!has_content_or_metadata_frame || !has_archive_end_frame) {
+            if (!has_content_or_metadata_frame)
+                fail("did not see content or metadata frame");
+            fail("did not see archive end frame");
         }
 
         return 0;

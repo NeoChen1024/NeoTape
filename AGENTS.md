@@ -35,16 +35,12 @@ make compile_commands
 clangd is configured to use GCC 15's libstdc++ headers because GCC 16's
 headers currently confuse clangd 22.
 
-## Python Codegen
+## Header Parser
 
-- `scripts/neotape_header_defs.py` is the Python source of truth for NeoTape
-  fixed-header layout data.
-- `scripts/generate_neotape_parsers.py` generates
-  `include/neotape/format_generated.hpp` and `src/neotape_format_generated.cpp`.
-- Regenerate codegen outputs with `make` or directly with
-  `python3 scripts/generate_neotape_parsers.py`.
-- Do not hand-edit generated files; update the Python definitions instead and
-  regenerate.
+- NeoTape uses one handwritten unified 512-byte Frame Header parser/serializer.
+- `include/neotape/format.hpp` declares the format API.
+- `src/neotape_format.cpp` owns byte offsets, parsing, serialization, and frame-hash helpers.
+- Do not reintroduce header codegen unless the format grows multiple independent layouts again.
 
 ## Project layout
 

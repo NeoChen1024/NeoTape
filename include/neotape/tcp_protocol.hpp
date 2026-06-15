@@ -9,15 +9,12 @@
 namespace neotape::tcp {
 
 enum class MessageType : uint8_t {
-    get_volume_header = 0x01,
-    volume_header = 0x02,
-    next_frame = 0x03,
-    frame_record = 0x04,
-    archive_end_header = 0x05,
-    tape_eof = 0x06,
-    error = 0x07,
+    next_frame = 0x01,
+    frame_record = 0x02,
+    tape_eof = 0x03,
+    error = 0x04,
     // ack_frame payload: uint64_t little-endian global frame sequence number.
-    ack_frame = 0x08,
+    ack_frame = 0x05,
 };
 
 struct Message {

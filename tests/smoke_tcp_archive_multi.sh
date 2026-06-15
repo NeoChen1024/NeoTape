@@ -7,7 +7,7 @@ SPOOL2=/tmp/neotape-multi-vol2-$$
 SRC=/tmp/neotape-multi-src-$$
 BLOCK=4096
 MAX_VOL_BYTES=$((8 * BLOCK)) # force EOT after ~8 frames
-HEADER_SIZE=1024
+HEADER_SIZE=512
 
 cleanup() {
     if [ -n "${ARCHIVER_PID:-}" ]; then
@@ -51,21 +51,21 @@ fi
 
 wait "$ARCHIVER_PID"
 
-# Verify two distinct volume headers.
-for vh in "$SPOOL1" "$SPOOL2"; do
-    FIRST=$(find "$vh" -maxdepth 1 -type f -name '*.nts' | sort | head -n1)
+# Verify first-record channel types.
+for spool in "$SPOOL1" "$SPOOL2"; do
+    FIRST=$(find "$spool" -maxdepth 1 -type f -name '*.nts' | sort | head -n1)
     if [ -z "$FIRST" ]; then
-        echo "smoke_tcp_archive_multi: missing spool files in $vh"
+        echo "smoke_tcp_archive_multi: missing spool files in $spool"
         exit 1
     fi
     MAGIC=$(od -An -tx1 -N8 -j0 "$FIRST" | tr -d ' \n')
     if [ "$MAGIC" != "4e656f5461706500" ]; then
-        echo "smoke_tcp_archive_multi: bad magic in $vh"
+        echo "smoke_tcp_archive_multi: bad magic in $spool"
         exit 1
     fi
-    HTYPE=$(od -An -tx1 -N1 -j9 "$FIRST" | tr -d ' \n')
-    if [ "$HTYPE" != "01" ]; then
-        echo "smoke_tcp_archive_multi: expected volume header in $vh"
+    CTYPE=$(od -An -tx1 -N1 -j9 "$FIRST" | tr -d ' \n')
+    if [ "$CTYPE" != "01" ] && [ "$CTYPE" != "ff" ]; then
+        echo "smoke_tcp_archive_multi: expected frame channel in $spool, got $CTYPE"
         exit 1
     fi
 done
@@ -81,11 +81,11 @@ if [ "$LAST_SIZE" -lt "$HEADER_SIZE" ]; then
     echo "smoke_tcp_archive_multi: second spool file too small"
     exit 1
 fi
-AE_OFFSET=$((LAST_SIZE - HEADER_SIZE))
+AE_OFFSET=$((LAST_SIZE - BLOCK))
 AE_MAGIC=$(od -An -tx1 -N8 -j$AE_OFFSET "$LAST" | tr -d ' \n')
 AE_TYPE=$(od -An -tx1 -N1 -j$((AE_OFFSET + 9)) "$LAST" | tr -d ' \n')
-if [ "$AE_MAGIC" != "4e656f5461706500" ] || [ "$AE_TYPE" != "03" ]; then
-    echo "smoke_tcp_archive_multi: second spool missing archive end header"
+if [ "$AE_MAGIC" != "4e656f5461706500" ] || [ "$AE_TYPE" != "ff" ]; then
+    echo "smoke_tcp_archive_multi: second spool missing archive end frame"
     exit 1
 fi
 

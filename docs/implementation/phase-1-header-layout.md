@@ -42,13 +42,8 @@ magic, and dispatch by `header_type`.
 
 ## Header Layout Tables (Deprecated)
 
-> **These offset tables are no longer authoritative.**
-> The Python codegen in `scripts/neotape_header_defs.py` is now the single
-> source of truth for field ordering, sizes, and wire offsets. See
-> `docs/implementation/header-codegen-plan.md` for details.
->
-> These tables are retained as a human-readable summary only. If they conflict
-> with the Python definitions, the Python defs win.
+> The active implementation now uses a handwritten unified Frame Header parser in
+> `src/neotape_format.cpp`. The normative binary layout is `docs/spec/01-frame-header.md`.
 
 ## Serializer/Parser Design
 
