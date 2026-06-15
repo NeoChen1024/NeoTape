@@ -20,7 +20,7 @@ CLANG_FORMAT_FILES = $(wildcard src/*.cpp include/neotape/*.hpp include/neotape/
 CLANG_TIDY ?= clang-tidy
 CLANG_TIDY_FILES = $(wildcard src/*.cpp)
 
-.PHONY: all clean countline format test test_pax_cli tidy compile_commands
+.PHONY: all clean countline fix test test_pax_cli compile_commands
 
 compile_commands.json:
 	python3 scripts/gen_compile_commands.py
@@ -86,9 +86,8 @@ $(BINDIR)/% : src/%.c $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 
 countline:
 	scc .
-format:
+fix:
 	$(CLANG_FORMAT) -i $(CLANG_FORMAT_FILES)
-tidy:
-	$(CLANG_TIDY) $(CLANG_TIDY_FILES) -- $(CXXFLAGS)
+	$(CLANG_TIDY) --fix $(CLANG_TIDY_FILES) -- $(CXXFLAGS)
 clean:
 	-rm -f ${EXE} ${BINDIR}/*.o src/*.o tests/*.o $(B3LIB) $(B3OBJ) $(CRC32CLIB) $(CRC32COBJ)
