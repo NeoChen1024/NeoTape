@@ -5,7 +5,7 @@ INCS	= -Iinclude -Itests -Llib -I/usr/local/include -Lusr/local/lib
 CFLAGS	= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c17 -march=native -pedantic $(INCS)
 CXXFLAGS= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c++20 -march=native -pedantic $(INCS)
 LDLIBS	= lib/libb3sum.a lib/libcrc32c.a -larchive
-EXE	= bin/mt-pax bin/neotape-plan bin/test_pax_pipeline bin/test_tcp_protocol bin/test_format bin/neotape-archiver bin/neotape-write bin/neotape-read
+EXE	= bin/mt-pax bin/neotape-plan bin/test_pax_pipeline bin/test_tcp_protocol bin/test_format bin/neotape-archiver bin/neotape-write bin/neotape-read bin/neotape-extractor
 BINDIR	= bin
 LIBDIR	= lib
 BUILDDIR= build
@@ -61,6 +61,9 @@ $(BINDIR)/neotape-write : src/neotape_write_cmd.o src/neotape_tcp_protocol.o src
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 $(BINDIR)/neotape-read : src/neotape_read_cmd.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+
+$(BINDIR)/neotape-extractor : src/neotape_extractor_cmd.o src/neotape_extractor.o src/neotape_format.o src/neotape_tcp_protocol.o src/neotape_common.o | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_format $(BINDIR)/mt-pax $(BINDIR)/neotape-plan $(BINDIR)/neotape-archiver $(BINDIR)/neotape-write $(BINDIR)/neotape-read
