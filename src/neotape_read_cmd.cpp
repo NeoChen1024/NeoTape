@@ -1,8 +1,10 @@
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
 #include "neotape/tape.hpp"
+#include "neotape/tcp_protocol.hpp"
 
 #include <cerrno>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,23 +14,37 @@
 #include <getopt.h>
 #include <iostream>
 #include <memory>
+#include <netdb.h>
 #include <optional>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 #include <vector>
 
 namespace {
 
+using neotape::tcp::Address;
+using neotape::tcp::Message;
+using neotape::tcp::MessageType;
+using neotape::tcp::parse_address;
 using std::format;
 using std::string;
 using std::vector;
 
-struct SourceLocator {
-    enum Kind { none, tape, spool } kind = none;
-    std::string path;
+struct FdGuard {
+    int fd = -1;
+    explicit FdGuard(int f) : fd(f) {}
+    ~FdGuard() {
+        if (fd >= 0) {
+            ::close(fd);
+        }
+    }
+    FdGuard(const FdGuard &) = delete;
+    FdGuard &operator=(const FdGuard &) = delete;
 };
 
-struct TargetLocator {
-    enum Kind { none, spool } kind = none;
+struct SourceLocator {
+    enum Kind { none, tape, spool } kind = none;
     std::string path;
 };
 
@@ -42,16 +58,9 @@ SourceLocator parse_source(const std::string &s) {
     throw std::runtime_error("source must be tape:<device> or spool:<dir>");
 }
 
-TargetLocator parse_target(const std::string &s) {
-    if (s.starts_with("spool:")) {
-        return {TargetLocator::spool, s.substr(6)};
-    }
-    throw std::runtime_error("target must be spool:<dir>");
-}
-
 struct Options {
     SourceLocator source;
-    TargetLocator target;
+    string connect_address;
 };
 
 [[noreturn]] void fail(const string &msg) {
@@ -66,26 +75,26 @@ struct Options {
 
 void usage(const char *prog) {
     std::cerr << format("usage: {} --source <tape:/dev/nst0|spool:./dir>\n"
-                        "       --target <spool:./out>\n",
+                        "       --connect <tcp://host:port|unix://path>\n",
                         prog);
 }
 
 Options parse_args(int argc, char **argv) {
     static const struct option long_opts[] = {
         {"source", required_argument, nullptr, 's'},
-        {"target", required_argument, nullptr, 't'},
+        {"connect", required_argument, nullptr, 'c'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "s:t:h", long_opts, nullptr)) != -1) {
+    while ((c = getopt_long(argc, argv, "s:c:h", long_opts, nullptr)) != -1) {
         switch (c) {
         case 's':
             opts.source = parse_source(optarg);
             break;
-        case 't':
-            opts.target = parse_target(optarg);
+        case 'c':
+            opts.connect_address = optarg;
             break;
         case 'h':
             usage(argv[0]);
@@ -98,11 +107,53 @@ Options parse_args(int argc, char **argv) {
     if (opts.source.kind == SourceLocator::none) {
         usage_error("--source is required");
     }
-    if (opts.target.kind == TargetLocator::none) {
-        usage_error("--target is required");
+    if (opts.connect_address.empty()) {
+        usage_error("--connect is required");
     }
 
     return opts;
+}
+
+int connect_to_extractor(const string &addr_str) {
+    Address const a = parse_address(addr_str);
+
+    int fd = -1;
+    if (a.is_unix) {
+        fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0) {
+            fail(format("socket: {}", std::strerror(errno)));
+        }
+        sockaddr_un sa{};
+        sa.sun_family = AF_UNIX;
+        if (a.path.size() >= sizeof(sa.sun_path)) {
+            fail("unix socket path too long");
+        }
+        std::memcpy(sa.sun_path, a.path.data(), a.path.size());
+        if (connect(fd, reinterpret_cast<sockaddr *>(&sa), sizeof(sa)) < 0) {
+            fail(format("connect {}: {}", a.path, std::strerror(errno)));
+        }
+    } else {
+        addrinfo hints{};
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        addrinfo *res = nullptr;
+        int const gai =
+            getaddrinfo(a.host.c_str(), a.port.c_str(), &hints, &res);
+        if (gai != 0) {
+            fail(format("getaddrinfo: {}", gai_strerror(gai)));
+        }
+        std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> const res_guard(
+            res, freeaddrinfo);
+        fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+        if (fd < 0) {
+            fail(format("socket: {}", std::strerror(errno)));
+        }
+        if (connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
+            fail(format("connect {}:{}: {}", a.host, a.port,
+                        std::strerror(errno)));
+        }
+    }
+    return fd;
 }
 
 class SourceReader {
@@ -221,21 +272,21 @@ class SpoolSourceReader final : public SourceReader {
 } // namespace
 
 int main(int argc, char **argv) {
+    std::signal(SIGPIPE, SIG_IGN);
+
     try {
         Options opts = parse_args(argc, argv);
 
         std::unique_ptr<mt::TapeDevice> source_dev;
         bool source_is_tape = false;
         if (opts.source.kind == SourceLocator::tape) {
-            auto dev =
+            source_dev =
                 std::make_unique<mt::TapeDevice>(opts.source.path, false);
-            // Tape devices are opened non-blocking; reads are blocking.
-            int const flags = ::fcntl(dev->fd(), F_GETFL, 0);
+            int const flags = ::fcntl(source_dev->fd(), F_GETFL, 0);
             if (flags >= 0) {
-                ::fcntl(dev->fd(), F_SETFL, flags & ~O_NONBLOCK);
+                ::fcntl(source_dev->fd(), F_SETFL, flags & ~O_NONBLOCK);
             }
-            dev->rewind();
-            source_dev = std::move(dev);
+            source_dev->rewind();
             source_is_tape = true;
         } else {
             if (!std::filesystem::exists(opts.source.path)) {
@@ -246,9 +297,6 @@ int main(int argc, char **argv) {
                 std::filesystem::path(opts.source.path), false);
         }
 
-        mt::SpoolTapeDevice target_dev(std::filesystem::path(opts.target.path),
-                                       true);
-
         std::unique_ptr<SourceReader> reader;
         if (source_is_tape) {
             reader = std::make_unique<TapeSourceReader>(source_dev.get());
@@ -257,61 +305,73 @@ int main(int argc, char **argv) {
                 dynamic_cast<mt::SpoolTapeDevice *>(source_dev.get()));
         }
 
+        FdGuard const fd_guard(connect_to_extractor(opts.connect_address));
+        int const fd = fd_guard.fd;
+
         uint64_t record_count = 0;
         uint64_t filemark_count = 0;
-        bool has_content_or_metadata_frame = false;
-        bool has_archive_end_frame = false;
 
         for (;;) {
-            bool eod = false;
-            auto record = reader->next_record(filemark_count, eod);
-            if (eod) {
+            auto msg = neotape::tcp::read_message(fd);
+            if (!msg) {
                 break;
             }
-            if (!record) {
-                continue;
-            }
 
-            target_dev.write_record(record->data(), record->size());
+            switch (msg->type) {
+            case MessageType::next_frame: {
+                bool eod = false;
+                auto record = reader->next_record(filemark_count, eod);
 
-            if (record->size() >= neotape::fixed_header_size) {
-                try {
-                    neotape::FrameHeader const header =
-                        neotape::parse_fixed_header(
-                            reinterpret_cast<const uint8_t *>(record->data()),
-                            record->size());
-                    if (header.channel_type ==
-                            neotape::ChannelType::CH_CONTENT ||
-                        header.channel_type ==
-                            neotape::ChannelType::CH_METADATA) {
-                        has_content_or_metadata_frame = true;
-                    }
-                    if (header.channel_type ==
-                        neotape::ChannelType::ARCHIVE_END) {
-                        has_archive_end_frame = true;
-                    }
-                } catch (const std::exception &) {
-                    // Not a parseable NeoTape header.
+                while (!eod && !record) {
+                    record = reader->next_record(filemark_count, eod);
                 }
-            }
 
-            ++record_count;
+                if (eod) {
+                    neotape::tcp::write_message(
+                        fd, Message{MessageType::tape_eof, {}});
+                    std::cerr << format("neotape-read: {} frames sent\n",
+                                        record_count);
+                    return 0;
+                }
+
+                {
+                    vector<std::byte> frame_bytes;
+                    frame_bytes.swap(*record);
+                    Message frame_msg;
+                    frame_msg.type = MessageType::frame_record;
+                    frame_msg.payload.swap(frame_bytes);
+                    neotape::tcp::write_message(fd, frame_msg);
+                }
+                ++record_count;
+
+                auto ack = neotape::tcp::read_message(fd);
+                if (!ack) {
+                    fail("unexpected disconnect after frame_record");
+                }
+                if (ack->type != MessageType::ack_frame) {
+                    fail(format("expected ack_frame, got message type {}",
+                                static_cast<int>(ack->type)));
+                }
+                break;
+            }
+            case MessageType::error: {
+                string reason;
+                reason.reserve(msg->payload.size());
+                for (std::byte const b : msg->payload) {
+                    reason.push_back(static_cast<char>(b));
+                }
+                if (reason.empty()) {
+                    reason = "extractor reported error";
+                }
+                fail(reason);
+            }
+            default:
+                fail(format("unexpected message type {}",
+                            static_cast<int>(msg->type)));
+            }
         }
 
-        std::cerr << format("neotape-read: {} records, {} filemarks\n",
-                            record_count, filemark_count);
-        std::cerr << format("  content/metadata frame: {}\n",
-                            has_content_or_metadata_frame ? "yes" : "no");
-        std::cerr << format("  archive end frame: {}\n",
-                            has_archive_end_frame ? "yes" : "no");
-
-        if (!has_content_or_metadata_frame || !has_archive_end_frame) {
-            if (!has_content_or_metadata_frame) {
-                fail("did not see content or metadata frame");
-            }
-            fail("did not see archive end frame");
-        }
-
+        std::cerr << format("neotape-read: {} frames sent\n", record_count);
         return 0;
     } catch (const std::exception &e) {
         fail(e.what());
