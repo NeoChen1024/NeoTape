@@ -8,8 +8,7 @@ This is an early implementation-stage project. The current implementation
 includes a standalone pax writer (`bin/mt-pax`), a planner (`bin/neotape-plan`)
 for slicing metadata, and a split producer/writer pair (`bin/neotape-archiver`
 and `bin/neotape-write`) that generate NeoTape-framed records over a TCP or
-Unix-domain socket. The `namespace mt` tape manipulation library remains
-available for future tools.
+Unix-domain socket.
 
 ## Specification Status
 
@@ -28,8 +27,7 @@ Archive
 A NeoTape **Archive** is the complete backup set, identified by an `archive_uuid`
 and optionally labeled by `archive_label`. It spans one or more **Volumes** (physical
 LTO media or virtual volumes in spool mode), each carrying an advisory `volume_seq_num`.
-NeoTape does not store a medium-level descriptor in the archive stream; physical
-medium identity is handled outside the format. Inside each volume, the payload is
+Inside each volume, the payload is
 split into **Logical Slices** — writer-declared byte ranges that are seekable by LTO
 filemark. A typical slice target size is ~64 GiB but a slice may far exceed that,
 especially when a single large file spans the entire archive. Each logical slice is
