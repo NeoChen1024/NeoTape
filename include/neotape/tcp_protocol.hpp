@@ -65,6 +65,17 @@ struct Address {
 
 // Parse a tcp://host:port or unix://path address string.
 // Throws std::runtime_error on invalid input.
+//
+// Supported forms:
+//   tcp://host:port          IPv4 hostname or address
+//   tcp://[ipv6]:port        IPv6 address (brackets recommended)
+//   tcp://ipv6%iface:port    IPv6 with zone id (no brackets)
+//   unix://path              absolute Unix-domain path (e.g. unix:///tmp/sock)
+//
+// Limitations: the parser splits on the last colon with rfind(':'). IPv6
+// addresses without brackets are accepted as long as the last colon
+// separates address from port.  Wildcard bindings use "0.0.0.0" (IPv4)
+// or "[::]" (IPv6) as the host.
 Address parse_address(const std::string &addr);
 
 } // namespace neotape::tcp

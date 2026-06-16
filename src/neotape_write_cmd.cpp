@@ -681,8 +681,9 @@ int main(int argc, char **argv) {
                     write_msg(Message{
                         MessageType::ack_frame,
                         uint64_to_le_bytes(header.global_frame_seq_num)});
-                    NEOTAPE_DEBUG("writer: sent ack for archive_end global_seq={}\n",
-                                  header.global_frame_seq_num);
+                    NEOTAPE_DEBUG(
+                        "writer: sent ack for archive_end global_seq={}\n",
+                        header.global_frame_seq_num);
                     std::cerr
                         << format("writer: received archive end at frame {}\n",
                                   header.global_frame_seq_num);

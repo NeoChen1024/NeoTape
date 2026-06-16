@@ -38,3 +38,16 @@ When restoring payload bytes through a downstream tool (e.g. bsdtar), path safet
 - Rejecting or remapping absolute paths.
 - Rejecting or remapping parent-directory traversal components.
 - Controlling ownership, permission, device node, xattr, and ACL restoration.
+
+## Transport Security
+
+The NeoTape TCP protocol (`docs/spec/13-tcp-protocol.md`) provides no
+authentication, encryption, replay defense, or peer identity verification.
+It is designed for localhost or trusted LAN deployments (2.5 Gbps minimum;
+typical target 10 Gbps or higher).
+
+When a deployment requires transport security, the operator SHOULD tunnel
+the connection through an external secure channel such as SSH port
+forwarding (`ssh -L` / `ssh -R`), WireGuard, or a TLS proxy (e.g. stunnel).
+The NeoTape wire protocol remains plaintext and does not attempt to
+replicate what these well-audited tools already provide.

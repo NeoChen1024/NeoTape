@@ -135,6 +135,63 @@ int main() {
 }
     close(fds[0]);
 
+    // --- Address parsing tests ---
+    {
+        // tcp://host:port
+        auto a = neotape::tcp::parse_address("tcp://127.0.0.1:9123");
+        if (a.is_unix) fail("tcp address should not be unix");
+        if (a.host != "127.0.0.1") fail("tcp host mismatch: " + a.host);
+        if (a.port != "9123") fail("tcp port mismatch: " + a.port);
+    }
+    {
+        // tcp://ipv6 with brackets (recommended form)
+        auto a = neotape::tcp::parse_address("tcp://[::1]:9123");
+        if (a.is_unix) fail("ipv6 brackets: should not be unix");
+        if (a.host != "[::1]") fail("ipv6 brackets host: " + a.host);
+        if (a.port != "9123") fail("ipv6 brackets port: " + a.port);
+    }
+    {
+        // tcp://ipv6 without brackets (rfind(':') on last colon)
+        auto a = neotape::tcp::parse_address("tcp://::1:9123");
+        if (a.is_unix) fail("ipv6 no brackets: should not be unix");
+        if (a.host != "::1") fail("ipv6 no brackets host: " + a.host);
+        if (a.port != "9123") fail("ipv6 no brackets port: " + a.port);
+    }
+    {
+        // tcp:// wildcard bind
+        auto a = neotape::tcp::parse_address("tcp://0.0.0.0:9123");
+        if (a.is_unix) fail("wildcard: should not be unix");
+        if (a.host != "0.0.0.0") fail("wildcard host: " + a.host);
+        if (a.port != "9123") fail("wildcard port: " + a.port);
+    }
+    {
+        // unix:// path
+        auto a = neotape::tcp::parse_address("unix:///tmp/neotape.sock");
+        if (!a.is_unix) fail("unix: should be unix");
+        if (a.path != "/tmp/neotape.sock") fail("unix path: " + a.path);
+    }
+    {
+        // Missing port throws
+        bool threw = false;
+        try { neotape::tcp::parse_address("tcp://localhost"); }
+        catch (const std::runtime_error &) { threw = true; }
+        if (!threw) fail("missing port should throw");
+    }
+    {
+        // Unknown prefix throws
+        bool threw = false;
+        try { neotape::tcp::parse_address("http://example.com:80"); }
+        catch (const std::runtime_error &) { threw = true; }
+        if (!threw) fail("unknown prefix should throw");
+    }
+    {
+        // Empty address throws
+        bool threw = false;
+        try { neotape::tcp::parse_address(""); }
+        catch (const std::runtime_error &) { threw = true; }
+        if (!threw) fail("empty address should throw");
+    }
+
     std::cout << "test_tcp_protocol: ok\n";
     return 0;
 }
