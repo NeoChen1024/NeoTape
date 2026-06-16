@@ -117,19 +117,39 @@ This keeps `volume_seq_num` gapless across the archive.
 
 ## Security
 
-Security is **not** in scope for this protocol.  It is designed for operation
-over localhost or a trusted LAN (at minimum 2.5 Gbps; typical deployment
-targets 10 Gbps or faster).  In this environment the threat model assumes a
-benign, non-adversarial network and mutually trusted peers.
+The TCP protocol itself provides no transport-level security.  It is designed
+for operation over localhost or a trusted LAN (at minimum 2.5 Gbps; typical
+deployment target 10 Gbps or faster).
+
+### Frame-level protection (SIGNED flag)
+
+When the archive producer uses signed frames ([`SIGNED` flag](01-frame-header.md)
+with [Ed25519 signature](00-format-common.md) over `frame_hash`), **integrity
+and authenticity are guaranteed at the frame level** regardless of transport.
+A tampered or forged frame will fail BLAKE3 hash verification and Ed25519
+signature validation during extraction, even if the TCP connection is
+unencrypted and routed over an untrusted network.  Sequence number checks
+further prevent replay and reordering.
+
+When signed frames are in use, the remaining threats that an external
+tunnel addresses are:
+
+- **Confidentiality** — frame payloads are transmitted in plaintext.
+- **Peer authentication at connection time** — the signature only proves
+  the frame author, not the identity of the TCP peer.
+
+### Without signed frames
 
 The protocol does **not** provide:
 
-- Authentication or peer identity verification
+- Peer identity verification
 - Transport-layer encryption (TLS)
 - Replay defense
 - DoS resistance beyond the `max_message_payload_size` check
 
-For deployments where any of these properties are required, the operator
-SHOULD tunnel the connection through an external secure channel (e.g.
-SSH port forwarding, WireGuard, or a TLS proxy).  The NeoTape wire protocol
-remains plaintext by design.
+### Recommendation
+
+For deployments that require confidentiality or peer authentication, tunnel
+the connection through an external secure channel (e.g. SSH port forwarding,
+WireGuard, or a TLS proxy).  The NeoTape wire protocol remains plaintext by
+design.

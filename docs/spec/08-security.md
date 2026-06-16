@@ -46,8 +46,14 @@ authentication, encryption, replay defense, or peer identity verification.
 It is designed for localhost or trusted LAN deployments (2.5 Gbps minimum;
 typical target 10 Gbps or higher).
 
-When a deployment requires transport security, the operator SHOULD tunnel
-the connection through an external secure channel such as SSH port
-forwarding (`ssh -L` / `ssh -R`), WireGuard, or a TLS proxy (e.g. stunnel).
-The NeoTape wire protocol remains plaintext and does not attempt to
-replicate what these well-audited tools already provide.
+When signed frames are used ([`SIGNED` flag](01-frame-header.md) with
+[Ed25519 signature](00-format-common.md) over `frame_hash`), **integrity
+and authenticity are protected at the frame level** — a tampered frame
+will fail verification regardless of transport.
+
+When a deployment requires confidentiality or peer authentication,
+the operator SHOULD tunnel the connection through an external secure
+channel such as SSH port forwarding (`ssh -L` / `ssh -R`), WireGuard,
+or a TLS proxy (e.g. stunnel).  The NeoTape wire protocol remains
+plaintext and does not attempt to replicate what these well-audited
+tools already provide.
