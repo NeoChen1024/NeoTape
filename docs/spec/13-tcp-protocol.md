@@ -93,6 +93,14 @@ numbers that continue exactly from the last validated frame.  Any gap,
 backward jump, or identity mismatch causes the Server to send `error` and
 close the connection.
 
+A volume is considered committed when the Server receives the first
+`ack_frame` from the Client — that is, after at least one frame has been
+successfully written to the physical medium and acknowledged.  If a Client
+disconnects before any `ack_frame` is received (e.g. the tape drive was not
+ready, or the Client crashed immediately), the volume is **not** committed
+and the Server reuses the same `volume_seq_num` for the next Client.
+This keeps `volume_seq_num` gapless across the archive.
+
 ## Security
 
 Security is **not** in scope for this protocol.  It is designed for operation
