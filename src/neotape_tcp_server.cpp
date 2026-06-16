@@ -398,12 +398,6 @@ serve_client(int client, TcpArchiverState &state,
 
             switch (req->type) {
             case MessageType::next_frame: {
-                if (!volume_committed) {
-                    volume_committed = true;
-                    NEOTAPE_DEBUG("archiver: volume {} committed\n",
-                                  state.next_volume_seq_num);
-                }
-
                 const std::vector<std::byte> *record_ptr =
                     retention.get(next_send_seq);
                 uint64_t seq = 0;
@@ -483,11 +477,10 @@ serve_client(int client, TcpArchiverState &state,
 
                 // Reject ACKs for frames we haven't sent.
                 if (g >= next_send_seq) {
-                    send_error(client,
-                               std::format("ack {} ahead of sent range "
-                                           "[1, {})",
-                                           g, next_send_seq)
-                                   .c_str());
+                    send_error(client, std::format("ack {} ahead of sent range "
+                                                   "[1, {})",
+                                                   g, next_send_seq)
+                                           .c_str());
                     return ServeResult{false, volume_committed, frames_served};
                 }
 
@@ -495,6 +488,12 @@ serve_client(int client, TcpArchiverState &state,
                 if (g <= state.last_acked_global_frame) {
                     NEOTAPE_DEBUG("archiver: stale ack global_seq={}\n", g);
                     break;
+                }
+
+                if (!volume_committed) {
+                    volume_committed = true;
+                    NEOTAPE_DEBUG("archiver: volume {} committed\n",
+                                  state.next_volume_seq_num);
                 }
 
                 NEOTAPE_DEBUG("archiver: ack frame global_seq={}\n", g);
