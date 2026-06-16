@@ -16,9 +16,8 @@ include 3rdparty/blake3.mk
 include 3rdparty/crc32c.mk
 
 CLANG_FORMAT ?= clang-format
-CLANG_FORMAT_FILES = $(wildcard src/*.cpp include/neotape/*.hpp include/neotape/*.h)
+SRC_FILES = $(wildcard src/*.cpp include/neotape/*.hpp)
 CLANG_TIDY ?= clang-tidy
-CLANG_TIDY_FILES = $(wildcard src/*.cpp)
 
 .PHONY: all clean countline fix test test_pax_cli compile_commands
 
@@ -87,7 +86,7 @@ $(BINDIR)/% : src/%.c $(B3LIB) $(CRC32CLIB) | $(BINDIR)
 countline:
 	scc .
 fix:
-	$(CLANG_FORMAT) -i $(CLANG_FORMAT_FILES)
-	$(CLANG_TIDY) --fix $(CLANG_TIDY_FILES) -- $(CXXFLAGS)
+	$(CLANG_TIDY) --fix $(SRC_FILES) -- $(CXXFLAGS)
+	$(CLANG_FORMAT) -i $(SRC_FILES)
 clean:
 	-rm -f ${EXE} ${BINDIR}/*.o src/*.o tests/*.o $(B3LIB) $(B3OBJ) $(CRC32CLIB) $(CRC32COBJ)

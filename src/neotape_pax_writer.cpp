@@ -391,8 +391,8 @@ PlanRecord parse_plan_record(string_view text, const fs::path &path,
             format("{}:{}: invalid entry record", path.string(), record_num));
     }
 
-    char kind = fields[2][0];
-    bool hardlink = (fields[9] == "1");
+    char const kind = fields[2][0];
+    bool const hardlink = (fields[9] == "1");
 
     return PlanRecord{
         .chdir_dir = std::nullopt,

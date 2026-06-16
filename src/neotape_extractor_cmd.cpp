@@ -78,7 +78,7 @@ Options parse_args(int argc, char **argv) {
 int main(int argc, char **argv) {
     try {
         std::setlocale(LC_CTYPE, "C.UTF-8");
-        Options opts = parse_args(argc, argv);
+        Options const opts = parse_args(argc, argv);
         neotape::g_debug = opts.verbose;
 
         if (std::signal(SIGPIPE, SIG_IGN) == SIG_ERR) {

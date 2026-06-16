@@ -1,7 +1,7 @@
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
 #include "neotape/tape.hpp"
-#include "neotape/tape_ioctl.h"
+#include "neotape/tape_ioctl.hpp"
 #include "neotape/tcp_protocol.hpp"
 
 #include <atomic>
