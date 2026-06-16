@@ -131,7 +131,7 @@ class FrameRetentionBuffer {
         }
     }
 
-    bool has(uint64_t global_seq_num) const {
+    [[nodiscard]] bool has(uint64_t global_seq_num) const {
         for (const auto &f : frames_) {
             if (f.global_seq_num == global_seq_num) {
                 return true;
@@ -140,7 +140,8 @@ class FrameRetentionBuffer {
         return false;
     }
 
-    const std::vector<std::byte> *get(uint64_t global_seq_num) const {
+    [[nodiscard]] const std::vector<std::byte> *
+    get(uint64_t global_seq_num) const {
         for (const auto &f : frames_) {
             if (f.global_seq_num == global_seq_num) {
                 return &f.record;
@@ -149,14 +150,14 @@ class FrameRetentionBuffer {
         return nullptr;
     }
 
-    uint64_t lowest_available() const {
+    [[nodiscard]] uint64_t lowest_available() const {
         if (frames_.empty()) {
             return 0;
         }
         return frames_.front().global_seq_num;
     }
 
-    bool empty() const { return frames_.empty(); }
+    [[nodiscard]] bool empty() const { return frames_.empty(); }
 
   private:
     size_t max_frames_;
@@ -177,7 +178,9 @@ struct FrameBuilder {
 
     void set_current_slice(uint64_t s) { current_slice = s; }
 
-    uint32_t payload_capacity() const { return block_size - fixed_header_size; }
+    [[nodiscard]] uint32_t payload_capacity() const {
+        return block_size - fixed_header_size;
+    }
 
     // Append payload bytes. Returns zero or more complete frames.
     std::vector<std::vector<std::byte>> feed(std::span<const std::byte> bytes,
@@ -205,13 +208,13 @@ struct FrameBuilder {
         return std::pair{std::move(rec), seq};
     }
 
-    std::vector<std::byte> build_frame(std::span<const std::byte> payload,
-                                       uint64_t seq_num) const {
+    [[nodiscard]] std::vector<std::byte>
+    build_frame(std::span<const std::byte> payload, uint64_t seq_num) const {
         assert(payload.size() <= payload_capacity());
 
         FrameHeader fh;
         fh.channel_type = ChannelType::CH_CONTENT;
-        fh.volume_block_size_kib = static_cast<uint16_t>(block_size / 1024u);
+        fh.volume_block_size_kib = static_cast<uint16_t>(block_size / 1024U);
         fh.archive_uuid = archive_uuid;
         fh.archive_label = archive_name;
         fh.volume_seq_num = 0;
@@ -239,7 +242,7 @@ std::vector<std::byte> build_archive_end_record(uint32_t block_size,
                                                 uint64_t global_seq_num) {
     FrameHeader h;
     h.channel_type = ChannelType::ARCHIVE_END;
-    h.volume_block_size_kib = static_cast<uint16_t>(block_size / 1024u);
+    h.volume_block_size_kib = static_cast<uint16_t>(block_size / 1024U);
     h.archive_uuid = archive_uuid;
     h.archive_label = archive_name;
     h.volume_seq_num = volume_seq_num;

@@ -125,7 +125,7 @@ void send_error(int client, const char *text) {
 vector<std::byte> uint64_to_le_bytes(uint64_t v) {
     vector<std::byte> out(8);
     for (size_t i = 0; i < 8; ++i) {
-        out[i] = static_cast<std::byte>((v >> (8 * i)) & 0xffu);
+        out[i] = static_cast<std::byte>((v >> (8 * i)) & 0xffU);
     }
     return out;
 }

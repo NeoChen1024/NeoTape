@@ -93,7 +93,7 @@ struct EntryHandle {
         return *this;
     }
 
-    archive_entry *get() const { return ptr; }
+    [[nodiscard]] archive_entry *get() const { return ptr; }
     archive_entry *release() {
         archive_entry *entry = ptr;
         ptr = nullptr;
@@ -130,7 +130,7 @@ struct FdHandle {
         return *this;
     }
 
-    int get() const { return fd; }
+    [[nodiscard]] int get() const { return fd; }
     int release() {
         int const file_fd = fd;
         fd = -1;
@@ -623,7 +623,7 @@ struct ArchiveWriteHandle {
     ArchiveWriteHandle(const ArchiveWriteHandle &) = delete;
     ArchiveWriteHandle &operator=(const ArchiveWriteHandle &) = delete;
 
-    archive *get() const { return ptr; }
+    [[nodiscard]] archive *get() const { return ptr; }
 };
 
 vector<std::byte> serialize_entry(archive_entry *entry, int fd) {

@@ -27,10 +27,10 @@ enum class ChannelType : uint8_t {
     ARCHIVE_END = 255,
 };
 
-inline constexpr uint64_t frame_flag_start = 1ull << 0;
-inline constexpr uint64_t frame_flag_end = 1ull << 1;
-inline constexpr uint64_t frame_flag_signed = 1ull << 2;
-inline constexpr uint64_t frame_flag_clean_end = 1ull << 63;
+inline constexpr uint64_t frame_flag_start = 1ULL << 0;
+inline constexpr uint64_t frame_flag_end = 1ULL << 1;
+inline constexpr uint64_t frame_flag_signed = 1ULL << 2;
+inline constexpr uint64_t frame_flag_clean_end = 1ULL << 63;
 
 constexpr bool has_frame_flag_start(uint64_t flags) {
     return (flags & frame_flag_start) != 0;

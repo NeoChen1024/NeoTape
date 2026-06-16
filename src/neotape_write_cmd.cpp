@@ -68,7 +68,7 @@ struct Options {
     TargetLocator target;
     bool erase = false;
     bool append = false;
-    size_t output_buffer_size = 256ull * 1024 * 1024;
+    size_t output_buffer_size = 256ULL * 1024 * 1024;
     std::optional<uint64_t> max_volume_bytes;
     bool debug = false;
 };
@@ -167,7 +167,7 @@ Options parse_args(int argc, char **argv) {
         usage_error("--max-volume-bytes is only valid with spool targets");
     }
 
-    constexpr size_t min_output_buffer_size = 8ull * 1024 * 1024;
+    constexpr size_t min_output_buffer_size = 8ULL * 1024 * 1024;
     if (opts.output_buffer_size < min_output_buffer_size) {
         usage_error("--output-buffer-size must be at least 8 MiB");
     }
@@ -259,7 +259,7 @@ class CapacityLimitedTapeDevice : public mt::TapeDevice {
         : mt::TapeDevice(-1, inner->device_path(), inner->is_read_write()),
           inner_(std::move(inner)), max_bytes_(max_bytes) {}
 
-    int fd() const noexcept override { return inner_->fd(); }
+    [[nodiscard]] int fd() const noexcept override { return inner_->fd(); }
 
     void write_record(const void *data, std::size_t size) override {
         if (written_ + size > max_bytes_) {

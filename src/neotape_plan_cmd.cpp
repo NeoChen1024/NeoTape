@@ -45,8 +45,8 @@ using std::string_view;
 using std::vector;
 
 struct Options {
-    uint64_t slice_size = 64ull * 1024 * 1024 * 1024;
-    uint64_t metadata_buffer_size = 256ull * 1024 * 1024;
+    uint64_t slice_size = 64ULL * 1024 * 1024 * 1024;
+    uint64_t metadata_buffer_size = 256ULL * 1024 * 1024;
     bool one_file_system = false;
     bool verbose = false;
     string output_path = "-";
@@ -434,7 +434,9 @@ class WorkerPool {
         return out;
     }
 
-    unsigned nworkers() const { return static_cast<unsigned>(workers_.size()); }
+    [[nodiscard]] unsigned nworkers() const {
+        return static_cast<unsigned>(workers_.size());
+    }
 
     void stop() {
         jobs_.close();

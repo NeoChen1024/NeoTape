@@ -19,9 +19,13 @@ class Error final : public std::runtime_error {
   public:
     Error(std::string_view device, std::string_view operation, int errnum);
 
-    int error_code() const noexcept { return errnum_; }
+    [[nodiscard]] [[nodiscard]] int error_code() const noexcept {
+        return errnum_;
+    }
 
-    int mt_resid() const noexcept { return mt_resid_; }
+    [[nodiscard]] [[nodiscard]] int mt_resid() const noexcept {
+        return mt_resid_;
+    }
     void set_mt_resid(int r) noexcept { mt_resid_ = r; }
 
   private:
@@ -38,29 +42,29 @@ class Status final {
     explicit Status(long mt_type, long mt_resid, long mt_dsreg, long mt_gstat,
                     long mt_erreg, int mt_fileno, int mt_blkno);
 
-    long type() const noexcept { return type_; }
-    long resid() const noexcept { return resid_; }
-    long dsreg() const noexcept { return dsreg_; }
-    long gstat() const noexcept { return gstat_; }
-    long erreg() const noexcept { return erreg_; }
-    int fileno() const noexcept { return fileno_; }
-    int blkno() const noexcept { return blkno_; }
+    [[nodiscard]] [[nodiscard]] long type() const noexcept { return type_; }
+    [[nodiscard]] [[nodiscard]] long resid() const noexcept { return resid_; }
+    [[nodiscard]] [[nodiscard]] long dsreg() const noexcept { return dsreg_; }
+    [[nodiscard]] [[nodiscard]] long gstat() const noexcept { return gstat_; }
+    [[nodiscard]] [[nodiscard]] long erreg() const noexcept { return erreg_; }
+    [[nodiscard]] [[nodiscard]] int fileno() const noexcept { return fileno_; }
+    [[nodiscard]] [[nodiscard]] int blkno() const noexcept { return blkno_; }
 
-    bool eof() const noexcept;
-    bool bot() const noexcept;
-    bool eot() const noexcept;
-    bool sm() const noexcept;
-    bool eod() const noexcept;
-    bool wr_prot() const noexcept;
-    bool online() const noexcept;
-    bool dr_open() const noexcept;
-    bool cleaning_requested() const noexcept;
+    [[nodiscard]] [[nodiscard]] bool eof() const noexcept;
+    [[nodiscard]] [[nodiscard]] bool bot() const noexcept;
+    [[nodiscard]] [[nodiscard]] bool eot() const noexcept;
+    [[nodiscard]] [[nodiscard]] bool sm() const noexcept;
+    [[nodiscard]] [[nodiscard]] bool eod() const noexcept;
+    [[nodiscard]] [[nodiscard]] bool wr_prot() const noexcept;
+    [[nodiscard]] [[nodiscard]] bool online() const noexcept;
+    [[nodiscard]] [[nodiscard]] bool dr_open() const noexcept;
+    [[nodiscard]] [[nodiscard]] bool cleaning_requested() const noexcept;
 
-    int density_code() const noexcept;
-    int block_size() const noexcept;
-    std::string_view density_name() const;
+    [[nodiscard]] [[nodiscard]] int density_code() const noexcept;
+    [[nodiscard]] [[nodiscard]] int block_size() const noexcept;
+    [[nodiscard]] [[nodiscard]] std::string_view density_name() const;
 
-    std::string type_name() const;
+    [[nodiscard]] [[nodiscard]] std::string type_name() const;
 
   private:
     long type_, resid_, dsreg_, gstat_, erreg_;
@@ -103,8 +107,13 @@ class TapeDevice {
     // -- accessors -----------------------------------------------------
 
     // fd() is virtual — see declaration near bottom of class
-    const std::string &device_path() const noexcept { return device_path_; }
-    bool is_read_write() const noexcept { return read_write_; }
+    [[nodiscard]] [[nodiscard]] const std::string &
+    device_path() const noexcept {
+        return device_path_;
+    }
+    [[nodiscard]] [[nodiscard]] bool is_read_write() const noexcept {
+        return read_write_;
+    }
     void close();
     void reopen();
 
@@ -164,7 +173,7 @@ class TapeDevice {
     static bool is_scsi_tape(int fd);
 
     // fd() is virtual so test doubles can return a different fd
-    virtual int fd() const noexcept { return fd_; }
+    [[nodiscard]] [[nodiscard]] virtual int fd() const noexcept { return fd_; }
 
   protected:
     // Subclass constructor — skip char-device validation (for test doubles)
@@ -194,7 +203,7 @@ class SpoolTapeDevice final : public TapeDevice {
     SpoolTapeDevice(SpoolTapeDevice &&) = delete;
     SpoolTapeDevice &operator=(SpoolTapeDevice &&) = delete;
 
-    int fd() const noexcept override;
+    [[nodiscard]] [[nodiscard]] int fd() const noexcept override;
 
     void write_record(const void *data, std::size_t size) override;
 

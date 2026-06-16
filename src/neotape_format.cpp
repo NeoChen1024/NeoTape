@@ -39,19 +39,19 @@ constexpr size_t off_signature = 408;
 constexpr size_t off_frame_hash = 480;
 
 void put_u16(HeaderBytes &bytes, size_t offset, uint16_t value) {
-    bytes[offset] = static_cast<uint8_t>(value & 0xffu);
-    bytes[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffu);
+    bytes[offset] = static_cast<uint8_t>(value & 0xffU);
+    bytes[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xffU);
 }
 
 void put_u32(HeaderBytes &bytes, size_t offset, uint32_t value) {
     for (size_t i = 0; i < 4; ++i) {
-        bytes[offset + i] = static_cast<uint8_t>((value >> (i * 8)) & 0xffu);
+        bytes[offset + i] = static_cast<uint8_t>((value >> (i * 8)) & 0xffU);
     }
 }
 
 void put_u64(HeaderBytes &bytes, size_t offset, uint64_t value) {
     for (size_t i = 0; i < 8; ++i) {
-        bytes[offset + i] = static_cast<uint8_t>((value >> (i * 8)) & 0xffu);
+        bytes[offset + i] = static_cast<uint8_t>((value >> (i * 8)) & 0xffU);
     }
 }
 
@@ -167,12 +167,12 @@ void validate_serialized_signature(const FrameHeader &header) {
 } // namespace
 
 uint32_t decoded_block_size(const FrameHeader &header) {
-    return static_cast<uint32_t>(header.volume_block_size_kib) * 1024u;
+    return static_cast<uint32_t>(header.volume_block_size_kib) * 1024U;
 }
 
 bool valid_block_size(uint32_t block_size) {
     return block_size >= min_block_size && block_size <= max_block_size &&
-           block_size % 1024u == 0;
+           block_size % 1024U == 0;
 }
 
 HeaderBytes serialize_frame_header(const FrameHeader &header) {
@@ -312,8 +312,8 @@ std::string make_uuid_v4() {
     for (uint8_t &byte : bytes) {
         byte = static_cast<uint8_t>(rd());
     }
-    bytes[6] = static_cast<uint8_t>((bytes[6] & 0x0fu) | 0x40u);
-    bytes[8] = static_cast<uint8_t>((bytes[8] & 0x3fu) | 0x80u);
+    bytes[6] = static_cast<uint8_t>((bytes[6] & 0x0fU) | 0x40U);
+    bytes[8] = static_cast<uint8_t>((bytes[8] & 0x3fU) | 0x80U);
     return std::format("{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-"
                        "{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
                        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4],

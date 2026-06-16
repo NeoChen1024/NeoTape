@@ -34,19 +34,19 @@ uint64_t parse_size(string_view text, string_view name) {
         switch (suffix) {
         case 'k':
         case 'K':
-            multiplier = 1024ull;
+            multiplier = 1024ULL;
             break;
         case 'm':
         case 'M':
-            multiplier = 1024ull * 1024;
+            multiplier = 1024ULL * 1024;
             break;
         case 'g':
         case 'G':
-            multiplier = 1024ull * 1024 * 1024;
+            multiplier = 1024ULL * 1024 * 1024;
             break;
         case 't':
         case 'T':
-            multiplier = 1024ull * 1024 * 1024 * 1024;
+            multiplier = 1024ULL * 1024 * 1024 * 1024;
             break;
         }
     }

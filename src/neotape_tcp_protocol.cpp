@@ -87,7 +87,7 @@ void write_message(int fd, const Message &msg) {
     uint64_t const length = msg.payload.size();
     for (std::size_t i = 0; i < 8; ++i) {
         header[1 + i] = static_cast<std::byte>(
-            static_cast<uint8_t>((length >> (8 * i)) & 0xffu));
+            static_cast<uint8_t>((length >> (8 * i)) & 0xffU));
     }
 
     write_exact(fd, header, message_header_size);
