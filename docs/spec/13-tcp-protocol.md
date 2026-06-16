@@ -35,23 +35,32 @@ Each message is framed:
 ```
 
 The 8-byte length is little-endian and counts payload bytes only (not the
-9-byte header).  Maximum payload length is implementation-defined; the
-current limit is 16 MiB.
+9-byte header).  The Server and Client MUST reject any payload larger than
+16 MiB before allocating memory for it.
 
 ## Protocol flow
 
 ### Writing pipeline (Archiver = Server, Writer = Client)
 
-Writer connects → Archiver responds with `frame_record` → Writer sends
-`ack_frame` → Archiver sends `tape_eof` at slice boundaries.  Writer
-disconnects at end-of-tape; operator loads next volume and re-connects.
+1. Writer connects → Writer sends `next_frame`
+2. Archiver responds with `frame_record` or `tape_eof` or `error`
+3. Writer thread writes record to media, then sends `ack_frame(seq)`
+4. Writer requests another `next_frame` (bounded by local output buffer)
+5. On EOT, Writer drains queued writes, sends final ACK, and exits non-zero
+6. On `tape_eof` from Archiver, Writer drains queue and exits zero
+
+In this pipeline `tape_eof` is sent by the Archiver to signal that no more
+frames will be produced.  The Writer never sends `tape_eof` in this
+direction.
 
 ### Reading pipeline (Extractor = Server, Reader = Client)
 
-Reader connects → Extractor sends `next_frame` → Reader reads tape and sends
-`frame_record` → Extractor validates and sends `ack_frame(seq_num)` →
-repeat.  Reader sends `tape_eof` at end-of-tape, then disconnects.
-Operator loads next volume and re-connects Reader.
+1. Reader connects → Extractor sends `next_frame`
+2. Reader reads next record from tape/spool → sends `frame_record`
+3. Extractor validates record → sends `ack_frame(seq)`
+4. Repeat from step 1
+5. Reader hits EOT → sends `tape_eof` → disconnects
+6. Operator loads next volume, re-connects Reader
 
 ## Error handling
 
@@ -65,10 +74,13 @@ The Server validates every `frame_record` for:
 
 - `magic`, `header_version`
 - `frame_hash`
+- Record size matches decoded `volume_block_size_kib`
 - `archive_uuid` / `archive_label` consistency with first frame
 - Monotonic, gapless `global_frame_seq_num`
-- Monotonic `volume_seq_num` (advisory but gapless — no skip, no backward)
+- Monotonic `volume_seq_num` (advisory — must not go backward, may skip at
+  most 1)
 - `logical_slice_seq_num` and `frame_seq_num_within_channel` per spec
+- Channel ordering (`ch_metadata` before `ch_content`)
 
 On validation failure the Server sends `error` with a human-readable message
 and closes the connection.

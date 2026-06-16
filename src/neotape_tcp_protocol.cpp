@@ -53,6 +53,11 @@ void write_exact(int fd, const void *buf, std::size_t n) {
 
 } // namespace
 
+// valid message types: 0x01 through 0x05
+constexpr bool is_valid_message_type(uint8_t const b) {
+    return b >= 0x01 && b <= 0x05;
+}
+
 std::optional<Message> read_message(int fd) {
     std::byte header[message_header_size];
     std::size_t got = read_exact(fd, header, message_header_size);
@@ -63,13 +68,25 @@ std::optional<Message> read_message(int fd) {
         throw std::runtime_error("short read on message header");
     }
 
-    auto type = static_cast<MessageType>(static_cast<uint8_t>(header[0]));
+    const uint8_t type_byte = static_cast<uint8_t>(header[0]);
+    if (!is_valid_message_type(type_byte)) {
+        throw std::runtime_error(
+            std::format("unknown message type 0x{:02x}", type_byte));
+    }
+
     uint64_t length = 0;
     for (std::size_t i = 0; i < 8; ++i) {
         length |= static_cast<uint64_t>(static_cast<uint8_t>(header[1 + i]))
                   << (8 * i);
     }
 
+    if (length > max_message_payload_size) {
+        throw std::runtime_error(
+            std::format("message payload {} exceeds maximum {}", length,
+                        max_message_payload_size));
+    }
+
+    auto const type = static_cast<MessageType>(type_byte);
     Message msg{type, {}};
     if (length > 0) {
         msg.payload.resize(length);

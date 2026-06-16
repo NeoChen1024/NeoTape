@@ -42,6 +42,11 @@ struct Message {
 constexpr std::size_t message_header_size =
     1 + 8; // type (1 byte) + little-endian length (8 bytes)
 
+// Maximum payload size accepted by read_message().  Set to twice the
+// maximum NeoTape record size (2 × 8 MiB) to leave room for future
+// extensions while preventing allocation from a corrupt length field.
+constexpr std::size_t max_message_payload_size = 16 * 1024 * 1024;
+
 // Throws std::runtime_error on I/O or protocol errors.
 // Returns std::nullopt if the peer closed cleanly before any message.
 std::optional<Message> read_message(int fd);

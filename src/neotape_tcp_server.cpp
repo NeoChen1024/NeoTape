@@ -445,6 +445,8 @@ serve_client(int client, TcpArchiverState &state,
                         neotape::tcp::write_message(
                             client, Message{MessageType::frame_record,
                                             std::move(ae_record)});
+                        ++frames_served;
+                        ++next_send_seq;
                         break;
                     }
                     seq = next->global_seq_num;
@@ -478,9 +480,25 @@ serve_client(int client, TcpArchiverState &state,
                     return ServeResult{false, volume_committed, frames_served};
                 }
                 uint64_t g = le64_from_bytes(req->payload);
+
+                // Reject ACKs for frames we haven't sent.
+                if (g >= next_send_seq) {
+                    send_error(client,
+                               std::format("ack {} ahead of sent range "
+                                           "[1, {})",
+                                           g, next_send_seq)
+                                   .c_str());
+                    return ServeResult{false, volume_committed, frames_served};
+                }
+
+                // Reject ACKs behind what we've already committed.
+                if (g <= state.last_acked_global_frame) {
+                    NEOTAPE_DEBUG("archiver: stale ack global_seq={}\n", g);
+                    break;
+                }
+
                 NEOTAPE_DEBUG("archiver: ack frame global_seq={}\n", g);
-                state.last_acked_global_frame =
-                    std::max(state.last_acked_global_frame, g);
+                state.last_acked_global_frame = g;
                 retention.ack(state.last_acked_global_frame);
                 if (archive_end_seq.has_value() && g >= *archive_end_seq) {
                     NEOTAPE_DEBUG("archiver: archive end acked\n");
@@ -498,9 +516,11 @@ serve_client(int client, TcpArchiverState &state,
                 return ServeResult{false, volume_committed, frames_served};
             }
         }
+    } catch (const std::exception &e) {
+        NEOTAPE_DEBUG("archiver: client error: {}\n", e.what());
+        return ServeResult{false, volume_committed, frames_served};
     } catch (...) {
-        // Do not mark the archive complete; the caller will accept the next
-        // writer.
+        NEOTAPE_DEBUG("archiver: unknown client error\n");
         return ServeResult{false, volume_committed, frames_served};
     }
 
