@@ -18,13 +18,16 @@ both the writing pipeline (archiver ↔ writer) and the reading pipeline
 
 ## Message types
 
-| ID | Name | Direction | Payload |
-|---|---|---|---|
-| 0x01 | `next_frame` | Server → Client | empty |
-| 0x02 | `frame_record` | Client → Server | raw NeoTape record bytes |
-| 0x03 | `tape_eof` | Client → Server | empty |
-| 0x04 | `error` | bidirectional | UTF-8 error message |
-| 0x05 | `ack_frame` | Server → Client | `uint64_t` LE global frame seq num |
+Message direction depends on the pipeline (see [Message direction](#message-direction)).
+`error` is always bidirectional.
+
+| ID | Name | Payload |
+|---|---|---|
+| 0x01 | `next_frame` | empty |
+| 0x02 | `frame_record` | raw NeoTape record bytes |
+| 0x03 | `tape_eof` | empty |
+| 0x04 | `error` | UTF-8 error message |
+| 0x05 | `ack_frame` | `uint64_t` LE global frame seq num |
 
 ## Wire format
 
@@ -40,18 +43,29 @@ The 8-byte length is little-endian and counts payload bytes only (not the
 
 ## Protocol flow
 
+### Message direction
+
+The direction of `next_frame`, `frame_record`, `tape_eof`, and `ack_frame`
+depends on the pipeline.  In the **writing** pipeline, the Client (Writer)
+pulls frames from the Server (Archiver): `next_frame` flows Client→Server
+and `frame_record` / `tape_eof` flow Server→Client.  In the **reading**
+pipeline, the Server (Extractor) pulls frames from the Client (Reader):
+`next_frame` flows Server→Client and `frame_record` / `tape_eof` flow
+Client→Server.  `error` is always bidirectional.
+
 ### Writing pipeline (Archiver = Server, Writer = Client)
 
 1. Writer connects → Writer sends `next_frame`
 2. Archiver responds with `frame_record` or `tape_eof` or `error`
 3. Writer thread writes record to media, then sends `ack_frame(seq)`
 4. Writer requests another `next_frame` (bounded by local output buffer)
-5. On EOT, Writer drains queued writes, sends final ACK, and exits non-zero
-6. On `tape_eof` from Archiver, Writer drains queue and exits zero
-
-In this pipeline `tape_eof` is sent by the Archiver to signal that no more
-frames will be produced.  The Writer never sends `tape_eof` in this
-direction.
+5. On `tape_eof` from Archiver: Writer writes a filemark and continues
+   requesting frames (slice boundary).  The Archiver may send more frames
+   from subsequent slices.
+6. On `archive_end` (`frame_record` with `ARCHIVE_END` channel): Writer
+   drains queued writes, sends final ACK, and exits zero.
+7. On physical EOT (tape drive reports write failure): Writer drains queue,
+   sends final ACK, and exits non-zero.
 
 ### Reading pipeline (Extractor = Server, Reader = Client)
 
@@ -59,7 +73,7 @@ direction.
 2. Reader reads next record from tape/spool → sends `frame_record`
 3. Extractor validates record → sends `ack_frame(seq)`
 4. Repeat from step 1
-5. Reader hits EOT → sends `tape_eof` → disconnects
+5. Reader hits physical EOT → sends `tape_eof` → disconnects
 6. Operator loads next volume, re-connects Reader
 
 ## Error handling
