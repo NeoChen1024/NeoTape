@@ -40,7 +40,7 @@ const map<int, string> density_names = {
 
 constexpr string_view spool_prefix = "tape-file-";
 constexpr string_view spool_ext = ".nts";
-constexpr string_view spool_temp_ext = ".pending";
+constexpr string_view _spool_temp_ext = ".pending";
 
 const char *density_name_for_code(int code) noexcept {
     auto it = density_names.find(code);
@@ -339,12 +339,12 @@ void TapeDevice::space_to_eod() {
 }
 void TapeDevice::space_fwd(int count) { do_mtop(MTFSF, count); }
 void TapeDevice::space_bwd(int count) { do_mtop(MTBSF, count); }
-void TapeDevice::space_fwd_filemark(int cnt) { do_mtop(MTFSFM, cnt); }
-void TapeDevice::space_bwd_filemark(int cnt) { do_mtop(MTBSFM, cnt); }
-void TapeDevice::space_fwd_records(int cnt) { do_mtop(MTFSR, cnt); }
-void TapeDevice::space_bwd_records(int cnt) { do_mtop(MTBSR, cnt); }
-void TapeDevice::space_fwd_setmarks(int cnt) { do_mtop(MTFSS, cnt); }
-void TapeDevice::space_bwd_setmarks(int cnt) { do_mtop(MTBSS, cnt); }
+void TapeDevice::space_fwd_filemark(int count) { do_mtop(MTFSFM, count); }
+void TapeDevice::space_bwd_filemark(int count) { do_mtop(MTBSFM, count); }
+void TapeDevice::space_fwd_records(int count) { do_mtop(MTFSR, count); }
+void TapeDevice::space_bwd_records(int count) { do_mtop(MTBSR, count); }
+void TapeDevice::space_fwd_setmarks(int count) { do_mtop(MTFSS, count); }
+void TapeDevice::space_bwd_setmarks(int count) { do_mtop(MTBSS, count); }
 
 void TapeDevice::seek_block(long block_no) {
     do_mtop(MTSEEK, static_cast<int>(block_no));
