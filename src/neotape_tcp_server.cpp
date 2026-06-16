@@ -124,10 +124,14 @@ class FrameRetentionBuffer {
         frames_.push_back(RetainedFrame{global_seq_num, std::move(record)});
     }
 
+    // Remove exactly the frame with this global_seq_num.  Does nothing
+    // if the frame is not in the buffer (e.g. already removed).
     void ack(uint64_t global_seq_num) {
-        while (!frames_.empty() &&
-               frames_.front().global_seq_num <= global_seq_num) {
-            frames_.pop_front();
+        for (auto it = frames_.begin(); it != frames_.end(); ++it) {
+            if (it->global_seq_num == global_seq_num) {
+                frames_.erase(it);
+                return;
+            }
         }
     }
 
@@ -475,30 +479,15 @@ serve_client(int client, TcpArchiverState &state,
                 }
                 uint64_t g = le64_from_bytes(req->payload);
 
-                // ACK validation: reject future (g >= next_send_seq) and
-                // stale/duplicate (g <= last_acked).  Accept any g in the
-                // window (last_acked, next_send_seq).
-                //
-                // This is not strict gapless — we do not require
-                // g == last_acked + 1.  The RetentionBuffer uses cumulative
-                // ack (discard all frames with seq <= g), so a non-contiguous
-                // ACK is harmless under trusted peers: the writer writes
-                // frames in order, and TCP on localhost/trusted LAN delivers
-                // ACKs in order.  For a hardened protocol boundary, enforce
-                // gapless (g != last_acked + 1 → error) to detect
-                // out-of-order delivery or a misbehaving peer.
-                if (g >= next_send_seq) {
-                    send_error(client, std::format("ack {} ahead of sent range "
-                                                   "[1, {})",
-                                                   g, next_send_seq)
+                // ACK must be exactly next_expected = last_acked + 1.
+                // Out-of-order, duplicate, and stale ACKs are all rejected.
+                uint64_t const expected = state.last_acked_global_frame + 1;
+                if (g != expected) {
+                    send_error(client, std::format("ack {} out of order; "
+                                                   "expected {}",
+                                                   g, expected)
                                            .c_str());
                     return ServeResult{false, volume_committed, frames_served};
-                }
-
-                // Reject ACKs behind what we've already committed.
-                if (g <= state.last_acked_global_frame) {
-                    NEOTAPE_DEBUG("archiver: stale ack global_seq={}\n", g);
-                    break;
                 }
 
                 if (!volume_committed) {
