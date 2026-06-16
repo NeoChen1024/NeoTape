@@ -92,3 +92,22 @@ Client connects, the first `frame_record` it sends MUST carry sequence
 numbers that continue exactly from the last validated frame.  Any gap,
 backward jump, or identity mismatch causes the Server to send `error` and
 close the connection.
+
+## Security
+
+Security is **not** in scope for this protocol.  It is designed for operation
+over localhost or a trusted LAN (at minimum 2.5 Gbps; typical deployment
+targets 10 Gbps or faster).  In this environment the threat model assumes a
+benign, non-adversarial network and mutually trusted peers.
+
+The protocol does **not** provide:
+
+- Authentication or peer identity verification
+- Transport-layer encryption (TLS)
+- Replay defense
+- DoS resistance beyond the `max_message_payload_size` check
+
+For deployments where any of these properties are required, the operator
+SHOULD tunnel the connection through an external secure channel (e.g.
+SSH port forwarding, WireGuard, or a TLS proxy).  The NeoTape wire protocol
+remains plaintext by design.
