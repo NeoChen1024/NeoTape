@@ -9,17 +9,21 @@
 namespace neotape::tcp {
 
 //
-// Message roles (Server ↔ Client):
+// Message roles — direction depends on the pipeline:
 //
-//   next_frame   — Server requests next frame          (dir: Server → Client)
-//   frame_record — Client sends frame bytes            (dir: Client → Server)
-//   tape_eof     — Client signals no more frames       (dir: Client → Server)
-//   error        — Either side reports an error        (dir: bidirectional)
-//   ack_frame    — Server confirms frame was validated  (dir: Server → Client)
-//                  payload: uint64_t little-endian global frame seq num
+//   Writing pipeline (Archiver = Server, Writer = Client):
+//     next_frame   — Writer requests next frame            (Client → Server)
+//     frame_record — Archiver sends frame bytes            (Server → Client)
+//     tape_eof     — Archiver signals slice boundary       (Server → Client)
+//     ack_frame    — Writer confirms frame was written     (Client → Server)
 //
-// In the archiver pipeline Server = Archiver, Client = Writer.
-// In the extractor pipeline Server = Extractor, Client = Reader.
+//   Reading pipeline (Extractor = Server, Reader = Client):
+//     next_frame   — Extractor requests next frame         (Server → Client)
+//     frame_record — Reader sends frame bytes              (Client → Server)
+//     tape_eof     — Reader signals physical EOT           (Client → Server)
+//     ack_frame    — Extractor confirms frame validated    (Server → Client)
+//
+//   error — always bidirectional.
 //
 
 enum class MessageType : uint8_t {

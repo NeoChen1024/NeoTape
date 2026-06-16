@@ -475,7 +475,18 @@ serve_client(int client, TcpArchiverState &state,
                 }
                 uint64_t g = le64_from_bytes(req->payload);
 
-                // Reject ACKs for frames we haven't sent.
+                // ACK validation: reject future (g >= next_send_seq) and
+                // stale/duplicate (g <= last_acked).  Accept any g in the
+                // window (last_acked, next_send_seq).
+                //
+                // This is not strict gapless — we do not require
+                // g == last_acked + 1.  The RetentionBuffer uses cumulative
+                // ack (discard all frames with seq <= g), so a non-contiguous
+                // ACK is harmless under trusted peers: the writer writes
+                // frames in order, and TCP on localhost/trusted LAN delivers
+                // ACKs in order.  For a hardened protocol boundary, enforce
+                // gapless (g != last_acked + 1 → error) to detect
+                // out-of-order delivery or a misbehaving peer.
                 if (g >= next_send_seq) {
                     send_error(client, std::format("ack {} ahead of sent range "
                                                    "[1, {})",
