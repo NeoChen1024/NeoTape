@@ -153,3 +153,45 @@ For deployments that require confidentiality or peer authentication, tunnel
 the connection through an external secure channel (e.g. SSH port forwarding,
 WireGuard, or a TLS proxy).  The NeoTape wire protocol remains plaintext by
 design.
+
+### Future: challenge-response authentication
+
+If Ed25519 signing is already in use for frames (`SIGNED` flag), the same
+key material can authenticate the TCP peer at connection time with minimal
+added complexity.  The envisioned extension adds two message types:
+
+| ID | Name | Direction | Payload |
+|---|---|---|---|
+| 0x06 | `auth_challenge` | Server → Client | 32-byte random nonce |
+| 0x07 | `auth_response` | Client → Server | 64-byte Ed25519 signature |
+
+The flow:
+
+```
+Server                                   Client
+  |                                        |
+  |  ← TCP connect                         |
+  |                                        |
+  |  auth_challenge(32B random nonce)  →   |
+  |                                        |
+  |                  sign(sk, nonce)       |
+  |  ← auth_response(64B Ed25519 sig)      |
+  |                                        |
+  |  verify(pk, nonce, sig)                |
+  |  → ok → protocol proceeds              |
+  |  → fail → error, close                 |
+```
+
+The Server issues a fresh random nonce per connection, so replay is
+impossible.  The entire exchange costs one round-trip after TCP handshake
+(negligible on localhost or LAN).
+
+This design assumes Server and Client share the same Ed25519 secret key
+(e.g. via a local file or out-of-band distribution).  It authenticates
+the Client to the Server (one-way); mutual authentication would add a
+second challenge in the opposite direction but is unnecessary when the
+Server is a trusted, operator-controlled host.
+
+The implementation footprint is small: two libsodium calls
+(`crypto_sign_detached` / `crypto_sign_verify_detached`), ~50 lines of
+code, and no external PKI.
