@@ -387,6 +387,51 @@ serve_client(int client, TcpArchiverState &state,
                                  : state.last_acked_global_frame + 1;
     std::optional<uint64_t> archive_end_seq;
 
+    auto outstanding_frames = [&]() -> uint64_t {
+        return (next_send_seq - 1) - state.last_acked_global_frame;
+    };
+
+    // Drain ACKs until outstanding frames < limit.
+    // Returns -1 on error, 1 if archive_end was acked, 0 otherwise.
+    auto drain_acks_until = [&](uint64_t limit) -> int {
+        while (outstanding_frames() >= limit) {
+            auto ack = neotape::tcp::read_message(client);
+            if (!ack.has_value()) {
+                return -1;
+            }
+            if (ack->type != MessageType::ack_frame) {
+                send_error(client, "send window full; expected ack_frame");
+                return -1;
+            }
+            if (ack->payload.size() != 8) {
+                send_error(client, "ack_frame payload must be 8 bytes");
+                return -1;
+            }
+            uint64_t const g = le64_from_bytes(ack->payload);
+            uint64_t const expected = state.last_acked_global_frame + 1;
+            if (g != expected) {
+                send_error(client, std::format("ack {} out of order; "
+                                               "expected {}",
+                                               g, expected)
+                                       .c_str());
+                return -1;
+            }
+
+            if (!volume_committed) {
+                volume_committed = true;
+                NEOTAPE_DEBUG("archiver: volume {} committed\n",
+                              state.next_volume_seq_num);
+            }
+
+            state.last_acked_global_frame = g;
+            retention.ack(g);
+            if (archive_end_seq.has_value() && g >= *archive_end_seq) {
+                return 1;
+            }
+        }
+        return 0;
+    };
+
     try {
         for (;;) {
             auto req = neotape::tcp::read_message(client);
@@ -402,6 +447,18 @@ serve_client(int client, TcpArchiverState &state,
 
             switch (req->type) {
             case MessageType::next_frame: {
+                {
+                    int const w = drain_acks_until(opts.retention_frame_count);
+                    if (w < 0) {
+                        return ServeResult{false, volume_committed,
+                                           frames_served};
+                    }
+                    if (w > 0) {
+                        return ServeResult{true, volume_committed,
+                                           frames_served};
+                    }
+                }
+
                 const std::vector<std::byte> *record_ptr =
                     retention.get(next_send_seq);
                 uint64_t seq = 0;
@@ -433,6 +490,18 @@ serve_client(int client, TcpArchiverState &state,
                         break;
                     }
                     if (next->done) {
+                        {
+                            int const w = drain_acks_until(1);
+                            if (w < 0) {
+                                return ServeResult{false, volume_committed,
+                                                   frames_served};
+                            }
+                            if (w > 0) {
+                                return ServeResult{true, volume_committed,
+                                                   frames_served};
+                            }
+                        }
+
                         uint64_t ae_seq = next->global_seq_num + 1;
                         auto ae_record = build_archive_end_record(
                             opts.volume_block_size, state.next_volume_seq_num,
