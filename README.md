@@ -6,9 +6,10 @@ NeoTape wraps a payload byte stream (typically a POSIX pax/tar archive) in a lig
 
 This is an early implementation-stage project. The current implementation
 includes a standalone pax writer (`bin/mt-pax`), a planner (`bin/neotape-plan`)
-for slicing metadata, and a split producer/writer pair (`bin/neotape-archiver`
-and `bin/neotape-write`) that generate NeoTape-framed records over a TCP or
-Unix-domain socket.
+for slicing metadata, long-running data producers (`bin/neotape-archiver`,
+`bin/neotape-raw-store`), per-volume tape/spool clients (`bin/neotape-write`,
+`bin/neotape-read`), a payload extractor (`bin/neotape-extractor`), and an
+inspection/compliance tool (`bin/neotape-inspect`).
 
 ## Specification Status
 
@@ -48,15 +49,14 @@ block-size change within a volume as a format error.
 | ----- | ---------------------------------- | ------ |
 | 0     | pax writer CLI                     | Done   |
 | 1     | Binary header layout               | Freeze |
-| 2     | Filesystem spool backend           | Review |
-| 3     | Minimal reader                     | Review |
+| 2     | Filesystem spool backend           | Done   |
+| 3     | Tape + spool reader / extractor    | Done   |
 | 3.5   | mt-pax writer CLI                  | Done   |
-| 4     | NeoTape/PAX integration            | Review |
-| 5     | Slice metadata channel & catalog   | Spec   |
-| 6     | Tape device backend                | Spec   |
+| 4     | NeoTape/PAX producer pair          | Done   |
+| 5     | Raw byte-stream store              | Done   |
+| 6     | Frame inspect / compliance         | Done   |
 | 7     | Recovery & salvage                 | Spec   |
 | 8     | Optional BOT recovery bundle       | Spec   |
-| 9     | Filesystem-native payload formats  | Spec   |
 
 See [`docs/spec/`](docs/spec/) for the active format specification and [`docs/implementation/`](docs/implementation/) for
 implementation-specific notes (mt-pax architecture, build notes).
@@ -81,7 +81,8 @@ make
 ```
 
 Produces `bin/mt-pax`, `bin/neotape-plan`, `bin/neotape-archiver`,
-`bin/neotape-write`, and standalone NeoTape helper tools.
+`bin/neotape-raw-store`, `bin/neotape-write`, `bin/neotape-read`,
+`bin/neotape-extractor`, `bin/neotape-inspect`, and test binaries.
 
 ## Usage
 
@@ -141,6 +142,51 @@ One writer process writes exactly one volume.
 By default the writer refuses to overwrite existing content. Use `--erase` to
 rewind to BOT and overwrite, or `--append` to space to EOD and continue.
 
+### bin/neotape-raw-store (raw byte-stream producer)
+
+```sh
+bin/neotape-raw-store --listen unix:///run/neotape/raw.sock \
+                      --archive-name dataset \
+                      --retention-frame-count 5 < input.raw
+```
+
+Reads raw bytes from stdin, wraps them as a single logical content slice with
+correct START/END sequencing, emits a `tape_eof` slice boundary, then an
+`archive_end`.  The `--retention-frame-count` limits the send window for tape
+back-pressure.
+
+### bin/neotape-read (per-volume spool/tape reader)
+
+```sh
+bin/neotape-read --source spool:./vol1.spool \
+                 --connect unix:///run/neotape/extractor.sock
+```
+
+Reads NeoTape frames from a spool directory (or tape device) and forwards them
+to an extractor.  One reader process per volume.
+
+### bin/neotape-extractor (payload reconstruction)
+
+```sh
+bin/neotape-extractor --listen unix:///run/neotape/extractor.sock \
+                      -o /restore/backup.pax
+```
+
+Long-running service that receives frames from readers, validates archive
+integrity, and reconstructs the original payload stream to a file or stdout.
+
+### bin/neotape-inspect (frame-level verification)
+
+```sh
+bin/neotape-inspect --source spool:./vol1.spool
+bin/neotape-inspect --source tape:/dev/nst0 --debug
+```
+
+Scans a spool directory or tape device and produces a per-frame header table
+with BLAKE3 hash verification, followed by an archive-level compliance report
+(frame integrity, sequence continuity, channel ordering, SIGNED/signature
+consistency, archive-end rules).
+
 ### Examples
 
 ```sh
@@ -153,9 +199,20 @@ bin/neotape-archiver --listen unix:///run/neotape/home.sock \
 bin/neotape-write --source unix:///run/neotape/home.sock \
                   --target tape:/dev/nst0
 
-# Write one volume to a filesystem spool (useful for testing)
+# Write one volume to a filesystem spool
 bin/neotape-write --source unix:///run/neotape/home.sock \
                   --target spool:./vol1.spool
+
+# Raw byte-stream store via stdin
+some-command | bin/neotape-raw-store --listen unix:///run/neotape/raw.sock
+
+# Read from spool and feed to extractor
+bin/neotape-read --source spool:./vol1.spool \
+                 --connect unix:///run/neotape/extractor.sock
+
+# Inspect a spool or tape for compliance
+bin/neotape-inspect --source spool:./vol1.spool
+bin/neotape-inspect --source tape:/dev/nst0
 
 # Pack a directory with 4 I/O threads
 bin/mt-pax -f backup.tar --io-thread 4 src/

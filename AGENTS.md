@@ -4,25 +4,30 @@
 
 LTO tape-oriented multi-volume length-framed backup container. A pax writer
 exists: `bin/mt-pax` (multi-threaded with `--io-thread`, `src/mt-pax.cpp`).
-A planner (`bin/neotape-plan`) exists for slice metadata. A split producer/writer
-pair (`bin/neotape-archiver` or `bin/neotape-raw-store`, and `bin/neotape-write`)
-generates and consumes NeoTape-framed records over a TCP or Unix-domain socket.
-The tape-device backend
-(`namespace mt`) remains available for future tools.
+A planner (`bin/neotape-plan`) exists for slice metadata. Long-running data
+producers (`bin/neotape-archiver`, `bin/neotape-raw-store`) generate
+NeoTape-framed records over a TCP or Unix-domain socket. Short-lived per-volume
+clients (`bin/neotape-write`, `bin/neotape-read`) connect to producers or
+consumers and write/read frames to/from tape or spool. An
+`bin/neotape-extractor` consumes frames from a reader and reconstructs the
+payload stream. An `bin/neotape-inspect` scans spool or tape for frame-level
+verification and archive compliance reporting. The tape-device backend
+(`namespace mt`) implements both tape and spool I/O behind a shared
+`mt::TapeDevice` interface.
 
 ## Build
 
 ```sh
 make -j "$(nproc)"      # produces bin/mt-pax, bin/neotape-archiver,
                         # bin/neotape-raw-store, bin/neotape-write,
-                        # bin/neotape-plan, and NeoTape helper tools
+                        # bin/neotape-read, bin/neotape-extractor,
+                        # bin/neotape-inspect, bin/neotape-plan,
+                        # and test binaries
 make clean
 ```
 
-Dependencies: libarchive (system, `-larchive`), BLAKE3 (bundled submodule
-`3rdparty/BLAKE3` → `lib/libb3sum.a`), and crc32c (bundled submodule
-`3rdparty/crc32c` → `lib/libcrc32c.a`). mt-st is a submodule but unused in
-the build.
+Dependencies: libarchive (system, `-larchive`) and BLAKE3 (bundled submodule
+`3rdparty/BLAKE3` → `lib/libb3sum.a`).
 
 ## clangd / LSP
 
@@ -50,6 +55,9 @@ headers currently confuse clangd 22.
 - `src/neotape_plan_cmd.cpp` — planner for slice metadata
 - `src/neotape_archiver_cmd.cpp` — `bin/neotape-archiver` CLI entry point
 - `src/neotape_raw_store_cmd.cpp` — `bin/neotape-raw-store` raw-stream server CLI entry point
+- `src/neotape_read_cmd.cpp` — `bin/neotape-read` CLI entry point
+- `src/neotape_extractor_cmd.cpp` — `bin/neotape-extractor` CLI entry point
+- `src/neotape_extractor.cpp` — extractor state machine (frame accumulation, payload reassembly)
 - `src/neotape_inspect_cmd.cpp` — `bin/neotape-inspect` CLI entry point
 - `src/neotape_validate.cpp` — shared archive-frame validation (root: `include/neotape/validate.hpp`)
 - `src/neotape_write_cmd.cpp` — `bin/neotape-write` CLI entry point
@@ -58,11 +66,12 @@ headers currently confuse clangd 22.
 - `src/neotape_*.cpp` — NeoTape format and tape manipulation library (format layer and `namespace mt`)
 - `include/neotape/tcp_protocol.hpp` — TCP archive protocol message types
 - `include/neotape/tcp_server.hpp` — archiver server interface
+- `include/neotape/extractor.hpp` — extractor interface
 - `include/neotape/bounded_buffer.hpp` — thread-safe bounded buffer used by mt-pax
 - `include/neotape/` — shared project headers (common types, format helpers)
-- `3rdparty/` — git submodules (BLAKE3, crc32c, mt-st). Init with `git submodule update --init --recursive`
+- `3rdparty/` — git submodules (BLAKE3, signify). Init with `git submodule update --init --recursive`
 - `docs/spec/` — active format spec; `docs/mt-pax.md` — mt-pax architecture
-- `tests/smoke_mt_pax_pipeline.sh`, `tests/smoke_tcp_archive.sh`, `tests/smoke_raw_store.sh`, `tests/smoke_inspect.sh`, `tests/smoke_mt_pax_parity.sh` — smoke tests; no test framework or CI yet
+- `tests/smoke_mt_pax_pipeline.sh`, `tests/smoke_tcp_archive.sh`, `tests/smoke_raw_store.sh`, `tests/smoke_inspect.sh`, `tests/smoke_mt_pax_parity.sh`, `tests/smoke_tcp_archive_multi.sh`, `tests/smoke_tcp_extract.sh`, `tests/smoke_tcp_extract_multi.sh` — smoke tests; no test framework or CI yet
 
 ## Architecture pattern
 
@@ -75,7 +84,7 @@ I/O clients over a single TCP or Unix-domain socket:
   stays up for the lifetime of the archive and does not know about physical
   media changes.
 
-- **Tape client / short-lived role** (`neotape-write`, future `neotape-read`)
+- **Tape client / short-lived role** (`neotape-write`, `neotape-read`)
   connects to a listener, requests one volume's worth of data, and writes it to
   a tape device, spool directory, or raw file. One client process handles
   exactly one volume; when it reaches end-of-tape it writes a trailing filemark
@@ -115,6 +124,7 @@ bin/neotape-archiver --listen <tcp://host:port|unix://path>
                      [--volume-block-size <bytes>] [--archive-name <name>]
                      [-C <dir>] [-P <percent>] [--io-thread <N>]
                      [--output-buffer-size <bytes>] [--plan <file>]
+                     [--retention-frame-count <N>] [--debug]
                      [-v|-vv] [-x] <path> [path...]
 ```
 
@@ -150,6 +160,28 @@ verification, followed by an archive-level compliance report.  Compliance checks
 cover per-frame integrity (magic, version, block size, hash, flags, signature
 consistency, reserved bytes) and archive continuity (`global_frame_seq_num`,
 slice/channel sequence, channel ordering, archive-end rules).
+
+## neotape-read CLI
+
+```
+bin/neotape-read --source <tape:/dev/nst0|spool:./dir>
+       --connect <tcp://host:port|unix://path>
+```
+
+Short-lived per-volume reader client. Connects to a tape device or spool
+directory, reads NeoTape frames, and forwards them to an extractor over a TCP
+or Unix-domain socket. One reader process handles exactly one volume.
+
+## neotape-extractor CLI
+
+```
+bin/neotape-extractor --listen <tcp://host:port|unix://path>
+       [-o <file>] [-v] [-h]
+```
+
+Long-running payload consumer. Listens for incoming reader connections,
+receives NeoTape frames, validates them via the shared `FrameValidator`, and
+reconstructs the original payload byte stream. Writes to a file or stdout.
 
 ## neotape-write CLI
 
