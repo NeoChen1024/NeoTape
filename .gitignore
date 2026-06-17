@@ -13,3 +13,5 @@ __pycache__/
 .cache/
 testing/
 out/
+.pi/
+compile_commands.json

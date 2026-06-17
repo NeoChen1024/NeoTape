@@ -5,14 +5,16 @@
 LTO tape-oriented multi-volume length-framed backup container. A pax writer
 exists: `bin/mt-pax` (multi-threaded with `--io-thread`, `src/mt-pax.cpp`).
 A planner (`bin/neotape-plan`) exists for slice metadata. A split producer/writer
-pair (`bin/neotape-archiver` and `bin/neotape-write`) generates and consumes
-NeoTape-framed records over a TCP or Unix-domain socket. The tape-device backend
+pair (`bin/neotape-archiver` or `bin/neotape-raw-store`, and `bin/neotape-write`)
+generates and consumes NeoTape-framed records over a TCP or Unix-domain socket.
+The tape-device backend
 (`namespace mt`) remains available for future tools.
 
 ## Build
 
 ```sh
-make -j "$(nproc)"      # produces bin/mt-pax, bin/neotape-archiver, bin/neotape-write,
+make -j "$(nproc)"      # produces bin/mt-pax, bin/neotape-archiver,
+                        # bin/neotape-raw-store, bin/neotape-write,
                         # bin/neotape-plan, and NeoTape helper tools
 make clean
 ```
@@ -47,6 +49,7 @@ headers currently confuse clangd 22.
 - `src/mt-pax.cpp` — multi-threaded pax writer (worker pool, serializer, streaming large files)
 - `src/neotape_plan_cmd.cpp` — planner for slice metadata
 - `src/neotape_archiver_cmd.cpp` — `bin/neotape-archiver` CLI entry point
+- `src/neotape_raw_store_cmd.cpp` — `bin/neotape-raw-store` raw-stream server CLI entry point
 - `src/neotape_write_cmd.cpp` — `bin/neotape-write` CLI entry point
 - `src/neotape_tcp_server.cpp` — archiver server and frame packing
 - `src/neotape_tcp_protocol.cpp` — framed TCP message I/O
@@ -57,14 +60,14 @@ headers currently confuse clangd 22.
 - `include/neotape/` — shared project headers (common types, format helpers)
 - `3rdparty/` — git submodules (BLAKE3, crc32c, mt-st). Init with `git submodule update --init --recursive`
 - `docs/spec/` — active format spec; `docs/mt-pax.md` — mt-pax architecture
-- `tests/smoke_mt_pax_pipeline.sh`, `tests/smoke_tcp_archive.sh`, `tests/smoke_mt_pax_parity.sh` — smoke tests; no test framework or CI yet
+- `tests/smoke_mt_pax_pipeline.sh`, `tests/smoke_tcp_archive.sh`, `tests/smoke_raw_store.sh`, `tests/smoke_mt_pax_parity.sh` — smoke tests; no test framework or CI yet
 
 ## Architecture pattern
 
 NeoTape separates long-running data producers/consumers from short-lived tape
 I/O clients over a single TCP or Unix-domain socket:
 
-- **Listener / long-running role** (`neotape-archiver`, future `neotape-extractor`)
+- **Listener / long-running role** (`neotape-archiver`, `neotape-raw-store`, future `neotape-extractor`)
   owns archive state (archive UUID, volume sequence, and frame sequence numbers) and serves
   fully-formed NeoTape records through a framed request-response protocol. It
   stays up for the lifetime of the archive and does not know about physical
@@ -116,6 +119,21 @@ bin/neotape-archiver --listen <tcp://host:port|unix://path>
 In server mode (`--listen`) the archiver is a long-running producer that serves
 NeoTape records over a single TCP/UDS connection. Without `--listen` it behaves
 like `mt-pax` and writes a plain pax stream to `-f`.
+
+## neotape-raw-store CLI
+
+```
+bin/neotape-raw-store --listen <tcp://host:port|unix://path>
+                       [--input <file|->]
+                       [--volume-block-size <bytes>]
+                       [--archive-name <name>]
+                       [--retention-frame-count <N>] [--debug]
+```
+
+Long-running raw byte-stream producer. It reads raw bytes from stdin by default
+or from `--input`, stores the entire input as one logical content slice, uses
+spec-correct channel frame sequencing/START/END flags, emits a slice-closing
+`tape_eof`, then emits `archive_end`.
 
 ## neotape-write CLI
 

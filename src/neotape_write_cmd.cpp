@@ -232,7 +232,6 @@ struct WriterState {
     string writer_error_text;
     std::atomic<uint64_t> last_written_seq{0};
     std::atomic<bool> eot_reached{false};
-    std::atomic<bool> final_drain{false};
 };
 
 // Do not write a trailing filemark when EOT has been reached. On real tape
@@ -444,19 +443,13 @@ void tape_writer_thread(mt::TapeDevice *dev, int fd,
 
         try {
             std::scoped_lock const write_lock(socket_write_mtx);
-            if (state.final_drain.load()) {
-                NEOTAPE_DEBUG(
-                    "writer_thread: final drain, skipping ack global_seq={}\n",
-                    frame.global_seq_num);
-            } else {
-                NEOTAPE_DEBUG("writer_thread: sending ack global_seq={}\n",
-                              frame.global_seq_num);
-                neotape::tcp::write_message(
-                    fd, Message{MessageType::ack_frame,
-                                uint64_to_le_bytes(frame.global_seq_num)});
-                NEOTAPE_DEBUG("writer_thread: ack sent global_seq={}\n",
-                              frame.global_seq_num);
-            }
+            NEOTAPE_DEBUG("writer_thread: sending ack global_seq={}\n",
+                          frame.global_seq_num);
+            neotape::tcp::write_message(
+                fd, Message{MessageType::ack_frame,
+                            uint64_to_le_bytes(frame.global_seq_num)});
+            NEOTAPE_DEBUG("writer_thread: ack sent global_seq={}\n",
+                          frame.global_seq_num);
         } catch (const std::exception &e) {
             // If the archiver has already closed its end (archive complete),
             // the ACK is not needed; treat this as a clean shutdown.
@@ -652,10 +645,6 @@ int main(int argc, char **argv) {
                 if (header.channel_type == neotape::ChannelType::ARCHIVE_END) {
                     NEOTAPE_DEBUG(
                         "writer: archive_end frame, draining queue\n");
-                    {
-                        std::scoped_lock const lock(wstate.output_mtx);
-                        wstate.final_drain.store(true);
-                    }
                     wstate.output_cv.notify_all();
                     for (;;) {
                         std::unique_lock lock(wstate.output_mtx);

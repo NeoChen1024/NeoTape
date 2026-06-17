@@ -1,3 +1,4 @@
+# shellcheck disable=SC1007,SC2037,SC2046,SC2068,SC2091,SC2283
 CC	= cc
 CXX	= c++
 .DEFAULT_GOAL := all
@@ -5,7 +6,7 @@ INCS	= -Iinclude -Itests -Llib -I/usr/local/include -Lusr/local/lib
 CFLAGS	= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c17 -march=native -pedantic $(INCS)
 CXXFLAGS= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c++20 -march=native -pedantic $(INCS)
 LDLIBS	= lib/libb3sum.a -larchive
-EXE	= bin/mt-pax bin/neotape-plan bin/test_pax_pipeline bin/test_tcp_protocol bin/test_format bin/neotape-archiver bin/neotape-write bin/neotape-read bin/neotape-extractor
+EXE	= bin/mt-pax bin/neotape-plan bin/test_pax_pipeline bin/test_tcp_protocol bin/test_format bin/neotape-archiver bin/neotape-write bin/neotape-read bin/neotape-extractor bin/neotape-raw-store
 BINDIR	= bin
 LIBDIR	= lib
 BUILDDIR= build
@@ -55,6 +56,9 @@ $(BINDIR)/test_format : tests/test_format.cpp src/neotape_format.o $(B3LIB) | $(
 $(BINDIR)/neotape-archiver : src/neotape_archiver_cmd.o src/neotape_tcp_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_common.o src/neotape_pax_writer.o src/neotape_bounded_buffer.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
+$(BINDIR)/neotape-raw-store : src/neotape_raw_store_cmd.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_common.o $(B3LIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+
 $(BINDIR)/neotape-write : src/neotape_write_cmd.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
@@ -64,13 +68,14 @@ $(BINDIR)/neotape-read : src/neotape_read_cmd.o src/neotape_tcp_protocol.o src/n
 $(BINDIR)/neotape-extractor : src/neotape_extractor_cmd.o src/neotape_extractor.o src/neotape_format.o src/neotape_tcp_protocol.o src/neotape_common.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_format $(BINDIR)/mt-pax $(BINDIR)/neotape-plan $(BINDIR)/neotape-archiver $(BINDIR)/neotape-write $(BINDIR)/neotape-read
+test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_format $(BINDIR)/mt-pax $(BINDIR)/neotape-plan $(BINDIR)/neotape-archiver $(BINDIR)/neotape-raw-store $(BINDIR)/neotape-write $(BINDIR)/neotape-read
 	$(BINDIR)/test_pax_pipeline
 	$(BINDIR)/test_tcp_protocol
 	$(BINDIR)/test_format
 	sh tests/smoke_mt_pax_pipeline.sh
 	sh tests/smoke_tcp_archive.sh
 	sh tests/smoke_tcp_archive_multi.sh
+	sh tests/smoke_raw_store.sh
 	sh tests/smoke_mt_pax_parity.sh
 	sh tests/smoke_tcp_extract.sh
 	sh tests/smoke_tcp_extract_multi.sh

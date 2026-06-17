@@ -31,6 +31,29 @@ stream to `-f`:
 bin/neotape-archiver -f output.pax -C /data photos docs
 ```
 
+## Raw byte-stream store
+
+`neotape-raw-store` is the raw-stream counterpart to `neotape-archiver` server
+mode.  It reads one uninterpreted byte stream from stdin by default, or from
+`--input <file|->`, packs it directly into `ch_content` frames, and serves those
+NeoTape records to `neotape-write` over TCP or a Unix-domain socket:
+
+```sh
+# Store raw bytes from a file:
+bin/neotape-raw-store --listen tcp://0.0.0.0:9000 \
+  --archive-name disk-image --input image.raw
+
+# Or store raw bytes from a pipeline:
+dd if=/dev/nvme0n1 bs=4M | \
+  bin/neotape-raw-store --listen unix:///tmp/raw-store.sock
+```
+
+The entire input stream is one logical slice (`logical_slice_seq_num = 1`).
+Within that slice, `frame_seq_num_within_channel` starts at 1 and increments for
+each `ch_content` frame; only the first content frame carries `START`, only the
+last content frame carries `END`, and the store emits `tape_eof` before the final
+`archive_end` frame.
+
 ## Standalone pax writer
 
 ```sh
@@ -91,8 +114,8 @@ colon only, so locator paths may contain additional colons.
 |------|--------|---------|
 | `tape:` | `tape:/dev/nst0` | `neotape-write --target`, `neotape-read --source` |
 | `spool:` | `spool:./dir` | `neotape-write --target`, `neotape-read --source` |
-| `tcp:` | `tcp://host:port` | `neotape-archiver --listen`, `neotape-extractor --listen`, `neotape-write --source`, `neotape-read --connect` |
-| `unix:` | `unix:///path/socket` | `neotape-archiver --listen`, `neotape-extractor --listen`, `neotape-write --source`, `neotape-read --connect` |
+| `tcp:` | `tcp://host:port` | `neotape-archiver --listen`, `neotape-raw-store --listen`, `neotape-extractor --listen`, `neotape-write --source`, `neotape-read --connect` |
+| `unix:` | `unix:///path/socket` | `neotape-archiver --listen`, `neotape-raw-store --listen`, `neotape-extractor --listen`, `neotape-write --source`, `neotape-read --connect` |
 
 ## Output conventions
 
