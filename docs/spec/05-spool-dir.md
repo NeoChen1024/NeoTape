@@ -1,10 +1,13 @@
 # Spool Directory Format
 
-Status: specification.
+Status: normative.
 
 ## Scope
 
 A NeoTape spool directory is a filesystem representation of one or more NeoTape archive virtual volumes. The spool layout preserves the same logical record order, tape-file boundaries, and frame semantics as tape mode.
+
+This chapter is the authoritative source for spool directory layout, filename
+grammar, and spool reader ordering rules.
 
 A spool writer MUST preserve the same logical sequence of NeoTape records as tape mode. A conforming spool archive MUST NOT require a different reader algorithm for payload correctness. A reader MAY treat spool files as a virtual tape: file boundaries stand in for filemarks.
 

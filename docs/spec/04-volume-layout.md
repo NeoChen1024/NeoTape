@@ -52,7 +52,7 @@ Physical Medium (LTO tape)
 - **Tape file** — LTO filemark-delimited region. NeoTape uses tape files for logical slices and the Archive End frame.
 - **NeoTape record** — a single `volume_block_size_kib * 1024`-byte block written to the tape device or stored as a record within a spool file.
 - **Frame** — exactly one NeoTape record. Frames within a slice tape file are chained by `frame_payload_size`, not by filemarks.
-- **Volume boundary** — a physical/operator event, identified by a filemark and detected by `volume_seq_num` change (advisory) or sequence continuity checks (authoritative).
+- **Volume boundary** — a physical/operator event, identified by EOT and detected by `volume_seq_num` change (advisory) or sequence continuity checks (authoritative).
 
 ## No Volume Header
 

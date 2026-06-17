@@ -3,6 +3,8 @@
 Status: normative.
 
 This document defines common NeoTape terms used by the active specification.
+Exact byte layouts and filesystem naming grammars live in their dedicated
+chapters; this chapter is intentionally conceptual.
 
 ## Logical Hierarchy
 
@@ -58,6 +60,9 @@ Advisory metadata bytes carried by `ch_metadata` frames for one logical slice. I
 
 The unified 512-byte fixed header at the start of every NeoTape frame. It records channel type, frame sequencing, payload size, archive identity, flags, and a BLAKE3 `frame_hash` covering the entire frame. A `signature` field holds a binary signify-style signature over `frame_hash` when the `SIGNED` flag is set. There is only one header layout — no separate Volume Header or Archive End Header exists.
 
+The exact field widths, field order, and byte positions are defined in
+[01-frame-header.md](01-frame-header.md).
+
 ### Archive End Frame
 
 The final clean archive-level frame, with `channel_type = archive_end`. An archive is not cleanly complete unless a valid Archive End frame is found with `CLEAN_END = 1`.
@@ -76,19 +81,22 @@ The byte stream transported by NeoTape. NeoTape core is payload-format agnostic 
 
 ### START
 
-Frame flag (bit 0) indicating the first frame of a channel group within a logical slice.
+Frame flag indicating the first frame of a channel group within a logical slice.
 
 ### END
 
-Frame flag (bit 1) indicating the last frame of a channel group within a logical slice.
+Frame flag indicating the last frame of a channel group within a logical slice.
 
 ### SIGNED
 
-Frame flag (bit 2) indicating that `signature` contains a binary signify-style signature over `frame_hash`.
+Frame flag indicating that `signature` contains a binary signify-style signature over `frame_hash`.
 
 ### CLEAN_END
 
-Frame flag (bit 63) indicating a clean archive end. Only valid for `archive_end` frames. Must be `1` on a valid end-of-archive frame.
+Frame flag indicating a clean archive end. Only valid for `archive_end`
+frames. Must be `1` on a valid end-of-archive frame.
+
+Exact flag bit assignments are defined in [01-frame-header.md](01-frame-header.md).
 
 ## Format Constructs
 
@@ -106,15 +114,12 @@ The final 32 bytes of the header are `frame_hash`, a BLAKE3 digest over the cano
 
 ### Common Header Prefix
 
-The first 10 bytes shared by all NeoTape frames:
+The leading fields shared by all NeoTape frames: `magic`,
+`header_version`, and `channel_type`.
 
-| Field          | Size |
-| -------------- | ---- |
-| `magic`        | 8    |
-| `header_version` | 1  |
-| `channel_type` | 1    |
-
-A parser can always read 10 bytes, validate the magic, and dispatch by `channel_type`.
+A parser can always read the prefix, validate the magic, and dispatch by
+`channel_type`. See [01-frame-header.md](01-frame-header.md) for the exact
+prefix width and field sizes.
 
 ## Integrity
 
@@ -130,7 +135,8 @@ BLAKE3 hash computed over the canonical image of the entire frame (`volume_block
 
 ### Timestamp Format
 
-NeoTape timestamp fields (for example in plan metadata or spool manifests) use UTC, encoded as exactly 20 bytes:
+NeoTape timestamp fields (for example in plan metadata records or future
+metadata streams) use UTC, encoded as exactly 20 bytes:
 
 ```text
 YYYY-MM-DDTHH:MM:SS\0
@@ -174,82 +180,54 @@ The fixed NeoTape record size for an archive volume, encoded in KiB. The decoded
 
 Non-power-of-2 block sizes are allowed by the format, but they are generally not a good choice for physical media, including LTO tape.
 
-## Header Field Terminology
+## Header Terminology
+
+The exact on-wire header layout, field widths, channel enum values, and flag
+bit assignments are defined only in [01-frame-header.md](01-frame-header.md).
+This terminology chapter defines how those names are used conceptually and
+intentionally avoids restating offsets or full field tables.
 
 ### Repeated Archive Identity Fields
 
 Fields repeated across every frame:
 
-| Field                    | Type       | Description                                                    |
-| ------------------------ | ---------- | -------------------------------------------------------------- |
-| `archive_uuid`           | `nt_uuid`  | Stable UUID for the archive instance.                          |
-| `archive_label`          | `nt_name`  | Human-readable archive label (65 bytes, max 64 usable). Not a unique key. |
-| `volume_seq_num`         | `uint64`   | Advisory volume sequence number, starting at 1.                |
-| `volume_block_size_kib`  | `uint16`   | Fixed NeoTape record size for this volume, encoded in KiB.     |
+| Field                   | Meaning                                                                    |
+| ----------------------- | -------------------------------------------------------------------------- |
+| `archive_uuid`          | Stable UUID for the archive instance.                                      |
+| `archive_label`         | Human-readable archive label. Operator-facing, not a unique key.           |
+| `volume_seq_num`        | Advisory volume sequence number, normally starting at 1 for a new archive. |
+| `volume_block_size_kib` | Fixed NeoTape record size for this volume, encoded in KiB.                 |
 
-### Frame Header Fields
+### Channel and Flag Names
 
-All frames share the same fixed header layout:
+`channel_type` selects the role of the current frame (`ch_content`,
+`ch_metadata`, or `archive_end`). `flags` carries per-frame state such as
+`START`, `END`, `SIGNED`, and `CLEAN_END`.
 
-| Field                          | Type       | Description                                                    |
-| ------------------------------ | ---------- | -------------------------------------------------------------- |
-| `magic`                        | `char[8]`  | `NeoTape\0`                                                    |
-| `header_version`               | `uint8`    | Header layout version.                                         |
-| `channel_type`                 | `uint8_enum` | `ch_content`, `ch_metadata`, or `archive_end`.             |
-| `volume_block_size_kib`        | `uint16`   | Record size in KiB.                                            |
-| `archive_uuid`                 | `nt_uuid`  | Archive UUID.                                                  |
-| `archive_label`                | `nt_name`  | Human-readable archive label.                                  |
-| `volume_seq_num`               | `uint64`   | Advisory volume sequence number.                               |
-| `global_frame_seq_num`         | `uint64`   | Global frame sequence number within archive.                   |
-| `logical_slice_seq_num`        | `uint64`   | Logical slice sequence number.                                 |
-| `frame_seq_num_within_channel` | `uint64`   | Frame sequence number within the current channel.              |
-| `frame_payload_size`           | `uint64`   | Meaningful payload bytes after the 512-byte header.            |
-| `flags`                        | `uint64`   | START, END, SIGNED, CLEAN_END.                                 |
-| `_reserved`                    | `byte[246]`| Zero-filled padding.                                           |
-| `signature`                    | `byte[72]` | 8-byte key ID plus Ed25519 signature over `frame_hash`.        |
-| `frame_hash`                   | `nt_hash`  | BLAKE3 over the canonical image of the entire frame.           |
-
-## Channel Type Enum
-
-| Value | Name          | Description                                      |
-| ----- | ------------- | ------------------------------------------------ |
-| 1     | `ch_content`  | Logical slice content stream frames.             |
-| 2     | `ch_metadata` | Advisory metadata frames for a logical slice.    |
-| 255   | `archive_end` | Clean end-of-archive marker.                     |
-
-Values 0, 3–254 are reserved.
-
-## Flags
-
-| Bit   | Name        | Meaning                                                   |
-| ----- | ----------- | --------------------------------------------------------- |
-| 0     | `START`     | First frame of the current channel group.                 |
-| 1     | `END`       | Last frame of the current channel group.                  |
-| 2     | `SIGNED`    | `signature` contains an 8-byte key ID plus Ed25519 signature over `frame_hash`. |
-| 3–62  | _reserved_  | Must be zero.                                             |
-| 63    | `CLEAN_END` | Archive completed cleanly (only `archive_end`).           |
+For the authoritative enum values and bit assignments, see
+[01-frame-header.md](01-frame-header.md).
 
 ## Spool Concepts
 
 ### Spool Directory
 
-A filesystem representation of one or more NeoTape archive virtual volumes. Regular files and directories stand in for tape filemarks. Preserves the same logical record order and volume transition rules as tape mode.
+A filesystem representation of one or more NeoTape archive virtual volumes.
+Regular files stand in for tape files, preserving the same logical record order
+and frame semantics as tape mode.
 
-### tape-\<seq\> (Volume Directory)
+The authoritative concrete directory layout, filename grammar, and reader model
+for spool mode are defined in [05-spool-dir.md](05-spool-dir.md).
 
-A directory representing one NeoTape virtual volume. `<seq>` is a zero-padded volume sequence number (e.g. `tape-000001`).
+### Spool File
 
-### tape-file-\<num\>.\<type\>.ntf
+A regular file inside a spool directory that stands in for one NeoTape tape
+file. In spool mode, a file boundary is the equivalent of a tape filemark.
 
-A regular file representing one NeoTape tape file. `<num>` is a zero-padded tape-file index. `<type>` is one of `slice-<seq>`, `archive-end`. The `.ntf` extension stands for "NeoTape file".
+### Virtual Tape
 
-### Manifest (manifest.json)
-
-Advisory JSON file in a spool tape directory listing archives and their constituent tape files. Restore correctness comes from NeoTape headers, not the manifest.
-
-### Virtual Tape Size
-
-A configured capacity limit (`--virtual-tape-size`) that simulates EOT for spool mode. When exceeded, the writer transitions to the next virtual volume.
+The conceptual model of treating a spool directory as an ordered, tape-like
+sequence of files. Ordering, archive boundaries, and record framing follow
+[05-spool-dir.md](05-spool-dir.md).
 
 ## Common Acronyms
 

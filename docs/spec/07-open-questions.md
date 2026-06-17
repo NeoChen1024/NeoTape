@@ -10,17 +10,11 @@ This document collects open questions, unresolved design choices, and decision p
 
 The exact format, member set, and placement rules for an optional recovery bundle at BOT are open. Should the spec recommend a plain pax tar with a fixed member set (README, RESTORE, FORMAT-SPEC, reader source), or leave it entirely to deployment?
 
-### Spool Filenames
-
-Should spool filenames (e.g. `neotape-000002.slice-000001.nts`) be normative or advisory? If advisory, should the manifest be the canonical record locator?
-
-### Manifest Status
-
-Is `manifest.json` purely advisory, or should it have a partially standardized schema that readers can rely on when headers are damaged?
-
-### ch_metadata Item Schema
-
-The exact metadata item table byte layout and catalog entry format are not settled. Should the catalog be binary-only, text-friendly, or dual-layer with binary records plus optional human-readable summaries?
+Spool layout, filename grammar, and spool reader expectations are now defined
+in [05-spool-dir.md](05-spool-dir.md). The plan stream and slice-scoped
+catalog (`ch_metadata`) record format are now defined in
+[09-plan-metadata.md](09-plan-metadata.md); these topics are no longer tracked
+as open questions here.
 
 ## EOT and Continuation
 

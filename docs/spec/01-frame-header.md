@@ -2,6 +2,11 @@
 
 Status: normative.
 
+This chapter is the authoritative source for the exact on-wire Frame Header
+layout, field widths, field order, and channel/flag assignments. Other
+chapters may reference header fields conceptually, but they MUST defer to this
+chapter for exact sizes and positions.
+
 All NeoTape records use a single unified 512-byte fixed header. The final 32 bytes are `frame_hash`, a BLAKE3 digest over the canonical image of the entire frame.
 
 ## Fixed Fields
@@ -20,7 +25,7 @@ All NeoTape records use a single unified 512-byte fixed header. The final 32 byt
 | `frame_seq_num_within_channel` | `uint64`     | 8               | MUST        | `1` for the `archive_end` control frame.                                             |
 | `frame_payload_size`           | `uint32`     | 4               | MUST        | Meaningful payload bytes after the fixed header.                                         |
 | `flags`                        | `uint64`     | 8               | MUST        | Frame flags. See [Flags](#flags).                                                            |
-| `_reserved`                    | `byte[246]`  | 246             | MUST        | Zero-filled padding.                                                                     |
+| `_reserved`                    | `byte[250]`  | 250             | MUST        | Zero-filled padding.                                                                     |
 | `signature`                    | `byte[72]`   | 72              | MAY         | 8-byte key ID plus 64-byte Ed25519 signature over `"NeoTape-frame" \|\| frame_hash` when `SIGNED` is set. |
 | `frame_hash`                   | `nt_hash`    | 32              | MUST        | BLAKE3 over the canonical image of the whole frame.                                      |
 

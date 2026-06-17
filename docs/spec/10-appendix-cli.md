@@ -70,7 +70,8 @@ workers for small files and streams large files through the serializer.
 bin/neotape-plan -C /data -o home.plan photos docs
 ```
 
-Generates slice-metadata JSON consumed by `neotape-archiver --plan`.
+Generates the record-oriented plan metadata stream consumed by
+`neotape-archiver --plan`; see [09-plan-metadata.md](09-plan-metadata.md).
 
 ## Extractor / Reader (reading pipeline)
 

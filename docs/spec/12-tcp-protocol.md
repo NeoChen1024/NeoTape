@@ -84,10 +84,10 @@ error to stderr and exit non-zero.
 
 ## Sequence validation
 
-The Server validates every `frame_record` for:
+The Server validates every `frame_record` for framing, identity, and ordering
+rules:
 
 - `magic`, `header_version`
-- `frame_hash`
 - Record size matches decoded `volume_block_size_kib`
 - `archive_uuid` / `archive_label` consistency with first frame
 - Monotonic, gapless `global_frame_seq_num`
@@ -95,9 +95,19 @@ The Server validates every `frame_record` for:
   most 1)
 - `logical_slice_seq_num` and `frame_seq_num_within_channel` per spec
 - Channel ordering (`ch_metadata` before `ch_content`)
+- `frame_hash`, except for the restore-mode metadata exception below
 
-On validation failure the Server sends `error` with a human-readable message
-and closes the connection.
+In the reading pipeline, a restore-mode Server that reconstructs only
+`ch_content` MAY downgrade a `ch_metadata`-only integrity failure to a warning
+once the frame has already been identified as `ch_metadata` and header
+parsing, record sizing, archive identity, and sequence continuity remain
+unambiguous. This exception applies only to advisory metadata; it does not
+permit skipping `ch_content` corruption, ambiguous headers, or any continuity
+failure. When used, the Server SHOULD warn, ignore the unusable metadata
+payload, and continue extraction.
+
+On fatal validation failure the Server sends `error` with a human-readable
+message and closes the connection.
 
 ## Multi-volume
 

@@ -1,10 +1,14 @@
 # Plan Metadata Format
 
-Status: draft.
+Status: normative.
 
 The `neotape plan` command emits a machine-readable metadata stream describing
 how source filesystem trees should be packed into slices. Downstream tools
 consume this stream to produce pax slices that match the plan.
+
+This chapter is the authoritative source for both the planning stream consumed
+by `neotape-archiver --plan` and the slice-scoped catalog record format written
+into `ch_metadata`.
 
 **Required for resumable archive creation.**
 
@@ -14,11 +18,11 @@ Every record is a single line terminated by `\0\n` (NUL byte followed by
 newline). NUL cannot appear in file paths, so `\0\n` is an unambiguous record
 separator even when paths contain embedded newlines.
 
-The first field of each record determines its type. Records whose first field
-is a decimal integer are **entry records**. A record whose first field is
-`/chdir/` is a **directive** — it MUST appear at most once and MUST be the
-first record in the stream. If present, it changes the working directory for
-all subsequent entry records.
+The leading path component after the initial `/` determines the record type.
+Records whose leading component is a decimal `<slice>` number are **entry
+records**. A record whose leading component is `chdir` is a **directive** —
+it MUST appear at most once and MUST be the first record in the stream. If
+present, it changes the working directory for all subsequent entry records.
 
 ## Record Types
 
@@ -41,14 +45,14 @@ An entry record. Fields:
 | -------------- | ----------------------------------------------------------------------------------------------------------- |
 | `<slice>`      | Slice number, not zero-padded, 0-based.                                                                     |
 | `<file_num>`   | Index within the slice, not zero-padded, 0-based.                                                           |
-| `<kind>`       | File type:`f` regular, `d` directory, `l` symlink, `c` char, `b` block, `p` fifo, `s` socket. |
+| `<kind>`       | File type: `f` regular, `d` directory, `l` symlink, `c` char, `b` block, `p` fifo, `s` socket. |
 | `<size>`       | Apparent file size in bytes (decimal).                                                                      |
 | `<mtime>`      | Modification time as Unix timestamp (decimal seconds).                                                      |
 | `<uid>`        | Numeric owner user ID (decimal). `0` when unknown.                                                          |
 | `<uname>`      | Owner user name as a string (empty when unknown).                                                           |
 | `<gid>`        | Numeric group ID (decimal). `0` when unknown.                                                               |
 | `<gname>`      | Group name as a string (empty when unknown).                                                                |
-| `<hardlink>`   | `1` if this entry is a hardlink, `0` otherwise. Hardlinks share file content; the target path is not recorded. |
+| `<hardlink>`   | `1` if this entry reuses file content via hardlink semantics, `0` otherwise. |
 | `<filepath>`   | Archive path (relative, may include the source-directory prefix, no leading `/`).                           |
 
 All fields are mandatory — every entry record carries all 11 fields. Unknown
@@ -67,7 +71,7 @@ file set.
 /0/0/f/1234/1718400000/1000/neo_chen/1000/neogroup/0/src/main.c\0\n
 /0/1/f/5678/1718400000/0//0//0/docs/readme.txt\0\n
 /0/2/d/0/1718400000/1000/neo_chen/1000/neogroup/0/src/\0\n
-/0/3/h/4096/1718400000/1000/neo_chen/1000/neogroup/1/share/also-main.c\0\n
+/0/3/f/4096/1718400000/1000/neo_chen/1000/neogroup/1/share/also-main.c\0\n
 ```
 
 ## Catalog Role (`ch_metadata`)

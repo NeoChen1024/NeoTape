@@ -43,10 +43,15 @@ Values 0, 3–254 are reserved for future channels. A reader that encounters an 
 
 A normal payload reader (e.g. `neotape restore`) MUST emit only `ch_content` frame payload bytes. It MUST NOT emit `ch_metadata` bytes to stdout.
 
-`ch_metadata` frames are advisory:
+`ch_metadata` frames are advisory in normal restore mode:
 
-- A reader MUST NOT reject a slice or archive solely because of missing, truncated, or corrupt `ch_metadata` frames.
-- If `frame_hash` verification fails for a `ch_metadata` frame, the reader SHOULD log a warning and continue.
+- A payload reader or restore-mode server MUST NOT reject a slice or archive
+  solely because a frame already identified as `ch_metadata` is missing or
+  unusable, as long as record framing, archive identity, and sequence
+  continuity remain unambiguous.
+- If a `ch_metadata` frame fails `frame_hash` verification but its header and
+  surrounding sequence remain parseable enough to preserve archive identity
+  and ordering, the reader SHOULD log a warning and continue.
 
 ## START and END Flags
 

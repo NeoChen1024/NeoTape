@@ -97,14 +97,13 @@ Each archive is independent; `archive_uuid` distinguishes instances. `volume_seq
 
 ## Frame Record Layout
 
+For the exact fixed-header field widths and byte positions, see
+[01-frame-header.md](01-frame-header.md). Every NeoTape record has the
+following high-level structure:
+
 ```
   +-- 512-byte Frame Header
-  |       magic (8) | version (1) | channel_type (1) | block_size_kib (2)
-  |       archive_uuid (37) | archive_label (65) | volume_seq_num (8)
-  |       global_frame_seq_num (8) | logical_slice_seq_num (8)
-  |       frame_seq_num_within_channel (8)
-  |       frame_payload_size (8) | flags (8) | _reserved (246)
-  |       signature (72) | frame_hash (32)
+  |       exact field layout: see 01-frame-header.md
   +-- frame_payload_size payload bytes
   +-- zero padding to volume_block_size_kib * 1024
 ```
