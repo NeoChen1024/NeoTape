@@ -174,17 +174,34 @@ Server                                   Client
   |                                        |
   |  auth_challenge(32B random nonce)  →   |
   |                                        |
-  |                  sign(sk, nonce)       |
+  |            sign(sk, "NeoTape-auth"      |
+  |                  || nonce)              |
   |  ← auth_response(64B Ed25519 sig)      |
   |                                        |
-  |  verify(pk, nonce, sig)                |
+  |  verify(pk, "NeoTape-auth"             |
+  |         || nonce, sig)                 |
   |  → ok → protocol proceeds              |
   |  → fail → error, close                 |
 ```
 
-The Server issues a fresh random nonce per connection, so replay is
-impossible.  The entire exchange costs one round-trip after TCP handshake
-(negligible on localhost or LAN).
+**Domain separation.**  The signed message is the concatenation of a constant
+context string and the nonce (`"NeoTape-auth" || nonce`), not the bare nonce.
+This prevents cross-context signature replay — a valid `ack_frame` signature
+over `frame_hash` cannot be submitted as an `auth_response`, and vice-versa,
+even when the same Ed25519 key is used for both purposes.
+
+The context string is a fixed, null-terminated ASCII literal compiled into
+both Server and Client.  It does not travel over the wire.
+
+When this extension is active, both frame signing and challenge-response
+auth use the same Ed25519 key material over different domain strings:
+`"NeoTape-frame"` (format spec: [00-format-common.md](00-format-common.md))
+and `"NeoTape-auth"` (this section).  The signatures are cryptographically
+independent even with a shared key.
+
+The Server issues a fresh random nonce per connection, so replay of a
+previous `auth_response` is impossible.  The exchange costs one round-trip
+after TCP handshake (negligible on localhost or LAN).
 
 This design assumes Server and Client share the same Ed25519 secret key
 (e.g. via a local file or out-of-band distribution).  It authenticates
