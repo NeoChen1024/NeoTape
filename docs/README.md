@@ -21,13 +21,13 @@ docs/
     03-frames-and-slices.md     Frame model, channels, sequence numbering
     04-volume-layout.md         Logical and physical tape layout
     05-spool-dir.md             Spool directory format
-    08-security.md              Trust model, path safety, signing
-    09-open-questions.md        Unresolved design choices and open questions
-    10-future-extensions.md     Extension ideas (multi-channel, FEC, encryption)
-    11-plan-metadata.md         Plan metadata format (`neotape plan`)
-    12-appendix-cli.md          CLI usage examples for all tools
-    13-appendix-layout-examples.md  Single-volume, multi-volume, multi-archive layouts
-    13-tcp-protocol.md          TCP/Unix-domain socket request-response protocol
+    06-security.md              Trust model, path safety, signing
+    07-open-questions.md        Unresolved design choices and open questions
+    08-future-extensions.md     Extension ideas (multi-channel, FEC, encryption)
+    09-plan-metadata.md         Plan metadata format (`neotape plan`)
+    10-appendix-cli.md          CLI usage examples for all tools
+    11-appendix-layout-examples.md  Single-volume, multi-volume, multi-archive layouts
+    12-tcp-protocol.md          TCP/Unix-domain socket request-response protocol
 
   superpowers/
     specs/                      Design specs and proposals

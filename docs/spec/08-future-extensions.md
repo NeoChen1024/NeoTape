@@ -69,6 +69,7 @@ A lightweight index of all archive instances stored sequentially on one physical
 After an Archive End frame has been written, a future update mode could overwrite it and append new archive content. This may enable incremental tar-style updates.
 
 Open questions:
+
 - Safety on real tape devices and positioning rules.
 - Distinguishing intentional reopen from accidental overwrite.
 - Whether the previous Archive End frame should be recoverable.
