@@ -596,6 +596,42 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
     }
 
     case MTREW:
+        if (read_write_) {
+            // In write mode, rewind-to-BOT means:
+            // remove all existing .nts files, reset numbering, start fresh.
+            if (spool_fd_ >= 0) {
+                ::close(spool_fd_);
+                spool_fd_ = -1;
+            }
+            std::error_code ec;
+            if (!current_path_.empty()) {
+                fs::remove(current_path_, ec);
+                current_path_.clear();
+            }
+            current_is_temp_ = false;
+            // Remove all finalized spool files.
+            for (auto &entry : fs::directory_iterator(root_)) {
+                if (!entry.is_regular_file())
+                    continue;
+                auto name = entry.path().filename().string();
+                if (name.size() <= spool_prefix.size() + spool_ext.size() ||
+                    !name.starts_with(spool_prefix) ||
+                    !name.ends_with(spool_ext)) {
+                    continue;
+                }
+                fs::remove(entry.path(), ec);
+            }
+            next_file_num_ = 0;
+            current_file_num_ = 0;
+            current_record_ = 0;
+            current_block_size_ = 0;
+            files_.clear();
+            current_path_ = spool_temp_path(root_, current_file_num_);
+            spool_fd_ = open_fd(current_path_, O_RDWR | O_CREAT | O_TRUNC);
+            current_is_temp_ = true;
+            return;
+        }
+        // Read mode: seek to start of current file.
         if (spool_fd_ < 0) {
             throw Error(device_path(), "rewind", EBADF);
         }

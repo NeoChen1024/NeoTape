@@ -53,19 +53,19 @@ $(BINDIR)/test_tcp_protocol : tests/test_tcp_protocol.cpp src/neotape_tcp_protoc
 $(BINDIR)/test_format : tests/test_format.cpp src/neotape_format.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(filter %.o,$^) -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-archiver : src/neotape_archiver_cmd.o src/neotape_tcp_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_common.o src/neotape_pax_writer.o src/neotape_bounded_buffer.o $(B3LIB) | $(BINDIR)
+$(BINDIR)/neotape-archiver : src/neotape_archiver_cmd.o src/neotape_tcp_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_frame_builder.o src/neotape_socket_util.o src/neotape_common.o src/neotape_pax_writer.o src/neotape_bounded_buffer.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-raw-store : src/neotape_raw_store_cmd.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_common.o $(B3LIB) | $(BINDIR)
+$(BINDIR)/neotape-raw-store : src/neotape_raw_store_cmd.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_frame_builder.o src/neotape_socket_util.o src/neotape_common.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-write : src/neotape_write_cmd.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o $(B3LIB) | $(BINDIR)
+$(BINDIR)/neotape-write : src/neotape_write_cmd.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o src/neotape_socket_util.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-read : src/neotape_read_cmd.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o $(B3LIB) | $(BINDIR)
+$(BINDIR)/neotape-read : src/neotape_read_cmd.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o src/neotape_socket_util.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-extractor : src/neotape_extractor_cmd.o src/neotape_extractor.o src/neotape_validate.o src/neotape_format.o src/neotape_tcp_protocol.o src/neotape_common.o $(B3LIB) | $(BINDIR)
+$(BINDIR)/neotape-extractor : src/neotape_extractor_cmd.o src/neotape_extractor.o src/neotape_validate.o src/neotape_format.o src/neotape_tcp_protocol.o src/neotape_common.o src/neotape_socket_util.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 $(BINDIR)/neotape-inspect : src/neotape_inspect_cmd.o src/neotape_validate.o src/neotape_format.o src/neotape_tape.o src/neotape_common.o $(B3LIB) | $(BINDIR)

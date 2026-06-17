@@ -1,7 +1,10 @@
 #include "neotape/closable_queue.hpp"
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
+#include "neotape/frame_builder.hpp"
+#include "neotape/socket_util.hpp"
 #include "neotape/tcp_protocol.hpp"
+#include "neotape/thread_util.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -10,7 +13,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <deque>
 #include <exception>
 #include <format>
 #include <functional>
@@ -18,13 +20,11 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
-#include <netdb.h>
 #include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <sys/socket.h>
-#include <sys/un.h>
 #include <thread>
 #include <unistd.h>
 #include <utility>
@@ -32,6 +32,14 @@
 
 namespace {
 
+using neotape::build_archive_end_record;
+using neotape::create_listener;
+using neotape::FdGuard;
+using neotape::FrameRetentionBuffer;
+using neotape::le64_from_bytes;
+using neotape::patch_volume_seq_num;
+using neotape::send_error;
+using neotape::ThreadJoiner;
 using neotape::tcp::Address;
 using neotape::tcp::Message;
 using neotape::tcp::MessageType;
@@ -153,222 +161,6 @@ struct FileGuard {
     FileGuard &operator=(FileGuard &&) = delete;
 };
 
-struct FdGuard {
-    int fd = -1;
-    explicit FdGuard(int f) : fd(f) {}
-    ~FdGuard() {
-        if (fd >= 0) {
-            ::close(fd);
-        }
-    }
-    FdGuard(const FdGuard &) = delete;
-    FdGuard &operator=(const FdGuard &) = delete;
-    FdGuard(FdGuard &&) = delete;
-    FdGuard &operator=(FdGuard &&) = delete;
-};
-
-struct ThreadJoiner {
-    std::thread *thread = nullptr;
-    explicit ThreadJoiner(std::thread &t) : thread(&t) {}
-    ~ThreadJoiner() {
-        if (thread != nullptr && thread->joinable()) {
-            thread->join();
-        }
-    }
-    ThreadJoiner(const ThreadJoiner &) = delete;
-    ThreadJoiner &operator=(const ThreadJoiner &) = delete;
-    ThreadJoiner(ThreadJoiner &&) = delete;
-    ThreadJoiner &operator=(ThreadJoiner &&) = delete;
-};
-
-int create_listener(const string &addr) {
-    Address a = parse_address(addr);
-
-    int fd = -1;
-    if (a.is_unix) {
-        fd = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (fd < 0) {
-            throw std::runtime_error(
-                format("socket: {}", std::strerror(errno)));
-        }
-        unlink(a.path.c_str());
-        sockaddr_un sa{};
-        sa.sun_family = AF_UNIX;
-        if (a.path.size() >= sizeof(sa.sun_path)) {
-            throw std::runtime_error("unix socket path too long");
-        }
-        std::memcpy(sa.sun_path, a.path.data(), a.path.size());
-        if (bind(fd, reinterpret_cast<sockaddr *>(&sa), sizeof(sa)) < 0) {
-            throw std::runtime_error(
-                format("bind {}: {}", a.path, std::strerror(errno)));
-        }
-    } else {
-        addrinfo hints{};
-        hints.ai_family = AF_UNSPEC;
-        hints.ai_socktype = SOCK_STREAM;
-        hints.ai_flags = AI_PASSIVE;
-        addrinfo *res = nullptr;
-        int const gai =
-            getaddrinfo(a.host.c_str(), a.port.c_str(), &hints, &res);
-        if (gai != 0) {
-            throw std::runtime_error(
-                format("getaddrinfo: {}", gai_strerror(gai)));
-        }
-        std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> const res_guard(
-            res, freeaddrinfo);
-        fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-        if (fd < 0) {
-            throw std::runtime_error(
-                format("socket: {}", std::strerror(errno)));
-        }
-        int yes = 1;
-        (void)::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-        if (bind(fd, res->ai_addr, res->ai_addrlen) < 0) {
-            throw std::runtime_error(
-                format("bind {}:{}: {}", a.host, a.port, std::strerror(errno)));
-        }
-    }
-
-    if (listen(fd, 1) < 0) {
-        throw std::runtime_error(format("listen: {}", std::strerror(errno)));
-    }
-    return fd;
-}
-
-void copy_header_to_record(const neotape::HeaderBytes &header,
-                           std::vector<std::byte> &record) {
-    for (std::size_t i = 0; i < header.size(); ++i) {
-        record[i] = static_cast<std::byte>(header[i]);
-    }
-}
-
-void finalize_record_hash(neotape::FrameHeader &header,
-                          std::vector<std::byte> &record) {
-    neotape::HeaderBytes header_bytes = neotape::serialize_frame_header(header);
-    copy_header_to_record(header_bytes, record);
-    header.frame_hash = neotape::compute_frame_hash(
-        reinterpret_cast<const uint8_t *>(record.data()), record.size());
-    header_bytes = neotape::serialize_frame_header(header);
-    copy_header_to_record(header_bytes, record);
-}
-
-void patch_volume_seq_num(std::vector<std::byte> &record,
-                          uint64_t new_volume_seq_num) {
-    neotape::FrameHeader hdr = neotape::parse_fixed_header(
-        reinterpret_cast<const uint8_t *>(record.data()), record.size());
-    if (hdr.volume_seq_num == new_volume_seq_num) {
-        return;
-    }
-    hdr.volume_seq_num = new_volume_seq_num;
-    finalize_record_hash(hdr, record);
-}
-
-struct BuiltFrame {
-    std::vector<std::byte> record;
-    uint64_t global_seq_num = 0;
-};
-
-class RawFrameBuilder {
-  public:
-    RawFrameBuilder(uint32_t block_size, string archive_uuid,
-                    string archive_name)
-        : block_size_(block_size), archive_uuid_(std::move(archive_uuid)),
-          archive_name_(std::move(archive_name)) {}
-
-    [[nodiscard]] uint32_t payload_capacity() const {
-        return block_size_ - neotape::fixed_header_size;
-    }
-
-    std::vector<BuiltFrame> feed(std::span<const std::byte> bytes) {
-        pending_.insert(pending_.end(), bytes.begin(), bytes.end());
-
-        std::vector<BuiltFrame> out;
-        const uint32_t cap = payload_capacity();
-        while (pending_.size() > cap) {
-            out.push_back(build_content_frame(
-                std::span<const std::byte>(pending_.data(), cap), false));
-            pending_.erase(pending_.begin(), pending_.begin() + cap);
-        }
-        return out;
-    }
-
-    BuiltFrame finish() {
-        BuiltFrame frame = build_content_frame(
-            std::span<const std::byte>(pending_.data(), pending_.size()), true);
-        pending_.clear();
-        return frame;
-    }
-
-    [[nodiscard]] uint64_t last_global_seq_num() const {
-        return global_frame_seq_num_ == 1 ? 0 : global_frame_seq_num_ - 1;
-    }
-
-  private:
-    BuiltFrame build_content_frame(std::span<const std::byte> payload,
-                                   bool is_final) {
-        assert(payload.size() <= payload_capacity());
-
-        uint64_t flags = 0;
-        if (frame_seq_within_channel_ == 1) {
-            flags |= neotape::frame_flag_start;
-        }
-        if (is_final) {
-            flags |= neotape::frame_flag_end;
-        }
-
-        neotape::FrameHeader fh;
-        fh.channel_type = neotape::ChannelType::CH_CONTENT;
-        fh.volume_block_size_kib = static_cast<uint16_t>(block_size_ / 1024U);
-        fh.archive_uuid = archive_uuid_;
-        fh.archive_label = archive_name_;
-        fh.volume_seq_num = 0;
-        fh.global_frame_seq_num = global_frame_seq_num_++;
-        fh.logical_slice_seq_num = 1;
-        fh.frame_seq_num_within_channel = frame_seq_within_channel_++;
-        fh.frame_payload_size = static_cast<uint32_t>(payload.size());
-        fh.flags = flags;
-
-        std::vector<std::byte> record(block_size_, std::byte{0});
-        neotape::HeaderBytes const header = neotape::serialize_frame_header(fh);
-        copy_header_to_record(header, record);
-        std::copy(payload.begin(), payload.end(),
-                  record.begin() +
-                      static_cast<std::ptrdiff_t>(neotape::fixed_header_size));
-        finalize_record_hash(fh, record);
-        return BuiltFrame{std::move(record), fh.global_frame_seq_num};
-    }
-
-    uint32_t block_size_;
-    string archive_uuid_;
-    string archive_name_;
-    uint64_t global_frame_seq_num_ = 1;
-    uint64_t frame_seq_within_channel_ = 1;
-    std::vector<std::byte> pending_;
-};
-
-std::vector<std::byte> build_archive_end_record(uint32_t block_size,
-                                                uint64_t volume_seq_num,
-                                                const string &archive_uuid,
-                                                const string &archive_name,
-                                                uint64_t global_seq_num) {
-    neotape::FrameHeader h;
-    h.channel_type = neotape::ChannelType::ARCHIVE_END;
-    h.volume_block_size_kib = static_cast<uint16_t>(block_size / 1024U);
-    h.archive_uuid = archive_uuid;
-    h.archive_label = archive_name;
-    h.volume_seq_num = volume_seq_num;
-    h.global_frame_seq_num = global_seq_num;
-    h.logical_slice_seq_num = 0;
-    h.frame_seq_num_within_channel = 1;
-    h.frame_payload_size = 0;
-    h.flags = neotape::frame_flag_start | neotape::frame_flag_end |
-              neotape::frame_flag_clean_end;
-
-    std::vector<std::byte> record(block_size, std::byte{0});
-    finalize_record_hash(h, record);
-    return record;
-}
-
 struct RecordOrDone {
     std::vector<std::byte> record;
     uint64_t global_seq_num = 0;
@@ -376,64 +168,7 @@ struct RecordOrDone {
     bool done = false;
 };
 
-struct RetainedFrame {
-    uint64_t global_seq_num = 0;
-    std::vector<std::byte> record;
-};
-
-class FrameRetentionBuffer {
-  public:
-    explicit FrameRetentionBuffer(size_t max_frames)
-        : max_frames_(max_frames) {}
-
-    void add(uint64_t global_seq_num, std::vector<std::byte> record) {
-        if (frames_.size() == max_frames_) {
-            frames_.pop_front();
-        }
-        frames_.push_back(RetainedFrame{global_seq_num, std::move(record)});
-    }
-
-    void ack(uint64_t global_seq_num) {
-        for (auto it = frames_.begin(); it != frames_.end(); ++it) {
-            if (it->global_seq_num == global_seq_num) {
-                frames_.erase(it);
-                return;
-            }
-        }
-    }
-
-    [[nodiscard]] const std::vector<std::byte> *
-    get(uint64_t global_seq_num) const {
-        for (const auto &f : frames_) {
-            if (f.global_seq_num == global_seq_num) {
-                return &f.record;
-            }
-        }
-        return nullptr;
-    }
-
-  private:
-    size_t max_frames_;
-    std::deque<RetainedFrame> frames_;
-};
-
-void send_error(int client, const char *text) {
-    auto payload = std::vector<std::byte>(
-        reinterpret_cast<const std::byte *>(text),
-        reinterpret_cast<const std::byte *>(text) + std::strlen(text));
-    neotape::tcp::write_message(
-        client, Message{MessageType::error, std::move(payload)});
-}
-
-uint64_t le64_from_bytes(const std::vector<std::byte> &payload) {
-    uint64_t v = 0;
-    for (std::size_t i = 0; i < payload.size() && i < 8; ++i) {
-        v |= static_cast<uint64_t>(static_cast<uint8_t>(payload[i])) << (8 * i);
-    }
-    return v;
-}
-
-void produce_raw_frames(FILE *input, RawFrameBuilder &builder,
+void produce_raw_frames(FILE *input, neotape::ContentFrameBuilder &builder,
                         neotape::ClosableQueue<RecordOrDone> &queue) {
     std::vector<std::byte> buf(1024ULL * 1024ULL);
     for (;;) {
@@ -458,10 +193,12 @@ void produce_raw_frames(FILE *input, RawFrameBuilder &builder,
         }
     }
 
-    BuiltFrame final_frame = builder.finish();
-    if (!queue.push(RecordOrDone{std::move(final_frame.record),
-                                 final_frame.global_seq_num, false, false})) {
-        throw std::runtime_error("frame consumer disconnected");
+    if (auto final_frame = builder.flush(); final_frame.has_value()) {
+        if (!queue.push(RecordOrDone{std::move(final_frame->record),
+                                     final_frame->global_seq_num, false,
+                                     false})) {
+            throw std::runtime_error("frame consumer disconnected");
+        }
     }
     if (!queue.push(RecordOrDone{{}, 0, true, false})) {
         throw std::runtime_error("frame consumer disconnected");
@@ -688,8 +425,8 @@ uint64_t run_raw_store(FILE *input, const Options &opts) {
     std::cerr << format("raw-store listening on {}\n", opts.listen_address);
 
     string const archive_uuid = neotape::make_uuid_v4();
-    RawFrameBuilder builder(opts.volume_block_size, archive_uuid,
-                            opts.archive_name);
+    neotape::ContentFrameBuilder builder(opts.volume_block_size, archive_uuid,
+                                         opts.archive_name);
     neotape::ClosableQueue<RecordOrDone> frame_queue(8);
 
     std::exception_ptr input_error;

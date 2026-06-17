@@ -140,8 +140,14 @@ vector<std::byte> uint64_to_le_bytes(uint64_t v) {
     return true;
 }
 
-// Returns true if the frame passes all validation and was accumulated.
-// Returns false on any validation error (logs to stderr).
+// Returns true if the frame was processed successfully.
+// Returns false only on unrecoverable errors.
+//
+// Metadata frames (ch_metadata) are advisory per spec:
+//   - hash failures produce a warning but do not block extraction
+//   - payload is not written to the reconstructed output
+//   - the frame is still structurally validated for sequence continuity
+//
 // On archive_end, sets state.saw_archive_end and the caller should return.
 [[nodiscard]] bool process_frame(ExtractorState &state,
                                  const vector<std::byte> &record,
@@ -150,6 +156,26 @@ vector<std::byte> uint64_to_le_bytes(uint64_t v) {
     const FrameHeader header = parse_fixed_header(data, record.size());
 
     uint64_t const prev_slice_seq = state.validator.current_slice_seq_num;
+
+    // Metadata frames are advisory: check hash separately so we can
+    // warn on failure without blocking restore.  Structural validation
+    // still runs to keep the sequence state machine in sync.
+    if (header.channel_type == ChannelType::CH_METADATA) {
+        bool const hash_ok =
+            verify_frame_hash(data, record.size(), header.frame_hash);
+        if (!hash_ok) {
+            std::cerr << format(
+                "extractor: warning: metadata frame hash mismatch "
+                "at global_seq={}\n",
+                header.global_frame_seq_num);
+        }
+        auto err = state.validator.validate(header, data, record.size(), true);
+        if (err.has_value()) {
+            std::cerr << format("extractor: warning (metadata): {}\n", *err);
+        }
+        return true;
+    }
+
     auto err = state.validator.validate(header, data, record.size());
     if (err.has_value()) {
         std::cerr << format("extractor: {}\n", *err);
@@ -171,8 +197,9 @@ vector<std::byte> uint64_to_le_bytes(uint64_t v) {
         }
     }
 
-    // --- accumulate payload ---
-    if (header.frame_payload_size > 0) {
+    // --- accumulate content payload only ---
+    if (header.channel_type == ChannelType::CH_CONTENT &&
+        header.frame_payload_size > 0) {
         const uint8_t *payload =
             data + static_cast<std::ptrdiff_t>(fixed_header_size);
         state.slice_payload.insert(state.slice_payload.end(), payload,

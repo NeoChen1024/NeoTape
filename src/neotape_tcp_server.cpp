@@ -1,9 +1,12 @@
 #include "neotape/closable_queue.hpp"
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
+#include "neotape/frame_builder.hpp"
 #include "neotape/pax_writer.hpp"
+#include "neotape/socket_util.hpp"
 #include "neotape/tcp_protocol.hpp"
 #include "neotape/tcp_server.hpp"
+#include "neotape/thread_util.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -16,250 +19,33 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
-#include <netdb.h>
 #include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <sys/socket.h>
-#include <sys/un.h>
 #include <thread>
-#include <unistd.h>
 #include <utility>
 
 namespace neotape {
 
 namespace {
 
-using neotape::tcp::Address;
 using neotape::tcp::Message;
 using neotape::tcp::MessageType;
-using neotape::tcp::parse_address;
+using neotape::build_archive_end_record;
+using neotape::copy_header_to_record;
+using neotape::finalize_record_hash;
+using neotape::FrameRetentionBuffer;
+using neotape::le64_from_bytes;
+using neotape::patch_volume_seq_num;
+using neotape::send_error;
+using neotape::FdGuard;
+using neotape::ThreadJoiner;
+using neotape::create_listener;
 
-int create_listener(const std::string &addr) {
-    Address a = parse_address(addr);
-
-    int fd = -1;
-    if (a.is_unix) {
-        fd = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (fd < 0) {
-            throw std::runtime_error(
-                std::format("socket: {}", std::strerror(errno)));
-        }
-        unlink(a.path.c_str());
-        sockaddr_un sa{};
-        sa.sun_family = AF_UNIX;
-        if (a.path.size() >= sizeof(sa.sun_path)) {
-            throw std::runtime_error("unix socket path too long");
-        }
-        std::memcpy(sa.sun_path, a.path.data(), a.path.size());
-        if (bind(fd, reinterpret_cast<sockaddr *>(&sa), sizeof(sa)) < 0) {
-            throw std::runtime_error(
-                std::format("bind {}: {}", a.path, std::strerror(errno)));
-        }
-    } else {
-        addrinfo hints{};
-        hints.ai_family = AF_UNSPEC;
-        hints.ai_socktype = SOCK_STREAM;
-        hints.ai_flags = AI_PASSIVE;
-        addrinfo *res = nullptr;
-        int const gai =
-            getaddrinfo(a.host.c_str(), a.port.c_str(), &hints, &res);
-        if (gai != 0) {
-            throw std::runtime_error(
-                std::format("getaddrinfo: {}", gai_strerror(gai)));
-        }
-        std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> const res_guard(
-            res, freeaddrinfo);
-        fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-        if (fd < 0) {
-            throw std::runtime_error(
-                std::format("socket: {}", std::strerror(errno)));
-        }
-        int yes = 1;
-        (void)::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-        if (bind(fd, res->ai_addr, res->ai_addrlen) < 0) {
-            throw std::runtime_error(std::format("bind {}:{}: {}", a.host,
-                                                 a.port, std::strerror(errno)));
-        }
-    }
-
-    if (listen(fd, 1) < 0) {
-        throw std::runtime_error(
-            std::format("listen: {}", std::strerror(errno)));
-    }
-    return fd;
-}
-
-void copy_header_to_record(const HeaderBytes &header,
-                           std::vector<std::byte> &record) {
-    for (std::size_t i = 0; i < header.size(); ++i) {
-        record[i] = static_cast<std::byte>(header[i]);
-    }
-}
-
-void finalize_record_hash(FrameHeader &header, std::vector<std::byte> &record) {
-    HeaderBytes header_bytes = serialize_frame_header(header);
-    copy_header_to_record(header_bytes, record);
-    header.frame_hash = compute_frame_hash(
-        reinterpret_cast<const uint8_t *>(record.data()), record.size());
-    header_bytes = serialize_frame_header(header);
-    copy_header_to_record(header_bytes, record);
-}
-
-struct RetainedFrame {
-    uint64_t global_seq_num = 0;
-    std::vector<std::byte> record;
-};
-
-class FrameRetentionBuffer {
-  public:
-    explicit FrameRetentionBuffer(size_t max_frames)
-        : max_frames_(max_frames) {}
-
-    void add(uint64_t global_seq_num, std::vector<std::byte> record) {
-        if (frames_.size() == max_frames_) {
-            frames_.pop_front();
-        }
-        frames_.push_back(RetainedFrame{global_seq_num, std::move(record)});
-    }
-
-    // Remove exactly the frame with this global_seq_num.  Does nothing
-    // if the frame is not in the buffer (e.g. already removed).
-    void ack(uint64_t global_seq_num) {
-        for (auto it = frames_.begin(); it != frames_.end(); ++it) {
-            if (it->global_seq_num == global_seq_num) {
-                frames_.erase(it);
-                return;
-            }
-        }
-    }
-
-    [[nodiscard]] bool has(uint64_t global_seq_num) const {
-        for (const auto &f : frames_) {
-            if (f.global_seq_num == global_seq_num) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    [[nodiscard]] const std::vector<std::byte> *
-    get(uint64_t global_seq_num) const {
-        for (const auto &f : frames_) {
-            if (f.global_seq_num == global_seq_num) {
-                return &f.record;
-            }
-        }
-        return nullptr;
-    }
-
-    [[nodiscard]] uint64_t lowest_available() const {
-        if (frames_.empty()) {
-            return 0;
-        }
-        return frames_.front().global_seq_num;
-    }
-
-    [[nodiscard]] bool empty() const { return frames_.empty(); }
-
-  private:
-    size_t max_frames_;
-    std::deque<RetainedFrame> frames_;
-};
-
-struct FrameBuilder {
-    uint32_t block_size;
-    std::string archive_uuid;
-    std::string archive_name;
-    uint64_t global_frame = 1;
-    uint64_t current_slice = 1;
-    std::vector<std::byte> pending;
-
-    explicit FrameBuilder(uint32_t bs, std::string uuid, std::string name)
-        : block_size(bs), archive_uuid(std::move(uuid)),
-          archive_name(std::move(name)) {}
-
-    void set_current_slice(uint64_t s) { current_slice = s; }
-
-    [[nodiscard]] uint32_t payload_capacity() const {
-        return block_size - fixed_header_size;
-    }
-
-    // Append payload bytes. Returns zero or more complete frames.
-    std::vector<std::vector<std::byte>> feed(std::span<const std::byte> bytes,
-                                             std::vector<uint64_t> &seq_nums) {
-        std::vector<std::vector<std::byte>> out;
-        pending.insert(pending.end(), bytes.begin(), bytes.end());
-        const uint32_t cap = payload_capacity();
-        while (pending.size() >= cap) {
-            uint64_t const seq = global_frame++;
-            seq_nums.push_back(seq);
-            out.push_back(build_frame(std::span(pending.begin(), cap), seq));
-            pending.erase(pending.begin(), pending.begin() + cap);
-        }
-        return out;
-    }
-
-    // Force any remaining pending bytes into a final frame.
-    std::optional<std::pair<std::vector<std::byte>, uint64_t>> flush() {
-        if (pending.empty()) {
-            return std::nullopt;
-        }
-        uint64_t const seq = global_frame++;
-        auto rec = build_frame(std::span(pending), seq);
-        pending.clear();
-        return std::pair{std::move(rec), seq};
-    }
-
-    [[nodiscard]] std::vector<std::byte>
-    build_frame(std::span<const std::byte> payload, uint64_t seq_num) const {
-        assert(payload.size() <= payload_capacity());
-
-        FrameHeader fh;
-        fh.channel_type = ChannelType::CH_CONTENT;
-        fh.volume_block_size_kib = static_cast<uint16_t>(block_size / 1024U);
-        fh.archive_uuid = archive_uuid;
-        fh.archive_label = archive_name;
-        fh.volume_seq_num = 0;
-        fh.global_frame_seq_num = seq_num;
-        fh.logical_slice_seq_num = current_slice;
-        fh.frame_seq_num_within_channel = 1;
-        fh.frame_payload_size = payload.size();
-        fh.flags = frame_flag_start | frame_flag_end;
-
-        HeaderBytes const header = serialize_frame_header(fh);
-        std::vector<std::byte> record(block_size, std::byte{0});
-        copy_header_to_record(header, record);
-        std::copy(payload.begin(), payload.end(),
-                  record.begin() +
-                      static_cast<std::ptrdiff_t>(fixed_header_size));
-        finalize_record_hash(fh, record);
-        return record;
-    }
-};
-
-std::vector<std::byte> build_archive_end_record(uint32_t block_size,
-                                                uint64_t volume_seq_num,
-                                                const std::string &archive_uuid,
-                                                const std::string &archive_name,
-                                                uint64_t global_seq_num) {
-    FrameHeader h;
-    h.channel_type = ChannelType::ARCHIVE_END;
-    h.volume_block_size_kib = static_cast<uint16_t>(block_size / 1024U);
-    h.archive_uuid = archive_uuid;
-    h.archive_label = archive_name;
-    h.volume_seq_num = volume_seq_num;
-    h.global_frame_seq_num = global_seq_num;
-    h.logical_slice_seq_num = 0;
-    h.frame_seq_num_within_channel = 1;
-    h.frame_payload_size = 0;
-    h.flags = frame_flag_start | frame_flag_end | frame_flag_clean_end;
-
-    std::vector<std::byte> record(block_size, std::byte{0});
-    finalize_record_hash(h, record);
-    return record;
-}
+// RetainedFrame and FrameRetentionBuffer are now shared via
+// neotape/frame_builder.hpp
 
 struct RecordOrDone {
     std::vector<std::byte> record;
@@ -269,63 +55,7 @@ struct RecordOrDone {
     bool done = false;
 };
 
-struct ThreadJoiner {
-    std::thread &thread;
-    explicit ThreadJoiner(std::thread &t) : thread(t) {}
-    ~ThreadJoiner() {
-        if (thread.joinable()) {
-            thread.join();
-        }
-    }
-    ThreadJoiner(const ThreadJoiner &) = delete;
-    ThreadJoiner &operator=(const ThreadJoiner &) = delete;
-    ThreadJoiner(ThreadJoiner &&) = delete;
-    ThreadJoiner &operator=(ThreadJoiner &&) = delete;
-};
-
-struct FdGuard {
-    int fd = -1;
-    explicit FdGuard(int f) : fd(f) {}
-    ~FdGuard() {
-        if (fd >= 0) {
-            close(fd);
-        }
-    }
-    void release() { fd = -1; }
-    FdGuard(const FdGuard &) = delete;
-    FdGuard &operator=(const FdGuard &) = delete;
-    FdGuard(FdGuard &&) = delete;
-    FdGuard &operator=(FdGuard &&) = delete;
-};
-
-void patch_volume_seq_num(std::vector<std::byte> &record,
-                          uint64_t new_volume_seq_num) {
-    FrameHeader hdr = parse_fixed_header(
-        reinterpret_cast<const uint8_t *>(record.data()), record.size());
-    if (hdr.volume_seq_num == new_volume_seq_num) {
-        return;
-    }
-    hdr.volume_seq_num = new_volume_seq_num;
-    finalize_record_hash(hdr, record);
-}
-
-void send_error(int client, const char *text) {
-    auto payload = std::vector<std::byte>(
-        reinterpret_cast<const std::byte *>(text),
-        reinterpret_cast<const std::byte *>(text) + std::strlen(text));
-    neotape::tcp::write_message(
-        client, Message{MessageType::error, std::move(payload)});
-}
-
-uint64_t le64_from_bytes(const std::vector<std::byte> &payload) {
-    uint64_t v = 0;
-    for (std::size_t i = 0; i < payload.size() && i < 8; ++i) {
-        v |= static_cast<uint64_t>(static_cast<uint8_t>(payload[i])) << (8 * i);
-    }
-    return v;
-}
-
-PaxWriterCallbacks make_server_callbacks(FrameBuilder &builder,
+PaxWriterCallbacks make_server_callbacks(ContentFrameBuilder &builder,
                                          ClosableQueue<RecordOrDone> &queue) {
     return PaxWriterCallbacks{
         .begin_slice =
@@ -334,12 +64,10 @@ PaxWriterCallbacks make_server_callbacks(FrameBuilder &builder,
             },
         .write_chunk =
             [&](PaxChunk chunk) {
-                std::vector<uint64_t> seq_nums;
-                auto frames = builder.feed(chunk.bytes, seq_nums);
-                assert(frames.size() == seq_nums.size());
-                for (std::size_t i = 0; i < frames.size(); ++i) {
-                    if (!queue.push(RecordOrDone{std::move(frames[i]),
-                                                 seq_nums[i], 0, false,
+                auto frames = builder.feed(chunk.bytes);
+                for (auto &f : frames) {
+                    if (!queue.push(RecordOrDone{std::move(f.record),
+                                                 f.global_seq_num, 0, false,
                                                  false})) {
                         throw std::runtime_error("frame consumer disconnected");
                     }
@@ -348,8 +76,8 @@ PaxWriterCallbacks make_server_callbacks(FrameBuilder &builder,
         .end_slice =
             [&](uint64_t slice_num) {
                 if (auto tail = builder.flush(); tail.has_value()) {
-                    if (!queue.push(RecordOrDone{std::move(tail->first),
-                                                 tail->second, 0, false,
+                    if (!queue.push(RecordOrDone{std::move(tail->record),
+                                                 tail->global_seq_num, 0, false,
                                                  false})) {
                         throw std::runtime_error("frame consumer disconnected");
                     }
@@ -617,21 +345,30 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
         close(listener);
 
         std::string const archive_uuid = make_uuid_v4();
-        FrameBuilder builder(opts.volume_block_size, archive_uuid,
-                             opts.archive_name);
+        ContentFrameBuilder builder(opts.volume_block_size, archive_uuid,
+                                    opts.archive_name);
 
         constexpr uint64_t dummy_frame_count = 8;
         auto has_more_frames = [](uint64_t idx) {
             return idx < dummy_frame_count;
         };
-        auto produce_record = [&](uint64_t idx) {
+        auto produce_record = [&](uint64_t /*idx*/) {
             const uint32_t cap = builder.payload_capacity();
-            std::vector<std::byte> payload(cap);
+            std::vector<std::byte> payload(static_cast<std::size_t>(cap));
             for (uint32_t i = 0; i < cap; ++i) {
-                payload[i] =
-                    static_cast<std::byte>(static_cast<uint8_t>(idx + i));
+                payload[i] = static_cast<std::byte>(static_cast<uint8_t>(i));
             }
-            return builder.build_frame(std::span(payload), idx + 1);
+            auto frames = builder.feed(std::span(payload));
+            if (frames.empty()) {
+                // Exact boundary: pending_ just filled to cap.
+                // Flush to get the frame now since there is no more input
+                // for this slice.
+                auto f = builder.flush();
+                assert(f.has_value());
+                return std::move(f->record);
+            }
+            assert(frames.size() == 1);
+            return std::move(frames[0].record);
         };
         uint64_t request_count = 0;
         uint64_t frames_served = 0;
@@ -685,8 +422,8 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
     std::cerr << std::format("archiver listening on {}\n", opts.listen_address);
 
     std::string const archive_uuid = make_uuid_v4();
-    FrameBuilder builder(opts.volume_block_size, archive_uuid,
-                         opts.archive_name);
+    ContentFrameBuilder builder(opts.volume_block_size, archive_uuid,
+                                opts.archive_name);
     ClosableQueue<RecordOrDone> frame_queue(8);
 
     std::exception_ptr pax_error;
@@ -720,15 +457,14 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
             write_pax(opts.pax, std::move(callbacks));
             // Flush any trailing partial frame after last end_slice.
             if (auto tail = builder.flush(); tail.has_value()) {
-                if (!frame_queue.push(RecordOrDone{std::move(tail->first),
-                                                   tail->second, 0, false,
-                                                   false})) {
+                if (!frame_queue.push(RecordOrDone{std::move(tail->record),
+                                                   tail->global_seq_num, 0,
+                                                   false, false})) {
                     throw std::runtime_error("frame consumer disconnected");
                 }
             }
-            uint64_t const last_global_seq =
-                builder.global_frame == 1 ? 0 : builder.global_frame - 1;
-            uint64_t const last_slice_seq = builder.current_slice;
+            uint64_t const last_global_seq = builder.last_global_seq_num();
+            uint64_t const last_slice_seq = builder.current_slice_seq_num();
             if (!frame_queue.push(RecordOrDone{
                     {}, last_global_seq, last_slice_seq, false, true})) {
                 throw std::runtime_error("frame consumer disconnected");

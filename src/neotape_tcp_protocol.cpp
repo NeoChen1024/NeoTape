@@ -142,6 +142,11 @@ Address parse_address(const std::string &addr) {
         }
         result.host = rest.substr(0, colon);
         result.port = rest.substr(colon + 1);
+        // Strip brackets from IPv6 literals for getaddrinfo() compatibility.
+        if (result.host.size() >= 2 && result.host.front() == '[' &&
+            result.host.back() == ']') {
+            result.host = result.host.substr(1, result.host.size() - 2);
+        }
         return result;
     }
     if (addr.starts_with(unix_prefix)) {

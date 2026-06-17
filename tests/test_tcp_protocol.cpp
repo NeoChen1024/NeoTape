@@ -155,7 +155,8 @@ int main() {
         auto a = neotape::tcp::parse_address("tcp://[::1]:9123");
         if (a.is_unix)
             fail("ipv6 brackets: should not be unix");
-        if (a.host != "[::1]")
+        // Brackets are stripped for getaddrinfo() compatibility.
+        if (a.host != "::1")
             fail("ipv6 brackets host: " + a.host);
         if (a.port != "9123")
             fail("ipv6 brackets port: " + a.port);

@@ -15,7 +15,17 @@ using std::string;
 
 std::optional<string> FrameValidator::validate(const FrameHeader &header,
                                                const uint8_t *raw_data,
-                                               std::size_t record_size) {
+                                               std::size_t record_size,
+                                               bool skip_hash) {
+    // Reject any frame presented after archive_end.
+    if (saw_archive_end) {
+        return format("frame after archive_end at global_seq={}",
+                      header.global_frame_seq_num);
+    }
+
+    // Capture whether we had a previous frame before this one is processed.
+    bool const had_previous_frame = saw_any_frame;
+
     const uint32_t block_size = decoded_block_size(header);
 
     // --- record size match ---
@@ -24,10 +34,12 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
                       block_size);
     }
 
-    // --- frame_hash ---
-    if (!verify_frame_hash(raw_data, record_size, header.frame_hash)) {
-        return format("frame hash mismatch at global_seq={}",
-                      header.global_frame_seq_num);
+    // --- frame_hash (may be skipped for advisory metadata frames) ---
+    if (!skip_hash) {
+        if (!verify_frame_hash(raw_data, record_size, header.frame_hash)) {
+            return format("frame hash mismatch at global_seq={}",
+                          header.global_frame_seq_num);
+        }
     }
 
     // --- SIGNED flag / signature consistency ---
@@ -115,6 +127,11 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
             return format("logical_slice_seq_num {} jumped from {}",
                           header.logical_slice_seq_num, current_slice_seq_num);
         }
+        // Previous slice must have ended cleanly.
+        if (had_previous_frame && !last_frame_had_end) {
+            return format("slice transition without END flag at global_seq={}",
+                          header.global_frame_seq_num);
+        }
         current_slice_seq_num = header.logical_slice_seq_num;
         current_phase = Phase::none;
         expected_frame_seq_within_channel = 1;
@@ -128,6 +145,26 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
             return "metadata frame after content in same slice";
         }
         current_phase = Phase::metadata;
+    }
+
+    // --- START / END flags and channel-group boundaries ---
+    bool const channel_changed =
+        had_previous_frame && header.channel_type != last_channel_type;
+
+    // Previous channel group must have ended before a new one starts.
+    if (channel_changed && !last_frame_had_end) {
+        return format("channel group transition without END flag at "
+                      "global_seq={}",
+                      header.global_frame_seq_num);
+    }
+
+    // New channel group must carry START flag (unless same group continues).
+    if (channel_changed) {
+        if (!has_frame_flag_start(header.flags)) {
+            return format("missing START flag at new channel group start "
+                          "global_seq={}",
+                          header.global_frame_seq_num);
+        }
     }
 
     // --- frame_seq_num_within_channel ---
@@ -154,6 +191,7 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
             header.frame_seq_num_within_channel + 1;
     }
     last_channel_type = header.channel_type;
+    last_frame_had_end = has_frame_flag_end(header.flags);
 
     return std::nullopt; // OK
 }
@@ -171,6 +209,7 @@ void FrameValidator::reset() {
     saw_first_volume_seq = false;
     saw_any_frame = false;
     saw_archive_end = false;
+    last_frame_had_end = false;
 }
 
 } // namespace neotape
