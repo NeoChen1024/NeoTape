@@ -70,6 +70,11 @@ Hash blake3_hash(const uint8_t *data, std::size_t size);
 Hash compute_frame_hash(const uint8_t *data, std::size_t size);
 uint32_t decoded_block_size(const FrameHeader &header);
 bool valid_block_size(uint32_t block_size);
+
+// Stateless per-frame header validation.  Throws std::runtime_error.
+void validate_header(const FrameHeader &header);
+bool verify_frame_hash(const uint8_t *data, std::size_t size,
+                       const Hash &expected);
 std::string utc_timestamp_now();
 std::string make_uuid_v4();
 

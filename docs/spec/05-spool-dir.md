@@ -72,27 +72,6 @@ Appending a new archive to an existing spool is permitted.
 
 Spool files MUST preserve the same `volume_block_size_kib` semantics as tape mode. Each NeoTape record within a spool file is exactly `volume_block_size_kib * 1024` bytes. A spool writer MUST store records as fixed-size blocks within the regular file, and the reader MUST be able to determine record boundaries from the file contents alone.
 
-## Manifest
-
-Each archive MAY contain a machine-readable manifest (`manifest.json`):
-
-```json
-{
-  "archives": [
-    {
-      "archive_uuid": "<uuid>",
-      "archive_label": "<LABEL>",
-      "files": [
-        {"tape_file_num": 0, "path": "neotape-000001.slice-000001.nts"},
-        ...
-      ]
-    }
-  ]
-}
-```
-
-The manifest is advisory. Restore correctness comes from NeoTape headers and `frame_hash` verification inside the spool files.
-
 ## Reader Model
 
 A reader SHOULD be able to accept either a tape device path or a spool directory path. When reading from a spool directory, the reader SHOULD validate:

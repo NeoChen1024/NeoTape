@@ -50,6 +50,8 @@ headers currently confuse clangd 22.
 - `src/neotape_plan_cmd.cpp` — planner for slice metadata
 - `src/neotape_archiver_cmd.cpp` — `bin/neotape-archiver` CLI entry point
 - `src/neotape_raw_store_cmd.cpp` — `bin/neotape-raw-store` raw-stream server CLI entry point
+- `src/neotape_inspect_cmd.cpp` — `bin/neotape-inspect` CLI entry point
+- `src/neotape_validate.cpp` — shared archive-frame validation (root: `include/neotape/validate.hpp`)
 - `src/neotape_write_cmd.cpp` — `bin/neotape-write` CLI entry point
 - `src/neotape_tcp_server.cpp` — archiver server and frame packing
 - `src/neotape_tcp_protocol.cpp` — framed TCP message I/O
@@ -60,14 +62,14 @@ headers currently confuse clangd 22.
 - `include/neotape/` — shared project headers (common types, format helpers)
 - `3rdparty/` — git submodules (BLAKE3, crc32c, mt-st). Init with `git submodule update --init --recursive`
 - `docs/spec/` — active format spec; `docs/mt-pax.md` — mt-pax architecture
-- `tests/smoke_mt_pax_pipeline.sh`, `tests/smoke_tcp_archive.sh`, `tests/smoke_raw_store.sh`, `tests/smoke_mt_pax_parity.sh` — smoke tests; no test framework or CI yet
+- `tests/smoke_mt_pax_pipeline.sh`, `tests/smoke_tcp_archive.sh`, `tests/smoke_raw_store.sh`, `tests/smoke_inspect.sh`, `tests/smoke_mt_pax_parity.sh` — smoke tests; no test framework or CI yet
 
 ## Architecture pattern
 
 NeoTape separates long-running data producers/consumers from short-lived tape
 I/O clients over a single TCP or Unix-domain socket:
 
-- **Listener / long-running role** (`neotape-archiver`, `neotape-raw-store`, future `neotape-extractor`)
+- **Listener / long-running role** (`neotape-archiver`, `neotape-raw-store`, `neotape-extractor`)
   owns archive state (archive UUID, volume sequence, and frame sequence numbers) and serves
   fully-formed NeoTape records through a framed request-response protocol. It
   stays up for the lifetime of the archive and does not know about physical
@@ -134,6 +136,20 @@ Long-running raw byte-stream producer. It reads raw bytes from stdin by default
 or from `--input`, stores the entire input as one logical content slice, uses
 spec-correct channel frame sequencing/START/END flags, emits a slice-closing
 `tape_eof`, then emits `archive_end`.
+
+## neotape-inspect CLI
+
+```
+bin/neotape-inspect --source <spool:./dir|tape:/dev/nst0>
+                    [--debug] [--raw] [-h]
+```
+
+Scans a spool directory or tape device for NeoTape frames, parses and validates
+every frame header, and prints a human-readable table with frame hash
+verification, followed by an archive-level compliance report.  Compliance checks
+cover per-frame integrity (magic, version, block size, hash, flags, signature
+consistency, reserved bytes) and archive continuity (`global_frame_seq_num`,
+slice/channel sequence, channel ordering, archive-end rules).
 
 ## neotape-write CLI
 

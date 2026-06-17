@@ -107,43 +107,6 @@ ChannelType get_channel_type(uint8_t value) {
     }
 }
 
-void validate_frame_header(const FrameHeader &header) {
-    const uint32_t block_size = decoded_block_size(header);
-    if (!valid_block_size(block_size)) {
-        throw std::runtime_error("invalid volume block size");
-    }
-    if (header.frame_payload_size > block_size - fixed_header_size) {
-        throw std::runtime_error(
-            "frame payload size exceeds block payload capacity");
-    }
-
-    constexpr uint64_t allowed_flags = frame_flag_start | frame_flag_end |
-                                       frame_flag_signed | frame_flag_clean_end;
-    if ((header.flags & ~allowed_flags) != 0) {
-        throw std::runtime_error("reserved frame flag bits set");
-    }
-
-    if (header.channel_type == ChannelType::ARCHIVE_END) {
-        if (!has_frame_flag_start(header.flags) ||
-            !has_frame_flag_end(header.flags) ||
-            !has_frame_flag_clean_end(header.flags)) {
-            throw std::runtime_error(
-                "archive-end frame missing required flags");
-        }
-        if (header.logical_slice_seq_num != 0) {
-            throw std::runtime_error(
-                "archive-end frame has logical slice sequence");
-        }
-        if (header.frame_seq_num_within_channel != 1) {
-            throw std::runtime_error(
-                "archive-end frame channel sequence must be one");
-        }
-    } else if (has_frame_flag_clean_end(header.flags)) {
-        throw std::runtime_error(
-            "CLEAN_END is only valid on archive-end frames");
-    }
-}
-
 void validate_reserved(const uint8_t *data) {
     for (size_t i = off_reserved; i < off_reserved + reserved_size; ++i) {
         if (data[i] != 0) {
@@ -239,7 +202,7 @@ FrameHeader parse_frame_header(const uint8_t *data, std::size_t size) {
               data + off_frame_hash + header.frame_hash.size(),
               header.frame_hash.begin());
 
-    validate_frame_header(header);
+    neotape::validate_header(header);
     return header;
 }
 
@@ -320,6 +283,48 @@ std::string make_uuid_v4() {
                        bytes[5], bytes[6], bytes[7], bytes[8], bytes[9],
                        bytes[10], bytes[11], bytes[12], bytes[13], bytes[14],
                        bytes[15]);
+}
+
+void validate_header(const FrameHeader &header) {
+    const uint32_t block_size = decoded_block_size(header);
+    if (!valid_block_size(block_size)) {
+        throw std::runtime_error("invalid volume block size");
+    }
+    if (header.frame_payload_size > block_size - fixed_header_size) {
+        throw std::runtime_error(
+            "frame payload size exceeds block payload capacity");
+    }
+
+    constexpr uint64_t allowed_flags = frame_flag_start | frame_flag_end |
+                                       frame_flag_signed | frame_flag_clean_end;
+    if ((header.flags & ~allowed_flags) != 0) {
+        throw std::runtime_error("reserved frame flag bits set");
+    }
+
+    if (header.channel_type == ChannelType::ARCHIVE_END) {
+        if (!has_frame_flag_start(header.flags) ||
+            !has_frame_flag_end(header.flags) ||
+            !has_frame_flag_clean_end(header.flags)) {
+            throw std::runtime_error(
+                "archive-end frame missing required flags");
+        }
+        if (header.logical_slice_seq_num != 0) {
+            throw std::runtime_error(
+                "archive-end frame has logical slice sequence");
+        }
+        if (header.frame_seq_num_within_channel != 1) {
+            throw std::runtime_error(
+                "archive-end frame channel sequence must be one");
+        }
+    } else if (has_frame_flag_clean_end(header.flags)) {
+        throw std::runtime_error(
+            "CLEAN_END is only valid on archive-end frames");
+    }
+}
+
+bool verify_frame_hash(const uint8_t *data, std::size_t size,
+                       const Hash &expected) {
+    return compute_frame_hash(data, size) == expected;
 }
 
 } // namespace neotape

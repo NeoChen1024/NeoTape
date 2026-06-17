@@ -2,6 +2,7 @@
 #include "neotape/extractor.hpp"
 #include "neotape/format.hpp"
 #include "neotape/tcp_protocol.hpp"
+#include "neotape/validate.hpp"
 
 #include <cerrno>
 #include <cstdio>
@@ -98,18 +99,7 @@ int create_listener(const string &addr) {
 }
 
 struct ExtractorState {
-    string archive_uuid;
-    string archive_label;
-    uint64_t expected_global_frame_seq = 1;
-    uint64_t expected_volume_seq_num = 0;
-    uint64_t current_slice_seq_num = 0;
-    uint32_t volume_block_size = 0;
-    ChannelType last_channel_type{};
-    uint64_t expected_frame_seq_within_channel = 1;
-    enum class Phase { none, metadata, content };
-    Phase current_phase = Phase::none;
-    bool saw_first_volume_seq = false;
-    bool saw_any_frame = false;
+    FrameValidator validator;
     bool saw_archive_end = false;
     vector<uint8_t> slice_payload;
 };
@@ -159,89 +149,14 @@ vector<std::byte> uint64_to_le_bytes(uint64_t v) {
     const auto *data = reinterpret_cast<const uint8_t *>(record.data());
     const FrameHeader header = parse_fixed_header(data, record.size());
 
-    const uint32_t block_size = decoded_block_size(header);
-    if (record.size() != block_size) {
-        std::cerr << format(
-            "extractor: record size {} != decoded block size {}\n",
-            record.size(), block_size);
+    uint64_t const prev_slice_seq = state.validator.current_slice_seq_num;
+    auto err = state.validator.validate(header, data, record.size());
+    if (err.has_value()) {
+        std::cerr << format("extractor: {}\n", *err);
         return false;
     }
 
-    // --- frame_hash ---
-    const Hash computed = compute_frame_hash(data, record.size());
-    if (computed != header.frame_hash) {
-        std::cerr << format("extractor: frame hash mismatch at global_seq={}\n",
-                            header.global_frame_seq_num);
-        return false;
-    }
-
-    // --- volume_block_size must stay consistent ---
-    if (state.volume_block_size == 0) {
-        state.volume_block_size = block_size;
-        NEOTAPE_DEBUG("extractor: volume block size = {}\n", block_size);
-    } else if (block_size != state.volume_block_size) {
-        std::cerr << format(
-            "extractor: volume block size changed from {} to {}\n",
-            state.volume_block_size, block_size);
-        return false;
-    }
-
-    // --- archive_uuid / archive_label ---
-    if (state.archive_uuid.empty()) {
-        state.archive_uuid = header.archive_uuid;
-        state.archive_label = header.archive_label;
-    } else {
-        if (header.archive_uuid != state.archive_uuid) {
-            std::cerr << "extractor: archive_uuid mismatch\n";
-            return false;
-        }
-        if (header.archive_label != state.archive_label) {
-            std::cerr << "extractor: archive_label mismatch\n";
-            return false;
-        }
-    }
-
-    // --- global_frame_seq_num ---
-    if (header.global_frame_seq_num != state.expected_global_frame_seq) {
-        std::cerr << format(
-            "extractor: global_frame_seq_num {} != expected {}\n",
-            header.global_frame_seq_num, state.expected_global_frame_seq);
-        return false;
-    }
-    state.expected_global_frame_seq = header.global_frame_seq_num + 1;
-
-    // --- volume_seq_num (advisory, monotonic, at most +1) ---
-    if (!state.saw_first_volume_seq) {
-        state.expected_volume_seq_num = header.volume_seq_num;
-        state.saw_first_volume_seq = true;
-    } else {
-        if (header.volume_seq_num < state.expected_volume_seq_num) {
-            std::cerr << format(
-                "extractor: volume_seq_num {} went backward from {}\n",
-                header.volume_seq_num, state.expected_volume_seq_num);
-            return false;
-        }
-        if (header.volume_seq_num > state.expected_volume_seq_num + 1) {
-            std::cerr << format(
-                "extractor: volume_seq_num {} skipped ahead from {}\n",
-                header.volume_seq_num, state.expected_volume_seq_num);
-            return false;
-        }
-        state.expected_volume_seq_num = header.volume_seq_num;
-    }
-
-    // --- archive_end ---
-    if (header.channel_type == ChannelType::ARCHIVE_END) {
-        if (!has_frame_flag_clean_end(header.flags)) {
-            std::cerr << "extractor: archive_end frame missing CLEAN_END\n";
-            return false;
-        }
-        if (header.logical_slice_seq_num != 0) {
-            std::cerr << format(
-                "extractor: archive_end logical_slice_seq_num {} != 0\n",
-                header.logical_slice_seq_num);
-            return false;
-        }
+    if (state.validator.saw_archive_end) {
         if (!flush_slice(state, output)) {
             return false;
         }
@@ -249,78 +164,12 @@ vector<std::byte> uint64_to_le_bytes(uint64_t v) {
         return true;
     }
 
-    // --- logical_slice_seq_num ---
-    if (!state.saw_any_frame) {
-        if (header.logical_slice_seq_num != 1) {
-            std::cerr << format(
-                "extractor: first frame logical_slice_seq_num {} != 1\n",
-                header.logical_slice_seq_num);
-            return false;
-        }
-        state.current_slice_seq_num = 1;
-        state.saw_any_frame = true;
-    }
-
-    if (header.logical_slice_seq_num != state.current_slice_seq_num) {
-        if (header.logical_slice_seq_num != state.current_slice_seq_num + 1) {
-            std::cerr << format(
-                "extractor: logical_slice_seq_num {} jumped from {}\n",
-                header.logical_slice_seq_num, state.current_slice_seq_num);
-            return false;
-        }
-        // Flush the previous slice payload before starting the new one.
+    // Slice boundary: flush the previous slice's accumulated payload.
+    if (header.logical_slice_seq_num != prev_slice_seq) {
         if (!flush_slice(state, output)) {
             return false;
         }
-        state.current_slice_seq_num = header.logical_slice_seq_num;
-        state.current_phase = ExtractorState::Phase::none;
-        state.expected_frame_seq_within_channel = 1;
     }
-
-    // --- channel ordering: metadata before content within same slice ---
-    if (header.channel_type == ChannelType::CH_CONTENT) {
-        state.current_phase = ExtractorState::Phase::content;
-    } else if (header.channel_type == ChannelType::CH_METADATA) {
-        if (state.current_phase == ExtractorState::Phase::content) {
-            std::cerr
-                << "extractor: metadata frame after content in same slice\n";
-            return false;
-        }
-        state.current_phase = ExtractorState::Phase::metadata;
-    }
-
-    // --- frame_seq_num_within_channel (per (slice, channel) group) ---
-    const bool channel_changed =
-        (header.channel_type != state.last_channel_type);
-    const bool start_flag = has_frame_flag_start(header.flags);
-    const bool is_new_group = channel_changed || start_flag;
-
-    if (is_new_group) {
-        if (header.frame_seq_num_within_channel != 1) {
-            std::cerr << format(
-                "extractor: frame_seq_num_within_channel {} != 1 at start "
-                "of new channel group\n",
-                header.frame_seq_num_within_channel);
-            return false;
-        }
-    } else {
-        if (header.frame_seq_num_within_channel !=
-            state.expected_frame_seq_within_channel) {
-            std::cerr << format(
-                "extractor: frame_seq_num_within_channel {} != expected {}\n",
-                header.frame_seq_num_within_channel,
-                state.expected_frame_seq_within_channel);
-            return false;
-        }
-    }
-
-    if (has_frame_flag_end(header.flags)) {
-        state.expected_frame_seq_within_channel = 1;
-    } else {
-        state.expected_frame_seq_within_channel =
-            header.frame_seq_num_within_channel + 1;
-    }
-    state.last_channel_type = header.channel_type;
 
     // --- accumulate payload ---
     if (header.frame_payload_size > 0) {
@@ -457,9 +306,9 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
 
         bool const complete = serve_client(client, state, output);
         if (complete) {
-            total_frames = state.expected_global_frame_seq == 0
+            total_frames = state.validator.expected_global_frame_seq == 0
                                ? 0
-                               : state.expected_global_frame_seq - 1;
+                               : state.validator.expected_global_frame_seq - 1;
             std::cerr << "extractor: archive extraction complete\n";
             return total_frames;
         }
@@ -467,9 +316,9 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
         // Connection dropped before completion.  Count the frames we
         // validated (the next expected seq minus 1), then wait for the
         // next reader to reconnect.
-        total_frames = state.expected_global_frame_seq == 0
+        total_frames = state.validator.expected_global_frame_seq == 0
                            ? 0
-                           : state.expected_global_frame_seq - 1;
+                           : state.validator.expected_global_frame_seq - 1;
         std::cerr << format("extractor: reader disconnected after {} frames, "
                             "waiting for next reader\n",
                             total_frames);

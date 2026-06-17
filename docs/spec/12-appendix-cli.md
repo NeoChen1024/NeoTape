@@ -105,6 +105,30 @@ the protocol (pull model).  One reader instance handles one volume; when the
 volume is exhausted the reader disconnects and the operator starts a new
 instance for the next volume.
 
+## Inspect tool
+
+`neotape-inspect` scans a spool directory or tape device and prints a
+human-readable table of every NeoTape frame header with frame hash
+verification status, followed by a compliance report:
+
+```sh
+# Inspect a spool directory:
+bin/neotape-inspect --source spool:./out
+
+# Inspect a tape device:
+bin/neotape-inspect --source tape:/dev/nst0
+```
+
+The compliance report checks:
+
+- **Per-frame:** magic, header version, volume block size, frame hash,
+  payload size, reserved fields, allowed flag bits (START/END/SIGNED/CLEAN_END),
+  SIGNED flag vs. signature field consistency.
+- **Archive-level:** `archive_uuid`/`archive_label` consistency,
+  `global_frame_seq_num` continuity, `logical_slice_seq_num` progression,
+  channel ordering (metadata before content),
+  `frame_seq_num_within_channel` continuity, `archive_end` frame rules.
+
 ## Backend locators
 
 Backend locators use `<kind>:<locator>` syntax.  The split occurs at the first
