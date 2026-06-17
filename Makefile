@@ -4,7 +4,7 @@ CXX	= c++
 INCS	= -Iinclude -Itests -Llib -I/usr/local/include -Lusr/local/lib
 CFLAGS	= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c17 -march=native -pedantic $(INCS)
 CXXFLAGS= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c++20 -march=native -pedantic $(INCS)
-LDLIBS	= lib/libb3sum.a lib/libcrc32c.a -larchive
+LDLIBS	= lib/libb3sum.a -larchive
 EXE	= bin/mt-pax bin/neotape-plan bin/test_pax_pipeline bin/test_tcp_protocol bin/test_format bin/neotape-archiver bin/neotape-write bin/neotape-read bin/neotape-extractor
 BINDIR	= bin
 LIBDIR	= lib
@@ -13,7 +13,6 @@ BUILDDIR= build
 # Header dependencies are listed where they matter.
 
 include 3rdparty/blake3.mk
-include 3rdparty/crc32c.mk
 
 CLANG_FORMAT ?= clang-format
 SRC_FILES = $(wildcard src/*.cpp include/neotape/*.hpp)
@@ -28,7 +27,7 @@ compile_commands: compile_commands.json
 
 all: ${EXE}
 
-$(BINDIR) $(LIBDIR) $(BUILDDIR) $(BUILDDIR)/blake3 $(BUILDDIR)/crc32c:
+$(BINDIR) $(LIBDIR) $(BUILDDIR) $(BUILDDIR)/blake3:
 	mkdir -p $@
 
 src/%.o : src/%.cpp
@@ -38,10 +37,10 @@ src/neotape_format.o: include/neotape/format.hpp
 
 # ── binaries ──
 
-$(BINDIR)/mt-pax : src/mt-pax.o src/neotape_pax_writer.o src/neotape_common.o src/neotape_bounded_buffer.o | $(BINDIR)
+$(BINDIR)/mt-pax : src/mt-pax.o src/neotape_pax_writer.o src/neotape_common.o src/neotape_bounded_buffer.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-plan : src/neotape_plan_cmd.o src/neotape_format.o src/neotape_common.o | $(BINDIR)
+$(BINDIR)/neotape-plan : src/neotape_plan_cmd.o src/neotape_format.o src/neotape_common.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 $(BINDIR)/test_pax_pipeline : tests/test_pax_pipeline.cpp include/neotape/closable_queue.hpp | $(BINDIR)
@@ -50,19 +49,19 @@ $(BINDIR)/test_pax_pipeline : tests/test_pax_pipeline.cpp include/neotape/closab
 $(BINDIR)/test_tcp_protocol : tests/test_tcp_protocol.cpp src/neotape_tcp_protocol.o | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(filter %.o,$^) -o $@
 
-$(BINDIR)/test_format : tests/test_format.cpp src/neotape_format.o | $(BINDIR)
+$(BINDIR)/test_format : tests/test_format.cpp src/neotape_format.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(filter %.o,$^) -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-archiver : src/neotape_archiver_cmd.o src/neotape_tcp_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_common.o src/neotape_pax_writer.o src/neotape_bounded_buffer.o | $(BINDIR)
+$(BINDIR)/neotape-archiver : src/neotape_archiver_cmd.o src/neotape_tcp_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_common.o src/neotape_pax_writer.o src/neotape_bounded_buffer.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-write : src/neotape_write_cmd.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o | $(BINDIR)
+$(BINDIR)/neotape-write : src/neotape_write_cmd.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-read : src/neotape_read_cmd.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o | $(BINDIR)
+$(BINDIR)/neotape-read : src/neotape_read_cmd.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-extractor : src/neotape_extractor_cmd.o src/neotape_extractor.o src/neotape_format.o src/neotape_tcp_protocol.o src/neotape_common.o | $(BINDIR)
+$(BINDIR)/neotape-extractor : src/neotape_extractor_cmd.o src/neotape_extractor.o src/neotape_format.o src/neotape_tcp_protocol.o src/neotape_common.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_format $(BINDIR)/mt-pax $(BINDIR)/neotape-plan $(BINDIR)/neotape-archiver $(BINDIR)/neotape-write $(BINDIR)/neotape-read
@@ -79,7 +78,7 @@ test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_for
 test_pax_cli: $(BINDIR)/mt-pax
 	sh tests/smoke_mt_pax_pipeline.sh
 
-$(BINDIR)/% : src/%.c $(B3LIB) $(CRC32CLIB) | $(BINDIR)
+$(BINDIR)/% : src/%.c $(B3LIB) | $(BINDIR)
 	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
 
 
@@ -89,4 +88,4 @@ fix:
 	$(CLANG_TIDY) --fix $(SRC_FILES) -- $(CXXFLAGS)
 	$(CLANG_FORMAT) -i $(SRC_FILES)
 clean:
-	-rm -f ${EXE} ${BINDIR}/*.o src/*.o tests/*.o $(B3LIB) $(B3OBJ) $(CRC32CLIB) $(CRC32COBJ)
+	-rm -f ${EXE} ${BINDIR}/*.o src/*.o tests/*.o $(B3LIB) $(B3OBJ)
