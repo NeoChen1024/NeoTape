@@ -1,9 +1,6 @@
 [submodule "3rdparty/BLAKE3"]
 	path = 3rdparty/BLAKE3
 	url = https://github.com/BLAKE3-team/BLAKE3.git
-[submodule "3rdparty/nlohmann-json"]
-	path = 3rdparty/nlohmann-json
-	url = https://github.com/nlohmann/json.git
 [submodule "3rdparty/signify"]
 	path = 3rdparty/signify
 	url = https://github.com/aperezdc/signify.git
