@@ -632,9 +632,16 @@ int main(int argc, char **argv) {
                 uint32_t record_size = neotape::decoded_block_size(header);
                 if (!volume_block_size.has_value()) {
                     volume_block_size = record_size;
-                    std::cerr
-                        << format("writer: first frame parsed block_size={}\n",
-                                  record_size);
+                    std::cerr << format(
+                        "writer: first frame parsed block_size={} "
+                        "archive_label=\"{}\" archive_uuid={} volume_seq={} "
+                        "logical_slice_seq={} global_seq={} channel={} "
+                        "payload_size={}\n",
+                        record_size, header.archive_label, header.archive_uuid,
+                        header.volume_seq_num, header.logical_slice_seq_num,
+                        header.global_frame_seq_num,
+                        neotape::channel_type_name(header.channel_type),
+                        header.frame_payload_size);
                 }
                 if (msg->payload.size() != *volume_block_size) {
                     joined_fail(

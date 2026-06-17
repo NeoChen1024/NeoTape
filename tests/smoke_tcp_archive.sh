@@ -4,10 +4,11 @@ set -e
 SOCK=/tmp/neotape-smoke-$$
 SPOOL=/tmp/neotape-smoke-spool-$$
 SRC=/tmp/neotape-smoke-src-$$
+WRITER_LOG=/tmp/neotape-smoke-writer-$$.log
 BLOCK=4096
 
 cleanup() {
-	rm -rf "$SOCK" "$SPOOL" "$SRC"
+	rm -rf "$SOCK" "$SPOOL" "$SRC" "$WRITER_LOG"
 }
 trap cleanup EXIT
 
@@ -27,8 +28,29 @@ for _ in $(seq 1 50); do
 	sleep 0.1
 done
 
-./bin/neotape-write --source "unix://$SOCK" --target "spool:$SPOOL"
+./bin/neotape-write --source "unix://$SOCK" --target "spool:$SPOOL" 2>"$WRITER_LOG"
 wait "$ARCHIVER_PID"
+
+if ! grep -F 'writer: first frame parsed block_size=4096' "$WRITER_LOG" >/dev/null; then
+	echo "smoke_tcp_archive: missing first-frame block size log"
+	cat "$WRITER_LOG"
+	exit 1
+fi
+if ! grep -F 'archive_label="smoke"' "$WRITER_LOG" >/dev/null; then
+	echo "smoke_tcp_archive: missing first-frame archive label log"
+	cat "$WRITER_LOG"
+	exit 1
+fi
+if ! grep -F 'volume_seq=1' "$WRITER_LOG" >/dev/null; then
+	echo "smoke_tcp_archive: missing first-frame volume sequence log"
+	cat "$WRITER_LOG"
+	exit 1
+fi
+if ! grep -F 'logical_slice_seq=1' "$WRITER_LOG" >/dev/null; then
+	echo "smoke_tcp_archive: missing first-frame logical slice sequence log"
+	cat "$WRITER_LOG"
+	exit 1
+fi
 
 # The spool should contain two files: one for the content slice
 # (filemark after tape_eof) and one for the archive end frame.
