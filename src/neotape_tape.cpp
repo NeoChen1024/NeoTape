@@ -38,7 +38,7 @@ const map<int, string> density_names = {
     {0x5e, "LTO-8 Ultrium"}, {0x60, "LTO-9 Ultrium"},
 };
 
-constexpr string_view spool_prefix = "tape-file-";
+constexpr string_view spool_prefix = "neotape-";
 constexpr string_view spool_ext = ".nts";
 constexpr string_view _spool_temp_ext = ".pending";
 

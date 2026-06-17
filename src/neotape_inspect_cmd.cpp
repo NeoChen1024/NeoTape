@@ -148,8 +148,8 @@ class SpoolFrameReader final : public FrameReader {
             if (!name.ends_with(".nts")) {
                 continue;
             }
-            // Parse tape-file-XXXXXX.xxx.nts
-            constexpr string_view prefix{"tape-file-"};
+            // Parse neotape-XXXXXX.xxx.nts
+            constexpr string_view prefix{"neotape-"};
             if (!name.starts_with(prefix)) {
                 continue;
             }
