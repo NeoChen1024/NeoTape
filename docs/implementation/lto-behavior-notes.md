@@ -13,9 +13,9 @@ wrote NeoTape-like Frame records to a deliberately small tape partition and then
 read the records back for verification.
 
 The probe used complete records of the selected `volume_block_size`. Each record
-contained a 1024-byte Frame-like header followed by deterministic PRNG payload
-bytes and padding to the record size. Readback validated the header CRC32C, the
-probe payload digest, and regenerated PRNG payload bytes.
+contained a Frame-like header followed by deterministic PRNG payload bytes and
+padding to the record size. Readback validated the header and the probe payload
+digest and regenerated PRNG payload bytes.
 
 The probe was not a stable NeoTape archival writer. Its purpose was to observe
 real tape behavior near EOT/EOM.
@@ -73,8 +73,7 @@ The tape backend SHOULD use the following conservative policy:
    MUST stop writing ordinary content Frames to the current volume.
 5. After the first `ENOSPC`, the writer SHOULD switch to volume-change handling:
    close or synchronize the current tape position as appropriate, request the
-   next volume, write the next Volume Header, and resume with the first
-   uncommitted Frame.
+   next volume, and resume with the first uncommitted Frame.
 6. The writer MAY use a small backend-specific reserve area after early-warning
    EOT only for required close-out or synchronization operations, not for normal
    payload content.
@@ -85,50 +84,7 @@ The tape backend SHOULD use the following conservative policy:
 In short: the first `ENOSPC` is a volume-change trigger for normal NeoTape
 content, even if later writes might still succeed physically.
 
-## Reader Policy
-
-The reader should not use EOT/EOD status alone as the archive completion rule.
-Format-level validation remains authoritative.
-
-A normal reader should validate, in order:
-
-1. A complete `volume_block_size` record was read.
-2. The 1024-byte fixed header has valid magic, version, type, and CRC32C.
-3. `frame_payload_size <= volume_block_size - 1024`.
-4. The Frame payload hash validates.
-5. Slice-level integrity validates when the relevant content group ends.
-6. Archive completion is declared only by a valid Archive End Header with the
-   clean-completion flag set.
-
-If readback reaches EOD/EOT or repeated zero-length reads before a valid Archive
-End Header, the archive instance is incomplete even if all preceding Frames are
-valid.
-
-## Specification Implication
-
-NeoTape should define Frame-level commit semantics without claiming that LTO or
-any operating system tape stack guarantees atomic record writes.
-
-Recommended normative direction:
-
-```text
-A Frame is the smallest NeoTape commit unit.
-
-A writer MUST treat a Frame as committed only after the backend reports a
-complete write of the entire NeoTape record and no deferred write error is
-reported at the next synchronization point.
-
-A partial write, short write, residual write, failed synchronization, or unknown
-write status MUST cause the attempted Frame to be treated as uncommitted.
-
-After the first ENOSPC while writing ordinary content, the tape backend MUST NOT
-continue writing ordinary content Frames to the current volume. It MUST enter
-volume-change handling and resume with the first uncommitted Frame on the next
-volume.
-```
-
-
-## Additional Notes:
+## Additional Notes
 
 Tested native capacity of non-partitioned LTO-5 tapes:
 `partition number: 0, partition record data counter [MB]: 1541438`
@@ -149,5 +105,6 @@ Observed probe results:
 | 2 MiB | `1048576` bytes returned |
 | 4 MiB | `1048576` bytes returned |
 | 8 MiB | `1048576` bytes returned |
+
 This supports using an 8 MiB probe ceiling on the validated drive while still
 treating each successful `read()` as one physical tape record.

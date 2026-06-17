@@ -21,14 +21,13 @@ docs/
     03-frames-and-slices.md     Frame model, channels, sequence numbering
     04-volume-layout.md         Logical and physical tape layout
     05-spool-dir.md             Spool directory format
-    06-reader-state-machine.md  Reader processing model and state transitions
-    07-error-handling.md        Retry/Inspect/Fail/Salvage model
     08-security.md              Trust model, path safety, signing
     09-open-questions.md        Unresolved design choices and open questions
     10-future-extensions.md     Extension ideas (multi-channel, FEC, encryption)
     11-plan-metadata.md         Plan metadata format (`neotape plan`)
     12-appendix-cli.md          CLI usage examples for all tools
     13-appendix-layout-examples.md  Single-volume, multi-volume, multi-archive layouts
+    13-tcp-protocol.md          TCP/Unix-domain socket request-response protocol
 
   superpowers/
     specs/                      Design specs and proposals
@@ -36,15 +35,9 @@ docs/
     plans/                      Implementation plans derived from designs
 
   implementation/               Implementation-specific notes
-    phase-1-header-layout.md    Byte-offset decisions, serializer/parser design
     phase-3.5-mt-pax-writer.md  Multi-threaded pax writer architecture
-    build-and-dependencies.md   Makefile structure, dependencies, source layout
-    libarchive-pax-notes.md     libarchive call patterns, pax writer setup
-    blake3-notes.md             BLAKE3 integration points and performance notes
     lto-behavior-notes.md       LTO EOT/EOM empirical observations
-    tape-append-semantics.md    Tape backend append safety and initialization
     mt-pax-architecture.md      mt-pax thread roles and data flow
-    spool-optical-backup.md     Spool backend as optical/removable media staging
     path-pitfalls.md            Path handling conventions and gotchas
 ```
 
@@ -58,7 +51,7 @@ NeoTape uses a **single unified Frame Header** for all records. The header layou
 
 ### `implementation/`
 
-Use `docs/implementation/` for implementation-specific notes: C++ design decisions, Makefile structure, libarchive behavior, BLAKE3 integration, empirical LTO observations, and path handling gotchas.
+Use `docs/implementation/` for implementation-specific notes: empirical LTO observations, mt-pax architecture, pax writer details, and path handling gotchas.
 
 ## Splitting Guidance
 
