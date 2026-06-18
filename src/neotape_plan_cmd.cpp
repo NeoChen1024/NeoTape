@@ -69,7 +69,6 @@ struct EntryMeta {
     string uname;
     gid_t gid = 0;
     string gname;
-    bool hardlink = false;
 };
 
 struct SlicePlan {
@@ -539,9 +538,9 @@ void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num,
     for (size_t i = 0; i < slice.entries.size(); ++i) {
         const EntryMeta &e = slice.entries[i];
         string line =
-            format("/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}", slice_num, i, e.kind,
+            format("/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}", slice_num, i, e.kind,
                    e.apparent_bytes, e.mtime, e.uid, e.uname, e.gid, e.gname,
-                   e.hardlink ? 1 : 0, e.archive_path);
+                   e.archive_path);
         fwrite(line.data(), 1, line.size(), opts.meta_out);
         fputc('\0', opts.meta_out);
         fputc('\n', opts.meta_out);
@@ -637,7 +636,11 @@ class PlannerScanner {
     void resolve_names(EntryMeta &meta) {
         meta.uname = name_cache_.resolve_user(meta.uid);
         meta.gname = name_cache_.resolve_group(meta.gid);
-        meta.hardlink = inode_tracker_.is_hardlink(meta.device, meta.inode);
+        if (inode_tracker_.is_hardlink(meta.device, meta.inode)) {
+            meta.kind = 'h';
+            meta.disk_bytes = 0;
+            meta.apparent_bytes = 0;
+        }
     }
 
     LstatResult stat_child(size_t index, const fs::path &path,

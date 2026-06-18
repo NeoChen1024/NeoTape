@@ -37,25 +37,24 @@ line.
 `/chdir/` MUST appear at most once and MUST be the first record in the stream.
 All entry records that follow are resolved relative to this directory.
 
-### `/<slice>/<file_num>/<kind>/<size>/<mtime>/<uid>/<uname>/<gid>/<gname>/<hardlink>/<filepath>\0\n`
+### `/<slice>/<file_num>/<kind>/<size>/<mtime>/<uid>/<uname>/<gid>/<gname>/<filepath>\0\n`
 
 An entry record. Fields:
 
-| Field          | Description                                                                                                 |
-| -------------- | ----------------------------------------------------------------------------------------------------------- |
-| `<slice>`      | Slice number, not zero-padded, 0-based.                                                                     |
-| `<file_num>`   | Index within the slice, not zero-padded, 0-based.                                                           |
-| `<kind>`       | File type: `f` regular, `d` directory, `l` symlink, `c` char, `b` block, `p` fifo, `s` socket. |
-| `<size>`       | Apparent file size in bytes (decimal).                                                                      |
-| `<mtime>`      | Modification time as Unix timestamp (decimal seconds).                                                      |
-| `<uid>`        | Numeric owner user ID (decimal). `0` when unknown.                                                          |
-| `<uname>`      | Owner user name as a string (empty when unknown).                                                           |
-| `<gid>`        | Numeric group ID (decimal). `0` when unknown.                                                               |
-| `<gname>`      | Group name as a string (empty when unknown).                                                                |
-| `<hardlink>`   | `1` if this entry reuses file content via hardlink semantics, `0` otherwise. |
-| `<filepath>`   | Archive path (relative, may include the source-directory prefix, no leading `/`).                           |
+| Field          | Description                                                                                                            |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `<slice>`    | Slice number, not zero-padded, 0-based.                                                                                |
+| `<file_num>` | Index within the slice, not zero-padded, 0-based.                                                                      |
+| `<kind>`     | File type: `f` regular, `h` hardlink, `d` directory, `l` symlink, `c` char, `b` block, `p` fifo, `s` socket.        |
+| `<size>`     | Apparent file size in bytes (decimal). Hardlink entries (`<kind> = h`) MUST use `0`.                                 |
+| `<mtime>`    | Modification time as Unix timestamp (decimal seconds).                                                                 |
+| `<uid>`      | Numeric owner user ID (decimal).`0` when unknown.                                                                    |
+| `<uname>`    | Owner user name as a string (empty when unknown).                                                                      |
+| `<gid>`      | Numeric group ID (decimal).`0` when unknown.                                                                         |
+| `<gname>`    | Group name as a string (empty when unknown).                                                                           |
+| `<filepath>` | Archive path (relative, may include the source-directory prefix, no leading `/`).                                    |
 
-All fields are mandatory — every entry record carries all 11 fields. Unknown
+All fields are mandatory — every entry record carries all 9 fields. Unknown
 or unavailable values use a reasonable zero sentinel (`0`, `""`, or timestamp `0`)
 rather than being omitted.
 
@@ -68,10 +67,10 @@ file set.
 
 ```
 /chdir//home/user\0\n
-/0/0/f/1234/1718400000/1000/neo_chen/1000/neogroup/0/src/main.c\0\n
-/0/1/f/5678/1718400000/0//0//0/docs/readme.txt\0\n
-/0/2/d/0/1718400000/1000/neo_chen/1000/neogroup/0/src/\0\n
-/0/3/f/4096/1718400000/1000/neo_chen/1000/neogroup/1/share/also-main.c\0\n
+/0/0/f/1234/1718400000/1000/neo_chen/1000/neogroup/src/main.c\0\n
+/0/1/h/0/1718400000/1000/neo_chen/1000/neogroup/share/also-main.c\0\n
+/0/2/d/0/1718400000/1000/neo_chen/1000/neogroup/src/\0\n
+/0/3/f/5678/1718400000/0//0//docs/readme.txt\0\n
 ```
 
 ## Catalog Role (`ch_metadata`)

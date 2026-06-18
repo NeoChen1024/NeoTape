@@ -216,7 +216,6 @@ struct PlannedEntry {
     string uname;
     gid_t gid = 0;
     string gname;
-    bool hardlink = false;
     string path;
 };
 
@@ -370,17 +369,17 @@ PlanRecord parse_plan_record(string_view text, const fs::path &path,
             format("{}:{}: invalid plan record", path.string(), record_num));
     }
 
-    // 10 slash-delimited fields: slice/file_num/kind/size/mtime/uid/
-    // uname/gid/gname/hardlink — then the remainder is the path.
+    // 9 slash-delimited fields: slice/file_num/kind/size/mtime/uid/
+    // uname/gid/gname — then the remainder is the path.
     vector<string> fields;
     size_t start = 1;
-    for (size_t i = 1; i <= text.size() && fields.size() < 10; ++i) {
+    for (size_t i = 1; i <= text.size() && fields.size() < 9; ++i) {
         if (i == text.size() || text[i] == '/') {
             fields.emplace_back(text.substr(start, i - start));
             start = i + 1;
         }
     }
-    if (fields.size() != 10 || start > text.size()) {
+    if (fields.size() != 9 || start > text.size()) {
         throw std::runtime_error(
             format("{}:{}: invalid entry record", path.string(), record_num));
     }
@@ -392,7 +391,6 @@ PlanRecord parse_plan_record(string_view text, const fs::path &path,
     }
 
     char const kind = fields[2][0];
-    bool const hardlink = (fields[9] == "1");
 
     return PlanRecord{
         .chdir_dir = std::nullopt,
@@ -410,7 +408,6 @@ PlanRecord parse_plan_record(string_view text, const fs::path &path,
                 .gid = static_cast<gid_t>(
                     parse_u64_field(fields[7], path, record_num)),
                 .gname = fields[8],
-                .hardlink = hardlink,
                 .path = std::move(entry_path),
             },
     };
