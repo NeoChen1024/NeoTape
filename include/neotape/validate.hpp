@@ -8,6 +8,13 @@
 
 namespace neotape {
 
+enum class RestoreFrameValidationStatus { ok, warning, fatal };
+
+struct RestoreFrameValidation {
+    RestoreFrameValidationStatus status = RestoreFrameValidationStatus::ok;
+    std::string message;
+};
+
 // Archive-level frame sequence validator.
 //
 // Feed frames in archival order via validate().  The validator tracks
@@ -53,6 +60,15 @@ struct FrameValidator {
                                         const uint8_t *raw_data,
                                         std::size_t record_size,
                                         bool skip_hash = false);
+
+    // Validate one frame using restore-mode policy.
+    //
+    // Metadata frames are still checked for archive identity and sequencing,
+    // but a metadata-only frame_hash mismatch is downgraded to a warning so a
+    // payload reader can continue reconstructing ch_content.
+    RestoreFrameValidation
+    validate_restore_frame(const FrameHeader &header, const uint8_t *raw_data,
+                           std::size_t record_size);
 
     // Reset to initial state (for inspecting a new archive).
     void reset();

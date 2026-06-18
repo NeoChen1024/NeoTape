@@ -157,29 +157,17 @@ vector<std::byte> uint64_to_le_bytes(uint64_t v) {
 
     uint64_t const prev_slice_seq = state.validator.current_slice_seq_num;
 
-    // Metadata frames are advisory: check hash separately so we can
-    // warn on failure without blocking restore.  Structural validation
-    // still runs to keep the sequence state machine in sync.
-    if (header.channel_type == ChannelType::CH_METADATA) {
-        bool const hash_ok =
-            verify_frame_hash(data, record.size(), header.frame_hash);
-        if (!hash_ok) {
-            std::cerr << format(
-                "extractor: warning: metadata frame hash mismatch "
-                "at global_seq={}\n",
-                header.global_frame_seq_num);
-        }
-        auto err = state.validator.validate(header, data, record.size(), true);
-        if (err.has_value()) {
-            std::cerr << format("extractor: warning (metadata): {}\n", *err);
-        }
-        return true;
+    RestoreFrameValidation const validation =
+        state.validator.validate_restore_frame(header, data, record.size());
+    if (validation.status == RestoreFrameValidationStatus::warning) {
+        std::cerr << format("extractor: warning: {}\n", validation.message);
+    } else if (validation.status == RestoreFrameValidationStatus::fatal) {
+        std::cerr << format("extractor: {}\n", validation.message);
+        return false;
     }
 
-    auto err = state.validator.validate(header, data, record.size());
-    if (err.has_value()) {
-        std::cerr << format("extractor: {}\n", *err);
-        return false;
+    if (header.channel_type == ChannelType::CH_METADATA) {
+        return true;
     }
 
     if (state.validator.saw_archive_end) {

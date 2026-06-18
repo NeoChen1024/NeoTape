@@ -9,6 +9,15 @@ namespace neotape {
 using std::format;
 using std::string;
 
+namespace {
+
+RestoreFrameValidation make_restore_validation(
+    RestoreFrameValidationStatus status, std::string message = {}) {
+    return RestoreFrameValidation{status, std::move(message)};
+}
+
+} // namespace
+
 // -----------------------------------------------------------------------
 // FrameValidator — archive-level state machine
 // -----------------------------------------------------------------------
@@ -101,6 +110,11 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
 
     // --- archive_end ---
     if (header.channel_type == ChannelType::ARCHIVE_END) {
+        if (had_previous_frame && !last_frame_had_end) {
+            return format("archive_end without END flag on preceding frame "
+                          "at global_seq={}",
+                          header.global_frame_seq_num);
+        }
         if (!has_frame_flag_clean_end(header.flags)) {
             return "archive_end frame missing CLEAN_END";
         }
@@ -113,6 +127,7 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
     }
 
     // --- logical_slice_seq_num ---
+    bool slice_changed = false;
     if (!saw_any_frame) {
         if (header.logical_slice_seq_num != 1) {
             return format("first frame logical_slice_seq_num {} != 1",
@@ -132,6 +147,7 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
             return format("slice transition without END flag at global_seq={}",
                           header.global_frame_seq_num);
         }
+        slice_changed = true;
         current_slice_seq_num = header.logical_slice_seq_num;
         current_phase = Phase::none;
         expected_frame_seq_within_channel = 1;
@@ -149,7 +165,16 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
 
     // --- START / END flags and channel-group boundaries ---
     bool const channel_changed =
-        had_previous_frame && header.channel_type != last_channel_type;
+        had_previous_frame && !slice_changed &&
+        header.channel_type != last_channel_type;
+    bool const start_flag = has_frame_flag_start(header.flags);
+
+    if (had_previous_frame && !slice_changed &&
+        header.channel_type == last_channel_type && last_frame_had_end) {
+        return format("multiple {} groups in logical slice {}",
+                      channel_type_name(header.channel_type),
+                      header.logical_slice_seq_num);
+    }
 
     // Previous channel group must have ended before a new one starts.
     if (channel_changed && !last_frame_had_end) {
@@ -158,18 +183,20 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
                       header.global_frame_seq_num);
     }
 
-    // New channel group must carry START flag (unless same group continues).
-    if (channel_changed) {
-        if (!has_frame_flag_start(header.flags)) {
-            return format("missing START flag at new channel group start "
-                          "global_seq={}",
-                          header.global_frame_seq_num);
-        }
+    bool const new_group = !had_previous_frame || slice_changed || channel_changed;
+    if (new_group && !start_flag) {
+        return format("missing START flag at new channel group start "
+                      "global_seq={}",
+                      header.global_frame_seq_num);
+    }
+    if (!new_group && start_flag) {
+        return format("unexpected START flag inside existing channel group "
+                      "at global_seq={}",
+                      header.global_frame_seq_num);
     }
 
     // --- frame_seq_num_within_channel ---
-    if (header.channel_type != last_channel_type ||
-        has_frame_flag_start(header.flags)) {
+    if (new_group) {
         if (header.frame_seq_num_within_channel != 1) {
             return format("frame_seq_num_within_channel {} != 1 at start "
                           "of new channel group",
@@ -194,6 +221,34 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
     last_frame_had_end = has_frame_flag_end(header.flags);
 
     return std::nullopt; // OK
+}
+
+RestoreFrameValidation
+FrameValidator::validate_restore_frame(const FrameHeader &header,
+                                       const uint8_t *raw_data,
+                                       std::size_t record_size) {
+    if (header.channel_type == ChannelType::CH_METADATA) {
+        bool const hash_ok =
+            verify_frame_hash(raw_data, record_size, header.frame_hash);
+        if (auto err = validate(header, raw_data, record_size, true);
+            err.has_value()) {
+            return make_restore_validation(RestoreFrameValidationStatus::fatal,
+                                           std::move(*err));
+        }
+        if (!hash_ok) {
+            return make_restore_validation(
+                RestoreFrameValidationStatus::warning,
+                format("metadata frame hash mismatch at global_seq={}",
+                       header.global_frame_seq_num));
+        }
+        return make_restore_validation(RestoreFrameValidationStatus::ok);
+    }
+
+    if (auto err = validate(header, raw_data, record_size); err.has_value()) {
+        return make_restore_validation(RestoreFrameValidationStatus::fatal,
+                                       std::move(*err));
+    }
+    return make_restore_validation(RestoreFrameValidationStatus::ok);
 }
 
 void FrameValidator::reset() {
