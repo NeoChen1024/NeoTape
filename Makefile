@@ -56,10 +56,10 @@ $(BINDIR)/test_format : tests/test_format.cpp src/neotape_format.o $(B3LIB) | $(
 $(BINDIR)/test_validate : tests/test_validate.cpp src/neotape_validate.o src/neotape_format.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(filter %.o,$^) -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-archiver : src/neotape_archiver_cmd.o src/neotape_tcp_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_frame_builder.o src/neotape_socket_util.o src/neotape_common.o src/neotape_pax_writer.o src/neotape_bounded_buffer.o $(B3LIB) | $(BINDIR)
+$(BINDIR)/neotape-archiver : src/neotape_archiver_cmd.o src/neotape_tcp_server.o src/neotape_volume_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_frame_builder.o src/neotape_socket_util.o src/neotape_common.o src/neotape_pax_writer.o src/neotape_bounded_buffer.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-raw-store : src/neotape_raw_store_cmd.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_frame_builder.o src/neotape_socket_util.o src/neotape_common.o $(B3LIB) | $(BINDIR)
+$(BINDIR)/neotape-raw-store : src/neotape_raw_store_cmd.o src/neotape_volume_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_frame_builder.o src/neotape_socket_util.o src/neotape_common.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 $(BINDIR)/neotape-write : src/neotape_write_cmd.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o src/neotape_socket_util.o $(B3LIB) | $(BINDIR)

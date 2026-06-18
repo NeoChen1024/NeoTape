@@ -15,10 +15,7 @@ struct TcpArchiverOptions {
     uint64_t initial_volume_seq_num = 1;
     uint64_t retention_frame_count = 256;
 
-    // Pax generation options when in archive mode.
     PaxWriterOptions pax;
-    bool use_pax = false;
-    bool debug = false;
 };
 
 // Blocks until the first writer connects, the archive completes, or an error

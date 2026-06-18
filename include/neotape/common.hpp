@@ -20,6 +20,7 @@ extern bool g_debug;
 
 uint64_t parse_size(std::string_view text, std::string_view name);
 std::string humanize_number(std::size_t number);
+void ensure_utf8_ctype_locale();
 
 struct SourceSpec {
     std::string archive_prefix;

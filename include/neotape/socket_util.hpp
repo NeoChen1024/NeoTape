@@ -16,7 +16,6 @@ struct FdGuard {
             ::close(fd);
         }
     }
-    void release() { fd = -1; }
     FdGuard(const FdGuard &) = delete;
     FdGuard &operator=(const FdGuard &) = delete;
     FdGuard(FdGuard &&) = delete;

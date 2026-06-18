@@ -1,10 +1,7 @@
 #include "neotape/common.hpp"
 #include "neotape/pax_writer.hpp"
 
-#include <cerrno>
-#include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <format>
 #include <getopt.h>
@@ -44,10 +41,6 @@ void usage(const char *prog) {
 [[noreturn]] void fail(const string &message) {
     std::cerr << format("pax: {}\n", message);
     std::exit(1);
-}
-
-[[noreturn]] void fail_errno(const string &context) {
-    fail(format("{}: {}", context, std::strerror(errno)));
 }
 
 CliOptions parse_args(int argc, char **argv) {
@@ -149,69 +142,6 @@ CliOptions parse_args(int argc, char **argv) {
     return opts;
 }
 
-string slice_name(const string &prefix, uint64_t slice) {
-    return format("{}{:06}.pax", prefix, slice);
-}
-
-neotape::PaxWriterCallbacks
-continuous_callbacks(const string &output, FILE *&out_file, bool &close_file) {
-    if (output == "-") {
-        out_file = stdout;
-        close_file = false;
-    } else {
-        out_file = std::fopen(output.c_str(), "wb");
-        if (out_file == nullptr) {
-            fail_errno(string("open ") + output);
-        }
-        close_file = true;
-    }
-
-    return neotape::PaxWriterCallbacks{
-        .begin_slice = [](uint64_t) {},
-        .write_chunk =
-            [&](neotape::PaxChunk chunk) {
-                if (std::fwrite(chunk.bytes.data(), 1, chunk.bytes.size(),
-                                out_file) != chunk.bytes.size()) {
-                    fail_errno("write output");
-                }
-            },
-        .end_slice = [](uint64_t) {},
-        .progress_paused = [] { return false; },
-    };
-}
-
-neotape::PaxWriterCallbacks slice_callbacks(const string &prefix,
-                                            FILE *&out_file) {
-    return neotape::PaxWriterCallbacks{
-        .begin_slice =
-            [&](uint64_t slice) {
-                string path = slice_name(prefix, slice);
-                out_file = std::fopen(path.c_str(), "wb");
-                if (!out_file) {
-                    fail_errno(string("open ") + path);
-                }
-            },
-        .write_chunk =
-            [&](neotape::PaxChunk chunk) {
-                if (out_file == nullptr) {
-                    fail("slice output is not open");
-                }
-                if (std::fwrite(chunk.bytes.data(), 1, chunk.bytes.size(),
-                                out_file) != chunk.bytes.size()) {
-                    fail_errno("write slice output");
-                }
-            },
-        .end_slice =
-            [&](uint64_t) {
-                if (out_file != nullptr && std::fclose(out_file) != 0) {
-                    fail_errno("close slice output");
-                }
-                out_file = nullptr;
-            },
-        .progress_paused = [] { return false; },
-    };
-}
-
 } // namespace
 
 int main(int argc, char **argv) {
@@ -219,27 +149,18 @@ int main(int argc, char **argv) {
         neotape::ensure_utf8_ctype_locale();
         CliOptions opts = parse_args(argc, argv);
 
-        FILE *out_file = nullptr;
-        bool close_file = false;
         if (opts.slice_output_prefix.has_value()) {
             opts.slice_output_prefix =
                 fs::absolute(*opts.slice_output_prefix).string();
         }
-        neotape::PaxWriterCallbacks callbacks =
-            opts.slice_output_prefix.has_value()
-                ? slice_callbacks(*opts.slice_output_prefix, out_file)
-                : continuous_callbacks(opts.output, out_file, close_file);
+        neotape::PaxLocalOutputOptions out_opts;
+        out_opts.output_path = opts.output;
+        out_opts.slice_output_prefix = opts.slice_output_prefix;
+        neotape::PaxLocalOutputResult result =
+            neotape::write_pax_to_local_output(opts.writer, out_opts);
 
-        neotape::PaxWriteResult result =
-            neotape::write_pax(opts.writer, std::move(callbacks));
-        if (close_file && out_file != nullptr && std::fclose(out_file) != 0) {
-            fail_errno(string("close ") + opts.output);
-        }
-
-        std::cerr << format("\n{}  {}\n", result.blake3_hex,
-                            opts.slice_output_prefix.has_value()
-                                ? *opts.slice_output_prefix
-                                : opts.output);
+        std::cerr << format("\n{}  {}\n", result.write_result.blake3_hex,
+                            result.output_target);
         return 0;
     } catch (const std::exception &e) {
         fail(e.what());

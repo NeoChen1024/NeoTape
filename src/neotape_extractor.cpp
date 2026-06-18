@@ -1,6 +1,7 @@
 #include "neotape/common.hpp"
 #include "neotape/extractor.hpp"
 #include "neotape/format.hpp"
+#include "neotape/socket_util.hpp"
 #include "neotape/tcp_protocol.hpp"
 #include "neotape/validate.hpp"
 
@@ -10,115 +11,31 @@
 #include <cstring>
 #include <format>
 #include <iostream>
-#include <netdb.h>
 #include <stdexcept>
 #include <string>
 #include <sys/socket.h>
-#include <sys/un.h>
 #include <unistd.h>
-#include <utility>
 #include <vector>
 
 namespace neotape {
 
 namespace {
 
-using neotape::tcp::Address;
+using neotape::create_listener;
+using neotape::FdGuard;
+using neotape::send_error;
 using neotape::tcp::Message;
 using neotape::tcp::MessageType;
-using neotape::tcp::parse_address;
+using neotape::uint64_to_le_bytes;
 using std::format;
 using std::string;
 using std::vector;
-
-struct FdGuard {
-    int fd = -1;
-    explicit FdGuard(int f) : fd(f) {}
-    ~FdGuard() {
-        if (fd >= 0) {
-            ::close(fd);
-        }
-    }
-    void release() { fd = -1; }
-    FdGuard(const FdGuard &) = delete;
-    FdGuard &operator=(const FdGuard &) = delete;
-};
-
-int create_listener(const string &addr) {
-    Address a = parse_address(addr);
-
-    int fd = -1;
-    if (a.is_unix) {
-        fd = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (fd < 0) {
-            throw std::runtime_error(
-                format("socket: {}", std::strerror(errno)));
-        }
-        unlink(a.path.c_str());
-        sockaddr_un sa{};
-        sa.sun_family = AF_UNIX;
-        if (a.path.size() >= sizeof(sa.sun_path)) {
-            throw std::runtime_error("unix socket path too long");
-        }
-        std::memcpy(sa.sun_path, a.path.data(), a.path.size());
-        if (bind(fd, reinterpret_cast<sockaddr *>(&sa), sizeof(sa)) < 0) {
-            throw std::runtime_error(
-                format("bind {}: {}", a.path, std::strerror(errno)));
-        }
-    } else {
-        addrinfo hints{};
-        hints.ai_family = AF_UNSPEC;
-        hints.ai_socktype = SOCK_STREAM;
-        hints.ai_flags = AI_PASSIVE;
-        addrinfo *res = nullptr;
-        int const gai =
-            getaddrinfo(a.host.c_str(), a.port.c_str(), &hints, &res);
-        if (gai != 0) {
-            throw std::runtime_error(
-                format("getaddrinfo: {}", gai_strerror(gai)));
-        }
-        std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> const res_guard(
-            res, freeaddrinfo);
-        fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-        if (fd < 0) {
-            throw std::runtime_error(
-                format("socket: {}", std::strerror(errno)));
-        }
-        int yes = 1;
-        (void)::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-        if (bind(fd, res->ai_addr, res->ai_addrlen) < 0) {
-            throw std::runtime_error(
-                format("bind {}:{}: {}", a.host, a.port, std::strerror(errno)));
-        }
-    }
-
-    if (listen(fd, 1) < 0) {
-        throw std::runtime_error(format("listen: {}", std::strerror(errno)));
-    }
-    return fd;
-}
 
 struct ExtractorState {
     FrameValidator validator;
     bool saw_archive_end = false;
     vector<uint8_t> slice_payload;
 };
-
-void send_error(int client, const char *text) {
-    auto payload = vector<std::byte>(reinterpret_cast<const std::byte *>(text),
-                                     reinterpret_cast<const std::byte *>(text) +
-                                         std::strlen(text));
-    neotape::tcp::write_message(
-        client, Message{MessageType::error, std::move(payload)});
-}
-
-vector<std::byte> uint64_to_le_bytes(uint64_t v) {
-    vector<std::byte> out(8);
-    for (size_t i = 0; i < 8; ++i) {
-        out[i] = static_cast<std::byte>((v >> (8 * i)) & 0xffU);
-    }
-    return out;
-}
 
 [[nodiscard]] bool flush_slice(ExtractorState &state, FILE *output) {
     if (state.slice_payload.empty()) {

@@ -224,6 +224,127 @@ struct PlanRecord {
     std::optional<PlannedEntry> entry;
 };
 
+[[noreturn]] void throw_pax_output_errno(const string &context) {
+    throw std::runtime_error(format("{}: {}", context, std::strerror(errno)));
+}
+
+string pax_slice_name(const string &prefix, uint64_t slice) {
+    return format("{}{:06}.pax", prefix, slice);
+}
+
+class PaxOutputSession {
+  public:
+    explicit PaxOutputSession(PaxLocalOutputOptions opts)
+        : opts_(std::move(opts)) {}
+
+    ~PaxOutputSession() {
+        if (file_ != nullptr && owned_) {
+            std::fclose(file_);
+        }
+    }
+
+    PaxWriterCallbacks callbacks() {
+        if (opts_.slice_output_prefix.has_value()) {
+            return PaxWriterCallbacks{
+                .begin_slice =
+                    [&](uint64_t slice) {
+                        string path =
+                            pax_slice_name(*opts_.slice_output_prefix, slice);
+                        file_ = std::fopen(path.c_str(), "wb");
+                        if (file_ == nullptr) {
+                            throw_pax_output_errno(string("open ") + path);
+                        }
+                        owned_ = true;
+                    },
+                .write_chunk =
+                    [&](PaxChunk chunk) {
+                        write_chunk(chunk);
+                    },
+                .end_slice =
+                    [&](uint64_t) {
+                        close_file("close slice output");
+                    },
+            };
+        }
+
+        if (opts_.output_path == "-") {
+            file_ = stdout;
+            owned_ = false;
+        } else {
+            file_ = std::fopen(opts_.output_path.c_str(), "wb");
+            if (file_ == nullptr) {
+                throw_pax_output_errno(string("open ") + opts_.output_path);
+            }
+            owned_ = true;
+        }
+
+        return PaxWriterCallbacks{
+            .write_chunk =
+                [&](PaxChunk chunk) {
+                    write_chunk(chunk);
+                },
+        };
+    }
+
+    void finish() {
+        if (opts_.slice_output_prefix.has_value()) {
+            if (file_ != nullptr) {
+                close_file("close slice output");
+            }
+            return;
+        }
+
+        if (file_ != nullptr && owned_ && std::fclose(file_) != 0) {
+            file_ = nullptr;
+            owned_ = false;
+            throw_pax_output_errno(string("close ") + opts_.output_path);
+        }
+
+        file_ = nullptr;
+        owned_ = false;
+    }
+
+    string output_target() const {
+        if (opts_.slice_output_prefix.has_value()) {
+            return *opts_.slice_output_prefix;
+        }
+        return opts_.output_path;
+    }
+
+  private:
+    PaxLocalOutputOptions opts_;
+    FILE *file_ = nullptr;
+    bool owned_ = false;
+
+    void write_chunk(PaxChunk chunk) {
+        if (file_ == nullptr) {
+            throw std::runtime_error("output file is not open");
+        }
+        if (std::fwrite(chunk.bytes.data(), 1, chunk.bytes.size(), file_) !=
+            chunk.bytes.size()) {
+            if (opts_.slice_output_prefix.has_value()) {
+                throw_pax_output_errno("write slice output");
+            }
+            throw_pax_output_errno("write output");
+        }
+    }
+
+    void close_file(const char *context) {
+        if (file_ == nullptr || !owned_) {
+            file_ = nullptr;
+            owned_ = false;
+            return;
+        }
+        if (std::fclose(file_) != 0) {
+            file_ = nullptr;
+            owned_ = false;
+            throw_pax_output_errno(context);
+        }
+        file_ = nullptr;
+        owned_ = false;
+    }
+};
+
 // ── BBSink: streaming accumulator to BoundedBuffer ──
 
 struct BBSink {
@@ -318,31 +439,6 @@ void warn_archive(const char *context, archive *a) {
     const char *msg = archive_error_string(a);
     cerr << format("pax: warning: {}{}\n", context,
                    msg != nullptr ? format(": {}", msg) : string());
-}
-
-bool locale_name_is_utf8(const char *name) {
-    if (name == nullptr) {
-        return false;
-    }
-    string locale_name(name);
-    std::ranges::transform(
-        locale_name, locale_name.begin(),
-        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return locale_name.find("utf-8") != string::npos ||
-           locale_name.find("utf8") != string::npos;
-}
-
-void ensure_utf8_ctype_locale_impl() {
-    const char *locale_name = std::setlocale(LC_CTYPE, "");
-    if (locale_name_is_utf8(locale_name)) {
-        return;
-    }
-    for (const char *fb : {"C.UTF-8", "en_US.UTF-8"}) {
-        locale_name = std::setlocale(LC_CTYPE, fb);
-        if (locale_name_is_utf8(locale_name)) {
-            return;
-        }
-    }
 }
 
 uint64_t parse_u64_field(const string &field, const fs::path &path,
@@ -1047,19 +1143,10 @@ class PaxPipeline {
 
 PaxWriteResult write_planned_pax_archive(const Options &opts,
                                          PaxWriterCallbacks callbacks) {
-    ensure_utf8_ctype_locale_impl();
+    ensure_utf8_ctype_locale();
 
-    if (!callbacks.begin_slice) {
-        callbacks.begin_slice = [](uint64_t) {};
-    }
     if (!callbacks.write_chunk) {
         callbacks.write_chunk = [](PaxChunk) {};
-    }
-    if (!callbacks.end_slice) {
-        callbacks.end_slice = [](uint64_t) {};
-    }
-    if (!callbacks.progress_paused) {
-        callbacks.progress_paused = [] { return false; };
     }
 
     if (!opts.plan_path.has_value()) {
@@ -1286,23 +1373,14 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
 
 PaxWriteResult write_pax_archive(const Options &opts,
                                  PaxWriterCallbacks callbacks) {
-    ensure_utf8_ctype_locale_impl();
+    ensure_utf8_ctype_locale();
 
     if (opts.plan_path.has_value()) {
         return write_planned_pax_archive(opts, std::move(callbacks));
     }
 
-    if (!callbacks.begin_slice) {
-        callbacks.begin_slice = [](uint64_t) {};
-    }
     if (!callbacks.write_chunk) {
         callbacks.write_chunk = [](PaxChunk) {};
-    }
-    if (!callbacks.end_slice) {
-        callbacks.end_slice = [](uint64_t) {};
-    }
-    if (!callbacks.progress_paused) {
-        callbacks.progress_paused = [] { return false; };
     }
     callbacks.begin_slice(0);
     uint64_t emitted_slice_count = 1;
@@ -1593,6 +1671,14 @@ PaxWriteResult write_pax(const PaxWriterOptions &opts,
     return write_pax_archive(opts, std::move(callbacks));
 }
 
-void ensure_utf8_ctype_locale() { ensure_utf8_ctype_locale_impl(); }
+PaxLocalOutputResult
+write_pax_to_local_output(const PaxWriterOptions &writer_opts,
+                          const PaxLocalOutputOptions &out_opts) {
+    PaxOutputSession output(out_opts);
+    auto callbacks = output.callbacks();
+    PaxWriteResult result = write_pax(writer_opts, std::move(callbacks));
+    output.finish();
+    return PaxLocalOutputResult{std::move(result), output.output_target()};
+}
 
 } // namespace neotape

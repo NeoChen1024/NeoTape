@@ -29,10 +29,10 @@ struct PaxWriterOptions {
 };
 
 struct PaxWriterCallbacks {
-    std::function<void(uint64_t)> begin_slice;
+    std::function<void(uint64_t)> begin_slice = [](uint64_t) {};
     std::function<void(PaxChunk)> write_chunk;
-    std::function<void(uint64_t)> end_slice;
-    std::function<bool()> progress_paused;
+    std::function<void(uint64_t)> end_slice = [](uint64_t) {};
+    std::function<bool()> progress_paused = [] { return false; };
 };
 
 struct PaxWriteResult {
@@ -43,9 +43,19 @@ struct PaxWriteResult {
     std::string blake3_hex;
 };
 
+struct PaxLocalOutputOptions {
+    std::string output_path = "-";
+    std::optional<std::string> slice_output_prefix;
+};
+
+struct PaxLocalOutputResult {
+    PaxWriteResult write_result;
+    std::string output_target;
+};
+
 PaxWriteResult write_pax(const PaxWriterOptions &opts,
                          PaxWriterCallbacks callbacks);
-
-void ensure_utf8_ctype_locale();
+PaxLocalOutputResult write_pax_to_local_output(
+    const PaxWriterOptions &writer_opts, const PaxLocalOutputOptions &out_opts);
 
 } // namespace neotape

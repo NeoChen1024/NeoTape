@@ -1,3 +1,4 @@
+#include "neotape/closable_queue.hpp"
 #include "neotape/common.hpp"
 
 #include <algorithm>
@@ -240,52 +241,6 @@ vector<fs::path> sorted_children(const fs::path &path) {
     return children;
 }
 
-// ====================== Thread Pool for lstat ====================
-
-template <typename T> class BlockingQueue {
-    std::mutex mtx_;
-    std::condition_variable not_empty_;
-    std::condition_variable not_full_;
-    std::queue<T> queue_;
-    size_t capacity_ = 0;
-    bool closed_ = false;
-
-  public:
-    explicit BlockingQueue(size_t capacity = 0) : capacity_(capacity) {}
-
-    bool push(T item) {
-        std::unique_lock l(mtx_);
-        not_full_.wait(l, [this] {
-            return closed_ || capacity_ == 0 || queue_.size() < capacity_;
-        });
-        if (closed_) {
-            return false;
-        }
-        queue_.push(std::move(item));
-        not_empty_.notify_one();
-        return true;
-    }
-
-    std::optional<T> pop() {
-        std::unique_lock l(mtx_);
-        not_empty_.wait(l, [this] { return !queue_.empty() || closed_; });
-        if (queue_.empty()) {
-            return std::nullopt;
-        }
-        T item = std::move(queue_.front());
-        queue_.pop();
-        not_full_.notify_one();
-        return item;
-    }
-
-    void close() {
-        std::scoped_lock const l(mtx_);
-        closed_ = true;
-        not_empty_.notify_all();
-        not_full_.notify_all();
-    }
-};
-
 struct LstatWork {
     size_t index;
     fs::path path;
@@ -303,8 +258,8 @@ struct LstatResult {
 };
 
 class WorkerPool {
-    BlockingQueue<LstatWork> jobs_;
-    BlockingQueue<LstatResult> results_;
+    neotape::ClosableQueue<LstatWork> jobs_;
+    neotape::ClosableQueue<LstatResult> results_;
     std::vector<std::thread> workers_;
     size_t queue_capacity_ = 0;
 

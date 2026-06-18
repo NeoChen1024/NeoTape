@@ -1,6 +1,9 @@
 #include "neotape/common.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cerrno>
+#include <clocale>
 #include <climits>
 #include <cmath>
 #include <cstdlib>
@@ -20,6 +23,18 @@ using std::format;
 using std::size;
 using std::string;
 using std::string_view;
+
+bool locale_name_is_utf8(const char *name) {
+    if (name == nullptr) {
+        return false;
+    }
+    string locale_name(name);
+    std::ranges::transform(
+        locale_name, locale_name.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return locale_name.find("utf-8") != string::npos ||
+           locale_name.find("utf8") != string::npos;
+}
 
 uint64_t parse_size(string_view text, string_view name) {
     if (text.empty()) {
@@ -85,6 +100,19 @@ string humanize_number(std::size_t number) {
         return format("{:.1f}{}", value, suffixes[suffix_index]);
     }
     return format("{:.0f}{}", std::round(value), suffixes[suffix_index]);
+}
+
+void ensure_utf8_ctype_locale() {
+    const char *locale_name = std::setlocale(LC_CTYPE, "");
+    if (locale_name_is_utf8(locale_name)) {
+        return;
+    }
+    for (const char *fallback : {"C.UTF-8", "en_US.UTF-8"}) {
+        locale_name = std::setlocale(LC_CTYPE, fallback);
+        if (locale_name_is_utf8(locale_name)) {
+            return;
+        }
+    }
 }
 
 namespace fs = std::filesystem;

@@ -1,5 +1,6 @@
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
+#include "neotape/socket_util.hpp"
 #include "neotape/tape.hpp"
 #include "neotape/tcp_protocol.hpp"
 
@@ -14,34 +15,19 @@
 #include <getopt.h>
 #include <iostream>
 #include <memory>
-#include <netdb.h>
 #include <optional>
-#include <sys/socket.h>
-#include <sys/un.h>
 #include <unistd.h>
 #include <vector>
 
 namespace {
 
-using neotape::tcp::Address;
+using neotape::connect_to_server;
+using neotape::FdGuard;
 using neotape::tcp::Message;
 using neotape::tcp::MessageType;
-using neotape::tcp::parse_address;
 using std::format;
 using std::string;
 using std::vector;
-
-struct FdGuard {
-    int fd = -1;
-    explicit FdGuard(int f) : fd(f) {}
-    ~FdGuard() {
-        if (fd >= 0) {
-            ::close(fd);
-        }
-    }
-    FdGuard(const FdGuard &) = delete;
-    FdGuard &operator=(const FdGuard &) = delete;
-};
 
 struct SourceLocator {
     enum Kind { none, tape, spool } kind = none;
@@ -112,48 +98,6 @@ Options parse_args(int argc, char **argv) {
     }
 
     return opts;
-}
-
-int connect_to_extractor(const string &addr_str) {
-    Address const a = parse_address(addr_str);
-
-    int fd = -1;
-    if (a.is_unix) {
-        fd = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (fd < 0) {
-            fail(format("socket: {}", std::strerror(errno)));
-        }
-        sockaddr_un sa{};
-        sa.sun_family = AF_UNIX;
-        if (a.path.size() >= sizeof(sa.sun_path)) {
-            fail("unix socket path too long");
-        }
-        std::memcpy(sa.sun_path, a.path.data(), a.path.size());
-        if (connect(fd, reinterpret_cast<sockaddr *>(&sa), sizeof(sa)) < 0) {
-            fail(format("connect {}: {}", a.path, std::strerror(errno)));
-        }
-    } else {
-        addrinfo hints{};
-        hints.ai_family = AF_UNSPEC;
-        hints.ai_socktype = SOCK_STREAM;
-        addrinfo *res = nullptr;
-        int const gai =
-            getaddrinfo(a.host.c_str(), a.port.c_str(), &hints, &res);
-        if (gai != 0) {
-            fail(format("getaddrinfo: {}", gai_strerror(gai)));
-        }
-        std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> const res_guard(
-            res, freeaddrinfo);
-        fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-        if (fd < 0) {
-            fail(format("socket: {}", std::strerror(errno)));
-        }
-        if (connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
-            fail(format("connect {}:{}: {}", a.host, a.port,
-                        std::strerror(errno)));
-        }
-    }
-    return fd;
 }
 
 class SourceReader {
@@ -305,7 +249,7 @@ int main(int argc, char **argv) {
                 dynamic_cast<mt::SpoolTapeDevice *>(source_dev.get()));
         }
 
-        FdGuard const fd_guard(connect_to_extractor(opts.connect_address));
+        FdGuard const fd_guard(connect_to_server(opts.connect_address));
         int const fd = fd_guard.fd;
 
         uint64_t record_count = 0;

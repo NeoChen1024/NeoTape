@@ -2,11 +2,8 @@
 #include "neotape/pax_writer.hpp"
 #include "neotape/tcp_server.hpp"
 
-#include <cerrno>
 #include <csignal>
-#include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <format>
 #include <getopt.h>
 #include <iostream>
@@ -33,10 +30,6 @@ struct Options {
 [[noreturn]] void fail(const string &msg) {
     std::cerr << format("neotape-archiver: {}\n", msg);
     std::exit(1);
-}
-
-[[noreturn]] void fail_errno(const string &context) {
-    fail(format("{}: {}", context, std::strerror(errno)));
 }
 
 void usage(const char *prog) {
@@ -175,36 +168,6 @@ Options parse_args(int argc, char **argv) {
     return opts;
 }
 
-struct FileGuard {
-    FILE *file = nullptr;
-    bool owned = false;
-    FileGuard(FILE *f, bool own) : file(f), owned(own) {}
-    ~FileGuard() {
-        if (owned && (file != nullptr)) {
-            std::fclose(file);
-        }
-    }
-    FileGuard(const FileGuard &) = delete;
-    FileGuard &operator=(const FileGuard &) = delete;
-    FileGuard(FileGuard &&) = delete;
-    FileGuard &operator=(FileGuard &&) = delete;
-};
-
-neotape::PaxWriterCallbacks make_local_callbacks(FILE *out_file) {
-    return neotape::PaxWriterCallbacks{
-        .begin_slice = [](uint64_t) {},
-        .write_chunk =
-            [out_file](neotape::PaxChunk chunk) {
-                if (std::fwrite(chunk.bytes.data(), 1, chunk.bytes.size(),
-                                out_file) != chunk.bytes.size()) {
-                    fail_errno("write output");
-                }
-            },
-        .end_slice = [](uint64_t) {},
-        .progress_paused = [] { return false; },
-    };
-}
-
 } // namespace
 
 int main(int argc, char **argv) {
@@ -224,37 +187,19 @@ int main(int argc, char **argv) {
             server_opts.archive_name = opts.archive_name;
             server_opts.retention_frame_count = opts.retention_frame_count;
             server_opts.pax = opts.pax;
-            server_opts.use_pax = true;
-            server_opts.debug = opts.debug;
 
             uint64_t served = neotape::run_tcp_archiver(server_opts);
             std::cerr << format("archiver served {} frames\n", served);
             return 0;
         }
 
-        FILE *raw_out = nullptr;
-        bool owned = false;
-        if (opts.pax.output_name == "-") {
-            raw_out = stdout;
-        } else {
-            raw_out = std::fopen(opts.pax.output_name.c_str(), "wb");
-            if (raw_out == nullptr) {
-                fail_errno(string("open ") + opts.pax.output_name);
-            }
-            owned = true;
-        }
-        FileGuard const out_guard(raw_out, owned);
+        neotape::PaxLocalOutputOptions out_opts;
+        out_opts.output_path = opts.pax.output_name;
+        neotape::PaxLocalOutputResult result =
+            neotape::write_pax_to_local_output(opts.pax, out_opts);
 
-        neotape::PaxWriterCallbacks callbacks = make_local_callbacks(raw_out);
-
-        neotape::PaxWriteResult result =
-            neotape::write_pax(opts.pax, std::move(callbacks));
-        if (std::fflush(raw_out) != 0) {
-            fail_errno("flush output");
-        }
-
-        std::cerr << format("{}  {}\n", result.blake3_hex,
-                            opts.pax.output_name);
+        std::cerr << format("{}  {}\n", result.write_result.blake3_hex,
+                            result.output_target);
         return 0;
     } catch (const std::exception &e) {
         fail(e.what());

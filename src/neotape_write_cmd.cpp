@@ -1,5 +1,6 @@
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
+#include "neotape/socket_util.hpp"
 #include "neotape/tape.hpp"
 #include "neotape/tape_ioctl.hpp"
 #include "neotape/tcp_protocol.hpp"
@@ -19,34 +20,20 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
-#include <netdb.h>
 #include <optional>
 #include <string>
-#include <sys/socket.h>
-#include <sys/un.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
 
 namespace {
 
-using neotape::tcp::Address;
-using neotape::tcp::parse_address;
+using neotape::connect_to_server;
+using neotape::FdGuard;
+using neotape::uint64_to_le_bytes;
 using std::format;
 using std::string;
 using std::vector;
-
-struct FdGuard {
-    int fd = -1;
-    explicit FdGuard(int f) : fd(f) {}
-    ~FdGuard() {
-        if (fd >= 0) {
-            ::close(fd);
-        }
-    }
-    FdGuard(const FdGuard &) = delete;
-    FdGuard &operator=(const FdGuard &) = delete;
-};
 
 struct TargetLocator {
     enum Kind { none, tape, spool } kind = none;
@@ -175,48 +162,6 @@ Options parse_args(int argc, char **argv) {
     return opts;
 }
 
-int connect_to_source(const string &addr) {
-    Address a = parse_address(addr);
-
-    int fd = -1;
-    if (a.is_unix) {
-        fd = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (fd < 0) {
-            fail(format("socket: {}", std::strerror(errno)));
-        }
-        sockaddr_un sa{};
-        sa.sun_family = AF_UNIX;
-        if (a.path.size() >= sizeof(sa.sun_path)) {
-            fail("unix socket path too long");
-        }
-        std::memcpy(sa.sun_path, a.path.data(), a.path.size());
-        if (connect(fd, reinterpret_cast<sockaddr *>(&sa), sizeof(sa)) < 0) {
-            fail(format("connect {}: {}", a.path, std::strerror(errno)));
-        }
-    } else {
-        addrinfo hints{};
-        hints.ai_family = AF_UNSPEC;
-        hints.ai_socktype = SOCK_STREAM;
-        addrinfo *res = nullptr;
-        int const gai =
-            getaddrinfo(a.host.c_str(), a.port.c_str(), &hints, &res);
-        if (gai != 0) {
-            fail(format("getaddrinfo: {}", gai_strerror(gai)));
-        }
-        std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> const res_guard(
-            res, freeaddrinfo);
-        fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-        if (fd < 0) {
-            fail(format("socket: {}", std::strerror(errno)));
-        }
-        if (connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
-            fail(format("connect {}:{}: {}", a.host, a.port,
-                        std::strerror(errno)));
-        }
-    }
-    return fd;
-}
-
 struct PendingFrame {
     uint64_t global_seq_num;
     vector<std::byte> record;
@@ -241,14 +186,6 @@ struct WriterState {
 void write_trailing_filemark(mt::TapeDevice *dev) {
     (void)dev;
     NEOTAPE_DEBUG("writer: omitting trailing filemark at EOT/EOD\n");
-}
-
-std::vector<std::byte> uint64_to_le_bytes(uint64_t v) {
-    std::vector<std::byte> out(8);
-    for (size_t i = 0; i < 8; ++i) {
-        out[i] = static_cast<std::byte>((v >> (8 * i)) & 0xff);
-    }
-    return out;
 }
 
 class CapacityLimitedTapeDevice : public mt::TapeDevice {
@@ -500,7 +437,7 @@ int main(int argc, char **argv) {
         Options opts = parse_args(argc, argv);
         neotape::g_debug = opts.debug;
 
-        FdGuard const fd_guard(connect_to_source(opts.source_address));
+        FdGuard const fd_guard(connect_to_server(opts.source_address));
         int fd = fd_guard.fd;
 
         using neotape::tcp::Message;

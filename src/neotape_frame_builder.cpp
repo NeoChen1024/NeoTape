@@ -153,15 +153,6 @@ void FrameRetentionBuffer::ack(uint64_t global_seq_num) {
     }
 }
 
-bool FrameRetentionBuffer::has(uint64_t global_seq_num) const {
-    for (const auto &f : frames_) {
-        if (f.global_seq_num == global_seq_num) {
-            return true;
-        }
-    }
-    return false;
-}
-
 const std::vector<std::byte> *
 FrameRetentionBuffer::get(uint64_t global_seq_num) const {
     for (const auto &f : frames_) {
@@ -171,14 +162,5 @@ FrameRetentionBuffer::get(uint64_t global_seq_num) const {
     }
     return nullptr;
 }
-
-uint64_t FrameRetentionBuffer::lowest_available() const {
-    if (frames_.empty()) {
-        return 0;
-    }
-    return frames_.front().global_seq_num;
-}
-
-bool FrameRetentionBuffer::empty() const { return frames_.empty(); }
 
 } // namespace neotape

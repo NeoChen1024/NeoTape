@@ -51,11 +51,8 @@ class FrameRetentionBuffer {
 
     void add(uint64_t global_seq_num, std::vector<std::byte> record);
     void ack(uint64_t global_seq_num);
-    [[nodiscard]] bool has(uint64_t global_seq_num) const;
     [[nodiscard]] const std::vector<std::byte> *
     get(uint64_t global_seq_num) const;
-    [[nodiscard]] uint64_t lowest_available() const;
-    [[nodiscard]] bool empty() const;
 
   private:
     size_t max_frames_;

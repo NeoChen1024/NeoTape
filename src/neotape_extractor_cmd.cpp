@@ -1,7 +1,6 @@
 #include "neotape/common.hpp"
 #include "neotape/extractor.hpp"
 
-#include <clocale>
 #include <csignal>
 #include <cstdlib>
 #include <format>
@@ -77,7 +76,7 @@ Options parse_args(int argc, char **argv) {
 
 int main(int argc, char **argv) {
     try {
-        std::setlocale(LC_CTYPE, "C.UTF-8");
+        neotape::ensure_utf8_ctype_locale();
         Options const opts = parse_args(argc, argv);
         neotape::g_debug = opts.verbose;
 

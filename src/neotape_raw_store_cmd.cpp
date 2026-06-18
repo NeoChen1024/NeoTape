@@ -1,49 +1,24 @@
-#include "neotape/closable_queue.hpp"
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
 #include "neotape/frame_builder.hpp"
-#include "neotape/socket_util.hpp"
-#include "neotape/tcp_protocol.hpp"
-#include "neotape/thread_util.hpp"
+#include "neotape/volume_server.hpp"
 
-#include <algorithm>
-#include <cassert>
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <exception>
 #include <format>
-#include <functional>
 #include <getopt.h>
 #include <iostream>
-#include <memory>
-#include <mutex>
-#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
-#include <sys/socket.h>
-#include <thread>
 #include <unistd.h>
-#include <utility>
 #include <vector>
 
 namespace {
 
-using neotape::build_archive_end_record;
-using neotape::create_listener;
-using neotape::FdGuard;
-using neotape::FrameRetentionBuffer;
-using neotape::le64_from_bytes;
-using neotape::patch_volume_seq_num;
-using neotape::send_error;
-using neotape::ThreadJoiner;
-using neotape::tcp::Address;
-using neotape::tcp::Message;
-using neotape::tcp::MessageType;
-using neotape::tcp::parse_address;
 using std::format;
 using std::string;
 
@@ -161,15 +136,11 @@ struct FileGuard {
     FileGuard &operator=(FileGuard &&) = delete;
 };
 
-struct RecordOrDone {
-    std::vector<std::byte> record;
-    uint64_t global_seq_num = 0;
-    bool tape_eof = false;
-    bool done = false;
-};
-
-void produce_raw_frames(FILE *input, neotape::ContentFrameBuilder &builder,
-                        neotape::ClosableQueue<RecordOrDone> &queue) {
+void produce_raw_frames(FILE *input, const string &archive_uuid,
+                        const Options &opts,
+                        neotape::VolumeRecordQueue &queue) {
+    neotape::ContentFrameBuilder builder(opts.volume_block_size, archive_uuid,
+                                         opts.archive_name);
     std::vector<std::byte> buf(1024ULL * 1024ULL);
     for (;;) {
         size_t const n = std::fread(buf.data(), 1, buf.size(), input);
@@ -177,9 +148,10 @@ void produce_raw_frames(FILE *input, neotape::ContentFrameBuilder &builder,
             auto frames =
                 builder.feed(std::span<const std::byte>(buf.data(), n));
             for (auto &frame : frames) {
-                if (!queue.push(RecordOrDone{std::move(frame.record),
-                                             frame.global_seq_num, false,
-                                             false})) {
+                if (!queue.push(
+                        neotape::VolumeRecord{std::move(frame.record),
+                                              frame.global_seq_num, false,
+                                              false})) {
                     throw std::runtime_error("frame consumer disconnected");
                 }
             }
@@ -194,333 +166,35 @@ void produce_raw_frames(FILE *input, neotape::ContentFrameBuilder &builder,
     }
 
     if (auto final_frame = builder.flush(); final_frame.has_value()) {
-        if (!queue.push(RecordOrDone{std::move(final_frame->record),
-                                     final_frame->global_seq_num, false,
-                                     false})) {
+        if (!queue.push(
+                neotape::VolumeRecord{std::move(final_frame->record),
+                                      final_frame->global_seq_num, false,
+                                      false})) {
             throw std::runtime_error("frame consumer disconnected");
         }
     }
-    if (!queue.push(RecordOrDone{{}, 0, true, false})) {
+    if (!queue.push(neotape::VolumeRecord{{}, 0, true, false})) {
         throw std::runtime_error("frame consumer disconnected");
     }
-    if (!queue.push(
-            RecordOrDone{{}, builder.last_global_seq_num(), false, true})) {
+    if (!queue.push(neotape::VolumeRecord{{}, builder.last_global_seq_num(),
+                                          false, true})) {
         throw std::runtime_error("frame consumer disconnected");
     }
-}
-
-struct ServeResult {
-    bool archive_complete = false;
-    bool volume_committed = false;
-    uint64_t frames_served = 0;
-};
-
-struct RawStoreState {
-    uint64_t next_volume_seq_num = 1;
-    uint64_t last_acked_global_frame = 0;
-    bool archive_complete = false;
-};
-
-ServeResult serve_client(int client, RawStoreState &state,
-                         FrameRetentionBuffer &retention,
-                         neotape::ClosableQueue<RecordOrDone> &frame_queue,
-                         const Options &opts, const string &archive_uuid,
-                         const std::function<string()> &get_input_error_text) {
-    bool volume_committed = false;
-    uint64_t frames_served = 0;
-    uint64_t next_send_seq = state.last_acked_global_frame == 0
-                                 ? 1
-                                 : state.last_acked_global_frame + 1;
-    std::optional<uint64_t> archive_end_seq;
-
-    auto outstanding_frames = [&]() -> uint64_t {
-        return (next_send_seq - 1) - state.last_acked_global_frame;
-    };
-
-    auto process_ack_payload = [&](const std::vector<std::byte> &payload) {
-        if (payload.size() != 8) {
-            send_error(client, "ack_frame payload must be 8 bytes");
-            return -1;
-        }
-        uint64_t const g = le64_from_bytes(payload);
-        uint64_t const expected = state.last_acked_global_frame + 1;
-        if (g != expected) {
-            send_error(client,
-                       format("ack {} out of order; expected {}", g, expected)
-                           .c_str());
-            return -1;
-        }
-
-        if (!volume_committed) {
-            volume_committed = true;
-            NEOTAPE_DEBUG("raw-store: volume {} committed\n",
-                          state.next_volume_seq_num);
-        }
-
-        state.last_acked_global_frame = g;
-        retention.ack(g);
-        if (archive_end_seq.has_value() && g >= *archive_end_seq) {
-            NEOTAPE_DEBUG("raw-store: archive end acked\n");
-            return 1;
-        }
-        return 0;
-    };
-
-    auto wait_until_outstanding_below = [&](uint64_t limit) {
-        while (outstanding_frames() >= limit) {
-            auto ack = neotape::tcp::read_message(client);
-            if (!ack.has_value()) {
-                return -1;
-            }
-            if (ack->type != MessageType::ack_frame) {
-                send_error(client, "send window full; expected ack_frame");
-                return -1;
-            }
-            int const ack_result = process_ack_payload(ack->payload);
-            if (ack_result != 0) {
-                return ack_result;
-            }
-        }
-        return 0;
-    };
-
-    try {
-        for (;;) {
-            auto req = neotape::tcp::read_message(client);
-            if (!req.has_value()) {
-                break;
-            }
-
-            if (archive_end_seq.has_value() &&
-                req->type != MessageType::ack_frame) {
-                send_error(client, "unexpected request after archive end");
-                return ServeResult{true, volume_committed, frames_served};
-            }
-
-            switch (req->type) {
-            case MessageType::next_frame: {
-                int window_result =
-                    wait_until_outstanding_below(opts.retention_frame_count);
-                if (window_result < 0) {
-                    return ServeResult{false, volume_committed, frames_served};
-                }
-                if (window_result > 0) {
-                    return ServeResult{true, volume_committed, frames_served};
-                }
-
-                const std::vector<std::byte> *record_ptr =
-                    retention.get(next_send_seq);
-                uint64_t seq = 0;
-                std::vector<std::byte> record;
-                if (record_ptr != nullptr) {
-                    record = *record_ptr;
-                    seq = next_send_seq;
-                    neotape::FrameHeader const hdr =
-                        neotape::parse_fixed_header(
-                            reinterpret_cast<const uint8_t *>(record.data()),
-                            record.size());
-                    if (hdr.channel_type == neotape::ChannelType::ARCHIVE_END) {
-                        archive_end_seq = seq;
-                    }
-                } else {
-                    auto next = frame_queue.pop();
-                    if (!next.has_value()) {
-                        string reason = get_input_error_text();
-                        if (reason.empty()) {
-                            reason = "frame queue closed";
-                        }
-                        send_error(client, reason.c_str());
-                        return ServeResult{false, volume_committed,
-                                           frames_served};
-                    }
-                    if (next->tape_eof) {
-                        NEOTAPE_DEBUG("raw-store: sending tape_eof\n");
-                        neotape::tcp::write_message(
-                            client, Message{MessageType::tape_eof, {}});
-                        break;
-                    }
-                    if (next->done) {
-                        window_result = wait_until_outstanding_below(1);
-                        if (window_result < 0) {
-                            return ServeResult{false, volume_committed,
-                                               frames_served};
-                        }
-                        if (window_result > 0) {
-                            return ServeResult{true, volume_committed,
-                                               frames_served};
-                        }
-
-                        uint64_t const ae_seq = next->global_seq_num + 1;
-                        auto ae_record = build_archive_end_record(
-                            opts.volume_block_size, state.next_volume_seq_num,
-                            archive_uuid, opts.archive_name, ae_seq);
-                        retention.add(ae_seq, ae_record);
-                        archive_end_seq = ae_seq;
-                        neotape::tcp::write_message(
-                            client, Message{MessageType::frame_record,
-                                            std::move(ae_record)});
-                        ++frames_served;
-                        ++next_send_seq;
-                        break;
-                    }
-                    seq = next->global_seq_num;
-                    if (seq != next_send_seq) {
-                        send_error(client,
-                                   "requested frame is no longer retained");
-                        return ServeResult{false, volume_committed,
-                                           frames_served};
-                    }
-                    record = std::move(next->record);
-                    retention.add(seq, record);
-                }
-
-                if (record.size() != opts.volume_block_size) {
-                    send_error(client, "frame size mismatch");
-                    return ServeResult{false, volume_committed, frames_served};
-                }
-                patch_volume_seq_num(record, state.next_volume_seq_num);
-                NEOTAPE_DEBUG("raw-store: sending frame global_seq={}\n", seq);
-                neotape::tcp::write_message(
-                    client,
-                    Message{MessageType::frame_record, std::move(record)});
-                ++frames_served;
-                ++next_send_seq;
-                break;
-            }
-
-            case MessageType::ack_frame: {
-                int const ack_result = process_ack_payload(req->payload);
-                if (ack_result < 0) {
-                    return ServeResult{false, volume_committed, frames_served};
-                }
-                if (ack_result > 0) {
-                    return ServeResult{true, volume_committed, frames_served};
-                }
-                break;
-            }
-
-            case MessageType::tape_eof:
-                send_error(client, "unexpected tape_eof request");
-                return ServeResult{false, volume_committed, frames_served};
-
-            default:
-                send_error(client, "unexpected request type");
-                return ServeResult{false, volume_committed, frames_served};
-            }
-        }
-    } catch (const std::exception &e) {
-        NEOTAPE_DEBUG("raw-store: client error: {}\n", e.what());
-        return ServeResult{false, volume_committed, frames_served};
-    } catch (...) {
-        NEOTAPE_DEBUG("raw-store: unknown client error\n");
-        return ServeResult{false, volume_committed, frames_served};
-    }
-
-    return ServeResult{false, volume_committed, frames_served};
 }
 
 uint64_t run_raw_store(FILE *input, const Options &opts) {
-    int const listener = create_listener(opts.listen_address);
-    FdGuard const listener_guard(listener);
-    std::cerr << format("raw-store listening on {}\n", opts.listen_address);
+    neotape::VolumeServerOptions server_opts;
+    server_opts.listen_address = opts.listen_address;
+    server_opts.volume_block_size = opts.volume_block_size;
+    server_opts.archive_name = opts.archive_name;
+    server_opts.retention_frame_count = opts.retention_frame_count;
+    server_opts.log_label = "raw-store";
 
-    string const archive_uuid = neotape::make_uuid_v4();
-    neotape::ContentFrameBuilder builder(opts.volume_block_size, archive_uuid,
-                                         opts.archive_name);
-    neotape::ClosableQueue<RecordOrDone> frame_queue(8);
-
-    std::exception_ptr input_error;
-    string input_error_text;
-    std::mutex input_error_mtx;
-
-    auto capture_input_error = [&](const string &text) {
-        std::scoped_lock const lock(input_error_mtx);
-        if (!input_error) {
-            input_error_text = text;
-            input_error = std::current_exception();
-        }
-    };
-
-    auto get_input_error_text = [&]() -> string {
-        std::scoped_lock const lock(input_error_mtx);
-        return input_error_text;
-    };
-
-    auto check_input_error = [&]() {
-        std::scoped_lock const lock(input_error_mtx);
-        if (input_error) {
-            std::rethrow_exception(input_error);
-        }
-    };
-
-    std::thread input_thread([&]() {
-        try {
-            produce_raw_frames(input, builder, frame_queue);
-        } catch (const std::exception &e) {
-            capture_input_error(e.what());
-            frame_queue.close();
-        } catch (...) {
-            capture_input_error("unknown input error");
-            frame_queue.close();
-        }
-    });
-    ThreadJoiner input_joiner(input_thread);
-
-    FrameRetentionBuffer retention(opts.retention_frame_count);
-    RawStoreState state;
-    uint64_t total_frames_served = 0;
-
-    try {
-        while (!state.archive_complete) {
-            int const client = accept(listener, nullptr, nullptr);
-            if (client < 0) {
-                int const saved_errno = errno;
-                throw std::runtime_error(
-                    format("accept: {}", std::strerror(saved_errno)));
-            }
-            FdGuard const client_guard(client);
-            NEOTAPE_DEBUG("raw-store: accepted connection for volume seq={}\n",
-                          state.next_volume_seq_num);
-
-            ServeResult result =
-                serve_client(client, state, retention, frame_queue, opts,
-                             archive_uuid, get_input_error_text);
-            total_frames_served += result.frames_served;
-
-            if (result.archive_complete) {
-                std::cerr << format(
-                    "raw-store: archive complete, served {} frames on this "
-                    "connection\n",
-                    result.frames_served);
-                state.archive_complete = true;
-            } else if (result.volume_committed) {
-                std::cerr << format(
-                    "raw-store: connection closed, volume {} committed, "
-                    "advancing to seq={}\n",
-                    state.next_volume_seq_num, state.next_volume_seq_num + 1);
-                ++state.next_volume_seq_num;
-            } else {
-                std::cerr << format(
-                    "raw-store: connection closed before commit, reusing "
-                    "volume seq={}\n",
-                    state.next_volume_seq_num);
-            }
-        }
-    } catch (...) {
-        frame_queue.close();
-        if (input_thread.joinable()) {
-            input_thread.join();
-        }
-        check_input_error();
-        throw;
-    }
-
-    frame_queue.close();
-    if (input_thread.joinable()) {
-        input_thread.join();
-    }
-    check_input_error();
-    return total_frames_served;
+    return neotape::run_volume_server(
+        server_opts,
+        [&](const string &archive_uuid, neotape::VolumeRecordQueue &queue) {
+            produce_raw_frames(input, archive_uuid, opts, queue);
+        });
 }
 
 } // namespace
