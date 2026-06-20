@@ -58,7 +58,7 @@ All fields are mandatory — every entry record carries all 9 fields. Unknown
 or unavailable values use a reasonable zero sentinel (`0`, `""`, or timestamp `0`)
 rather than being omitted.
 
-This record doubles as the `ch_metadata` catalog for each logical slice. A
+This record doubles as the `ch_metadata` catalog for each slice. A
 downstream reader can parse the same record format to list archive contents,
 compute per-slice progress, or verify slice integrity against the planned
 file set.
@@ -80,13 +80,13 @@ The plan metadata stream serves a dual purpose:
 1. **Planning** — the archiver reads entry records to determine slice boundaries
    and file packing order.
 2. **Catalog** — the same entry records, when written into `ch_metadata` frames
-   within each logical slice, form a machine-readable index of the slice's
+   within each slice, form a machine-readable index of the slice's
    contents. A reader can parse them to list files, verify completeness, or
    display progress without inspecting the `ch_content` payload.
 
-The catalog is slice-scoped: each logical slice's `ch_metadata` contains only
+The catalog is slice-scoped: each slice's `ch_metadata` contains only
 the entry records whose `<slice>` field matches the enclosing
-`logical_slice_seq_num`. This keeps metadata streaming and avoids the need for
+`slice_seq_num`. This keeps metadata streaming and avoids the need for
 an archive-level preamble that would require knowing total file counts in
 advance.
 

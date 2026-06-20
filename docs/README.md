@@ -22,7 +22,6 @@ docs/
     04-volume-layout.md         Logical and physical tape layout
     05-spool-dir.md             Spool directory format
     06-security.md              Trust model, path safety, signing
-    07-open-questions.md        Unresolved design choices and open questions
     08-future-extensions.md     Extension ideas (multi-channel, FEC, encryption)
     09-plan-metadata.md         Plan metadata format (`neotape plan`)
     10-appendix-cli.md          CLI usage examples for all tools
@@ -45,7 +44,7 @@ docs/
 
 ### `spec/`
 
-Use `docs/spec/` for the NeoTape format specification: tape model, unified frame header layout, channel semantics, frame and slice rules, continuation behavior, reader state machine, error handling, and open questions.
+Use `docs/spec/` for the NeoTape format specification: tape model, unified frame header layout, channel semantics, frame and slice rules, continuation behavior, reader state machine, and error handling.
 
 NeoTape uses a **single unified Frame Header** for all records. The header layout is specified in `docs/spec/01-frame-header.md`.
 
@@ -60,7 +59,7 @@ Use `docs/implementation/` for implementation-specific notes: empirical LTO obse
 - Keep each file centered on one topic that is likely to change together.
 - Avoid very tiny files for every subsection; split where ownership and edit frequency naturally separate.
 - Prefer cross-links over repeating the same rule in multiple files.
-- Keep open questions close to the topic they affect, then summarize broad unresolved items in `spec/08-open-questions.md`.
+- Keep open questions close to the topic they affect rather than collecting them in a separate catch-all file.
 
 ## Key Format Changes (June 2026)
 
@@ -72,6 +71,6 @@ The format was significantly simplified in June 2026:
 - **`volume_seq_num`** is now advisory; archive continuity is validated by `archive_uuid` and sequence numbers.
 - **No payload profile** in core format; core is payload-format agnostic.
 - **No slice-level hash**; per-frame `frame_hash` is sufficient.
-- **Channel-local `frame_seq_num_within_channel`** replaces `frame_seq_num_within_slice`.
-- **Metadata-first ordering**: `ch_metadata` MUST precede `ch_content` within each logical slice.
+- **Channel-local `channel_frame_seq_num`** replaces `frame_seq_num_within_slice`.
+- **Metadata-first ordering**: `ch_metadata` MUST precede `ch_content` within each slice.
 - **`volume_block_size_kib`** (`uint16`, KiB-encoded) replaces `volume_block_size` (`uint32`, bytes).

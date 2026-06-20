@@ -29,6 +29,7 @@ struct VolumeServeResult {
 struct VolumeServeState {
     uint64_t next_volume_seq_num = 1;
     uint64_t last_acked_global_frame = 0;
+    bool has_acked_any_frame = false;
     bool archive_complete = false;
 };
 

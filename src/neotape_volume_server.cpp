@@ -39,7 +39,8 @@ int process_ack_payload(int client, const VolumeServerOptions &opts,
     }
 
     uint64_t const g = le64_from_bytes(payload);
-    uint64_t const expected = state.last_acked_global_frame + 1;
+    uint64_t const expected =
+        state.has_acked_any_frame ? state.last_acked_global_frame + 1 : 0;
     if (g != expected) {
         send_error(client,
                    format("ack {} out of order; expected {}", g, expected)
@@ -55,6 +56,7 @@ int process_ack_payload(int client, const VolumeServerOptions &opts,
 
     NEOTAPE_DEBUG("{}: ack frame global_seq={}\n", opts.log_label, g);
     state.last_acked_global_frame = g;
+    state.has_acked_any_frame = true;
     retention.ack(g);
     if (archive_end_seq.has_value() && g >= *archive_end_seq) {
         NEOTAPE_DEBUG("{}: archive end acked\n", opts.log_label);
@@ -73,13 +75,14 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
                     const std::function<string()> &get_error_text) {
     bool volume_committed = false;
     uint64_t frames_served = 0;
-    uint64_t next_send_seq = state.last_acked_global_frame == 0
-                                 ? 1
-                                 : state.last_acked_global_frame + 1;
+    uint64_t next_send_seq =
+        state.has_acked_any_frame ? state.last_acked_global_frame + 1 : 0;
     std::optional<uint64_t> archive_end_seq;
 
     auto outstanding_frames = [&]() -> uint64_t {
-        return (next_send_seq - 1) - state.last_acked_global_frame;
+        uint64_t const acked_count =
+            state.has_acked_any_frame ? state.last_acked_global_frame + 1 : 0;
+        return next_send_seq - acked_count;
     };
 
     auto drain_acks_until = [&](uint64_t limit) {
@@ -171,7 +174,7 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
                                                      frames_served};
                         }
 
-                        uint64_t const ae_seq = next->global_seq_num + 1;
+                        uint64_t const ae_seq = next->global_seq_num;
                         auto ae_record = build_archive_end_record(
                             opts.volume_block_size, state.next_volume_seq_num,
                             archive_uuid, opts.archive_name, ae_seq);

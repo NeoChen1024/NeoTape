@@ -8,9 +8,9 @@ they are backend behavior observations used to choose conservative writer rules.
 
 ## Scope
 
-The observations below come from an experimental Frame-per-record EOT probe that
-wrote NeoTape-like Frame records to a deliberately small tape partition and then
-read the records back for verification.
+The observations below come from a retired experimental Frame-per-record EOT
+probe that wrote NeoTape-like Frame records to a deliberately small tape
+partition and then read the records back for verification.
 
 The probe used complete records of the selected `volume_block_size`. Each record
 contained a Frame-like header followed by deterministic PRNG payload bytes and
@@ -18,7 +18,8 @@ padding to the record size. Readback validated the header and the probe payload
 digest and regenerated PRNG payload bytes.
 
 The probe was not a stable NeoTape archival writer. Its purpose was to observe
-real tape behavior near EOT/EOM.
+real tape behavior near EOT/EOM; the tool itself is no longer kept in-tree
+now that the relevant `ENOSPC` behavior has been characterized.
 
 ## Observed Result Summary
 

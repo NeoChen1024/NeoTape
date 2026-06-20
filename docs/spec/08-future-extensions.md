@@ -25,17 +25,17 @@ Extend `channel_type` beyond `ch_content`, `ch_metadata`, and `archive_end`. Val
 - **Diagnostics embedding** — writer heartbeats or progress snapshots at predictable frame positions.
 - **Real-time verification nodes** — Merkle tree nodes or hash-chain data alongside content data.
 
-New `channel_type` values are allocated by future specification versions. Arbitrary mixing is allowed since `frame_seq_num_within_channel` provides per-channel ordering.
+New `channel_type` values are allocated by future specification versions. Arbitrary mixing is allowed since `channel_frame_seq_num` provides per-channel ordering.
 
 ## Partial Restore Index
 
-An index that maps file paths to their exact logical slice and frame positions, enabling targeted partial restore without scanning all slices.
+An index that maps file paths to their exact slice and frame positions, enabling targeted partial restore without scanning all slices.
 
 ## Filesystem-Native Payloads
 
 Support for ZFS send streams and Btrfs send streams:
 
-- Each dataset, subvolume, or snapshot send stream is a payload sub-stream that normally maps to one or more logical slices.
+- Each dataset, subvolume, or snapshot send stream is a payload sub-stream that normally maps to one or more slices.
 - Catalog fields for dataset/subvolume identity, snapshot names, parent snapshot dependencies, receive order, stream-level checksums, and slice ranges.
 
 NeoTape core remains payload-format agnostic; restore semantics are handled by the receive tool.

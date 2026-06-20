@@ -48,10 +48,10 @@ std::vector<std::byte> build_archive_end_record(uint32_t block_size,
     h.archive_label = archive_name;
     h.volume_seq_num = volume_seq_num;
     h.global_frame_seq_num = global_seq_num;
-    h.logical_slice_seq_num = 0;
-    h.frame_seq_num_within_channel = 1;
+    h.slice_seq_num = 0;
+    h.channel_frame_seq_num = 0;
     h.frame_payload_size = 0;
-    h.flags = frame_flag_start | frame_flag_end | frame_flag_clean_end;
+    h.flags = frame_flag_end | frame_flag_clean_end;
 
     std::vector<std::byte> record(block_size, std::byte{0});
     finalize_record_hash(h, record);
@@ -70,7 +70,7 @@ uint32_t ContentFrameBuilder::payload_capacity() const {
 
 void ContentFrameBuilder::set_current_slice(uint64_t slice_num) {
     current_slice_ = slice_num;
-    frame_seq_within_channel_ = 1;
+    channel_frame_seq_num_ = 0;
 }
 
 std::vector<BuiltFrame>
@@ -103,9 +103,6 @@ ContentFrameBuilder::build_content_frame(std::span<const std::byte> payload,
     assert(payload.size() <= payload_capacity());
 
     uint64_t flags = 0;
-    if (frame_seq_within_channel_ == 1) {
-        flags |= frame_flag_start;
-    }
     if (is_final) {
         flags |= frame_flag_end;
     }
@@ -117,8 +114,8 @@ ContentFrameBuilder::build_content_frame(std::span<const std::byte> payload,
     fh.archive_label = archive_name_;
     fh.volume_seq_num = 0;
     fh.global_frame_seq_num = global_frame_seq_num_++;
-    fh.logical_slice_seq_num = current_slice_;
-    fh.frame_seq_num_within_channel = frame_seq_within_channel_++;
+    fh.slice_seq_num = current_slice_;
+    fh.channel_frame_seq_num = channel_frame_seq_num_++;
     fh.frame_payload_size = static_cast<uint32_t>(payload.size());
     fh.flags = flags;
 

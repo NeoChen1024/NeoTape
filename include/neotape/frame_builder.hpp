@@ -71,11 +71,11 @@ struct BuiltFrame {
 // Accumulates payload bytes and produces complete NeoTape records when a
 // full frame is available. Correctly tracks:
 //   - global_frame_seq_num (monotonic across the archive)
-//   - frame_seq_num_within_channel (per (slice, channel) group)
-//   - START flag on the first frame of a channel group
+//   - channel_frame_seq_num (per (slice, channel) group)
+//   - channel_frame_seq_num == 0 on the first frame of a channel group
 //   - END flag on the final frame (signalled by flush())
 //
-// A new logical slice resets frame_seq_num_within_channel to 1 without
+// A new slice resets channel_frame_seq_num to 0 without
 // resetting the global frame counter.  Metadata-channel frames are not
 // handled by this builder (the archiver is the metadata source, not the
 // frame builder).
@@ -102,12 +102,7 @@ class ContentFrameBuilder {
         return global_frame_seq_num_;
     }
 
-    // Last assigned global seq num (0 if none produced yet).
-    [[nodiscard]] uint64_t last_global_seq_num() const {
-        return global_frame_seq_num_ == 1 ? 0 : global_frame_seq_num_ - 1;
-    }
-
-    // Current logical slice sequence number.
+    // Current slice sequence number.
     [[nodiscard]] uint64_t current_slice_seq_num() const {
         return current_slice_;
     }
@@ -119,9 +114,9 @@ class ContentFrameBuilder {
     uint32_t block_size_;
     std::string archive_uuid_;
     std::string archive_name_;
-    uint64_t global_frame_seq_num_ = 1;
-    uint64_t frame_seq_within_channel_ = 1;
-    uint64_t current_slice_ = 1;
+    uint64_t global_frame_seq_num_ = 0;
+    uint64_t channel_frame_seq_num_ = 0;
+    uint64_t current_slice_ = 0;
     std::vector<std::byte> pending_;
 };
 

@@ -23,9 +23,9 @@ struct RestoreFrameValidation {
 //   - global_frame_seq_num   monotonically increasing by 1
 //   - volume_block_size      constant across all frames
 //   - archive_uuid/label     constant across all frames
-//   - logical_slice_seq_num  starts at 1, increments by at most 1
+//   - slice_seq_num          starts at 0, increments by at most 1
 //   - channel ordering       metadata before content within a slice
-//   - frame_seq_num_within_channel   contiguous per (slice, channel) group
+//   - channel_frame_seq_num  contiguous per (slice, channel) group
 //   - archive_end            must be the final frame, carries CLEAN_END
 //
 // Thread-compatible: single-threaded use only.
@@ -33,12 +33,12 @@ struct FrameValidator {
     // --- public state (read-only after feeding) ---
     std::string archive_uuid;
     std::string archive_label;
-    uint64_t expected_global_frame_seq = 1;
+    uint64_t expected_global_frame_seq = 0;
     uint64_t expected_volume_seq_num = 0;
     uint64_t current_slice_seq_num = 0;
     uint32_t volume_block_size = 0; // decoded bytes
     ChannelType last_channel_type{};
-    uint64_t expected_frame_seq_within_channel = 1;
+    uint64_t expected_channel_frame_seq_num = 0;
     enum class Phase { none, metadata, content };
     Phase current_phase = Phase::none;
     bool saw_first_volume_seq = false;

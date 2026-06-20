@@ -31,10 +31,10 @@ void write_frame_record(mt::TapeDevice &dev) {
     header.archive_label = "variable-block-probe";
     header.volume_seq_num = 1;
     header.global_frame_seq_num = 0;
-    header.logical_slice_seq_num = 0;
-    header.frame_seq_num_within_channel = 1;
+    header.slice_seq_num = 0;
+    header.channel_frame_seq_num = 0;
     header.frame_payload_size = 1;
-    header.flags = neotape::frame_flag_start | neotape::frame_flag_end;
+    header.flags = neotape::frame_flag_end;
 
     auto hdr_bytes = neotape::serialize_frame_header(header);
     std::vector<uint8_t> record(record_size, 0);

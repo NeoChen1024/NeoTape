@@ -175,7 +175,9 @@ struct WriterState {
     std::atomic<bool> writer_stop{false};
     std::atomic<bool> writer_error{false};
     string writer_error_text;
+    std::atomic<bool> has_written_frame{false};
     std::atomic<uint64_t> last_written_seq{0};
+    std::atomic<uint64_t> written_frame_count{0};
     std::atomic<bool> eot_reached{false};
 };
 
@@ -337,7 +339,9 @@ void tape_writer_thread(mt::TapeDevice *dev, int fd,
 
         try {
             dev->write_record(frame.record.data(), frame.record.size());
+            state.has_written_frame.store(true);
             state.last_written_seq.store(frame.global_seq_num);
+            state.written_frame_count.fetch_add(1);
         } catch (const mt::Error &e) {
             if (e.error_code() == ENOSPC) {
                 NEOTAPE_DEBUG(
@@ -522,12 +526,13 @@ int main(int argc, char **argv) {
                 joiner.join();
                 write_trailing_filemark(output.device.get());
                 uint64_t final_seq = wstate.last_written_seq.load();
-                if (final_seq > 0) {
+                if (wstate.has_written_frame.load()) {
                     write_msg(Message{MessageType::ack_frame,
                                       uint64_to_le_bytes(final_seq)});
                 }
                 std::cerr << format(
-                    "writer: reached end of tape after {} frames\n", final_seq);
+                    "writer: reached end of tape after {} written frames\n",
+                    wstate.written_frame_count.load());
                 return 1;
             }
 
@@ -565,10 +570,10 @@ int main(int argc, char **argv) {
                     std::cerr << format(
                         "writer: first frame parsed block_size={} "
                         "archive_label=\"{}\" archive_uuid={} volume_seq={} "
-                        "logical_slice_seq={} global_seq={} channel={} "
+                        "slice_seq={} global_seq={} channel={} "
                         "payload_size={}\n",
                         record_size, header.archive_label, header.archive_uuid,
-                        header.volume_seq_num, header.logical_slice_seq_num,
+                        header.volume_seq_num, header.slice_seq_num,
                         header.global_frame_seq_num,
                         neotape::channel_type_name(header.channel_type),
                         header.frame_payload_size);
@@ -596,14 +601,15 @@ int main(int argc, char **argv) {
                             joiner.join();
                             write_trailing_filemark(output.device.get());
                             uint64_t final_seq = wstate.last_written_seq.load();
-                            if (final_seq > 0) {
+                            if (wstate.has_written_frame.load()) {
                                 write_msg(
                                     Message{MessageType::ack_frame,
                                             uint64_to_le_bytes(final_seq)});
                             }
                             std::cerr << format(
-                                "writer: reached end of tape after {} frames\n",
-                                final_seq);
+                                "writer: reached end of tape after {} written "
+                                "frames\n",
+                                wstate.written_frame_count.load());
                             return 1;
                         }
                         std::this_thread::sleep_for(

@@ -176,7 +176,7 @@ void produce_raw_frames(FILE *input, const string &archive_uuid,
     if (!queue.push(neotape::VolumeRecord{{}, 0, true, false})) {
         throw std::runtime_error("frame consumer disconnected");
     }
-    if (!queue.push(neotape::VolumeRecord{{}, builder.last_global_seq_num(),
+    if (!queue.push(neotape::VolumeRecord{{}, builder.next_global_seq_num(),
                                           false, true})) {
         throw std::runtime_error("frame consumer disconnected");
     }

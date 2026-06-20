@@ -48,11 +48,11 @@ dd if=/dev/nvme0n1 bs=4M | \
   bin/neotape-raw-store --listen unix:///tmp/raw-store.sock
 ```
 
-The entire input stream is one logical slice (`logical_slice_seq_num = 1`).
-Within that slice, `frame_seq_num_within_channel` starts at 1 and increments for
-each `ch_content` frame; only the first content frame carries `START`, only the
-last content frame carries `END`, and the store emits `tape_eof` before the final
-`archive_end` frame.
+The entire input stream is one slice (`slice_seq_num = 0`). Within that slice,
+`channel_frame_seq_num` starts at 0 and increments for each `ch_content` frame.
+The first content frame is the one with `channel_frame_seq_num = 0`, only the
+last content frame carries `END`, and the store emits `tape_eof` before the
+final `archive_end` frame.
 
 ## Standalone pax writer
 
@@ -123,12 +123,12 @@ bin/neotape-inspect --source tape:/dev/nst0
 The compliance report checks:
 
 - **Per-frame:** magic, header version, volume block size, frame hash,
-  payload size, reserved fields, allowed flag bits (START/END/SIGNED/CLEAN_END),
+  payload size, reserved fields, allowed flag bits (END/SIGNED/CLEAN_END),
   SIGNED flag vs. signature field consistency.
 - **Archive-level:** `archive_uuid`/`archive_label` consistency,
-  `global_frame_seq_num` continuity, `logical_slice_seq_num` progression,
+  `global_frame_seq_num` continuity, `slice_seq_num` progression,
   channel ordering (metadata before content),
-  `frame_seq_num_within_channel` continuity, `archive_end` frame rules.
+  `channel_frame_seq_num` continuity, `archive_end` frame rules.
 
 ## Backend locators
 

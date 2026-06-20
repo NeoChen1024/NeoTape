@@ -6,7 +6,7 @@ This document defines common NeoTape terms used by the active specification.
 Exact byte layouts and filesystem naming grammars live in their dedicated
 chapters; this chapter is intentionally conceptual.
 
-## Logical Hierarchy
+## Hierarchy
 
 ### Archive
 
@@ -28,13 +28,13 @@ A backend-defined physical or virtual container. It is not an authoritative logi
 
 A logical tape file delimited by LTO filemarks.
 
-NeoTape uses tape files for coarse seekable boundaries such as logical slice tape files and the Archive End frame. Frames within a slice tape file are chained by `frame_payload_size`, not by additional filemarks.
+NeoTape uses tape files for coarse seekable boundaries such as slice tape files and the Archive End frame. Frames within a slice tape file are chained by `frame_payload_size`, not by additional filemarks.
 
-### Logical Slice
+### Slice
 
-A writer-declared logical content grouping, identified by `logical_slice_seq_num`.
+A writer-declared content grouping, identified by `slice_seq_num`.
 
-Each logical slice consists of zero or more `ch_metadata` frames followed by zero or more `ch_content` frames. At least one frame must be present. Metadata, when present, MUST precede content. A logical slice MAY contain only metadata and MAY span backend volumes.
+Each slice consists of zero or more `ch_metadata` frames followed by zero or more `ch_content` frames. At least one frame must be present. Metadata, when present, MUST precede content. A slice MAY contain only metadata and MAY span backend volumes.
 
 ### Frame
 
@@ -44,15 +44,15 @@ Each Frame occupies exactly one NeoTape record of `volume_block_size_kib * 1024`
 
 ### Channel
 
-Partitions a logical slice into `ch_metadata` and `ch_content`. Each channel is a contiguous group of frames within the logical slice, identified by `channel_type`. `frame_seq_num_within_channel` is scoped per-channel.
+Partitions a slice into `ch_metadata` and `ch_content`. Each channel is a contiguous group of frames within the slice, identified by `channel_type`. `channel_frame_seq_num` is scoped per-channel, and `channel_frame_seq_num = 0` identifies the first frame of a channel group.
 
 ### ch_content
 
-The ordered payload byte stream carried by `ch_content` frames for one logical slice. This is the only per-slice byte stream emitted by normal payload readers such as `neotape restore`.
+The ordered payload byte stream carried by `ch_content` frames for one slice. This is the only per-slice byte stream emitted by normal payload readers such as `neotape restore`.
 
 ### ch_metadata
 
-Advisory metadata bytes carried by `ch_metadata` frames for one logical slice. It is transport metadata for listing, diagnostics, partial restore, or acceleration. It is not part of the content stream and must not be required for basic restore correctness.
+Advisory metadata bytes carried by `ch_metadata` frames for one slice. It is transport metadata for listing, diagnostics, partial restore, or acceleration. It is not part of the content stream and must not be required for basic restore correctness.
 
 ## Headers And Metadata
 
@@ -79,13 +79,9 @@ The byte stream transported by NeoTape. NeoTape core is payload-format agnostic 
 
 ## Frame Flags
 
-### START
-
-Frame flag indicating the first frame of a channel group within a logical slice.
-
 ### END
 
-Frame flag indicating the last frame of a channel group within a logical slice.
+Frame flag indicating the last frame of a channel group within a slice.
 
 ### SIGNED
 
@@ -202,7 +198,7 @@ Fields repeated across every frame:
 
 `channel_type` selects the role of the current frame (`ch_content`,
 `ch_metadata`, or `archive_end`). `flags` carries per-frame state such as
-`START`, `END`, `SIGNED`, and `CLEAN_END`.
+`END`, `SIGNED`, and `CLEAN_END`.
 
 For the authoritative enum values and bit assignments, see
 [01-frame-header.md](01-frame-header.md).
@@ -245,9 +241,9 @@ sequence of files. Ordering, archive boundaries, and record framing follow
 - An **Archive** contains one or more **Backend Volumes**.
 - A **Backend Volume** is stored on one **Physical Medium** (or virtual volume).
 - A **Physical Medium** may store multiple **Archive Instances** sequentially.
-- A **Backend Volume** contains one or more **Logical Slices**.
-- A **Logical Slice** contains at most one contiguous `ch_metadata` group followed by at most one contiguous `ch_content` group. At least one frame must be present.
+- A **Backend Volume** contains one or more **Slices**.
+- A **Slice** contains at most one contiguous `ch_metadata` group followed by at most one contiguous `ch_content` group. At least one frame must be present.
 - A **Frame** is exactly one **NeoTape Record**.
-- `ch_metadata` frames MUST precede `ch_content` frames within a logical slice.
+- `ch_metadata` frames MUST precede `ch_content` frames within a slice.
 - A normal payload reader emits only `ch_content` frame payload bytes.
 - Archive completion is declared only by a valid **Archive End** frame with `CLEAN_END = 1`.

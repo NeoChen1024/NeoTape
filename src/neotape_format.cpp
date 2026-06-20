@@ -29,8 +29,8 @@ constexpr size_t off_archive_uuid = 12;
 constexpr size_t off_archive_label = 49;
 constexpr size_t off_volume_seq_num = 114;
 constexpr size_t off_global_frame_seq_num = 122;
-constexpr size_t off_logical_slice_seq_num = 130;
-constexpr size_t off_frame_seq_num_within_channel = 138;
+constexpr size_t off_slice_seq_num = 130;
+constexpr size_t off_channel_frame_seq_num = 138;
 constexpr size_t off_frame_payload_size = 146;
 constexpr size_t off_flags = 150;
 constexpr size_t off_reserved = 158;
@@ -154,9 +154,8 @@ HeaderBytes serialize_frame_header(const FrameHeader &header) {
                      header.archive_label);
     put_u64(bytes, off_volume_seq_num, header.volume_seq_num);
     put_u64(bytes, off_global_frame_seq_num, header.global_frame_seq_num);
-    put_u64(bytes, off_logical_slice_seq_num, header.logical_slice_seq_num);
-    put_u64(bytes, off_frame_seq_num_within_channel,
-            header.frame_seq_num_within_channel);
+    put_u64(bytes, off_slice_seq_num, header.slice_seq_num);
+    put_u64(bytes, off_channel_frame_seq_num, header.channel_frame_seq_num);
     put_u32(bytes, off_frame_payload_size, header.frame_payload_size);
     put_u64(bytes, off_flags, header.flags);
     std::copy(header.signature.begin(), header.signature.end(),
@@ -191,9 +190,8 @@ FrameHeader parse_frame_header(const uint8_t *data, std::size_t size) {
         get_fixed_string(data, off_archive_label, archive_label_size);
     header.volume_seq_num = get_u64(data, off_volume_seq_num);
     header.global_frame_seq_num = get_u64(data, off_global_frame_seq_num);
-    header.logical_slice_seq_num = get_u64(data, off_logical_slice_seq_num);
-    header.frame_seq_num_within_channel =
-        get_u64(data, off_frame_seq_num_within_channel);
+    header.slice_seq_num = get_u64(data, off_slice_seq_num);
+    header.channel_frame_seq_num = get_u64(data, off_channel_frame_seq_num);
     header.frame_payload_size = get_u32(data, off_frame_payload_size);
     header.flags = get_u64(data, off_flags);
     std::copy(data + off_signature, data + off_signature + signature_size,
@@ -295,26 +293,25 @@ void validate_header(const FrameHeader &header) {
             "frame payload size exceeds block payload capacity");
     }
 
-    constexpr uint64_t allowed_flags = frame_flag_start | frame_flag_end |
-                                       frame_flag_signed | frame_flag_clean_end;
+    constexpr uint64_t allowed_flags =
+        frame_flag_end | frame_flag_signed | frame_flag_clean_end;
     if ((header.flags & ~allowed_flags) != 0) {
         throw std::runtime_error("reserved frame flag bits set");
     }
 
     if (header.channel_type == ChannelType::ARCHIVE_END) {
-        if (!has_frame_flag_start(header.flags) ||
-            !has_frame_flag_end(header.flags) ||
+        if (!has_frame_flag_end(header.flags) ||
             !has_frame_flag_clean_end(header.flags)) {
             throw std::runtime_error(
                 "archive-end frame missing required flags");
         }
-        if (header.logical_slice_seq_num != 0) {
+        if (header.slice_seq_num != 0) {
             throw std::runtime_error(
-                "archive-end frame has logical slice sequence");
+                "archive-end frame has non-zero slice_seq_num");
         }
-        if (header.frame_seq_num_within_channel != 1) {
+        if (header.channel_frame_seq_num != 0) {
             throw std::runtime_error(
-                "archive-end frame channel sequence must be one");
+                "archive-end frame channel_frame_seq_num must be zero");
         }
     } else if (has_frame_flag_clean_end(header.flags)) {
         throw std::runtime_error(

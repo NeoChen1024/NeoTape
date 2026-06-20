@@ -18,7 +18,7 @@ PaxWriterCallbacks make_server_callbacks(ContentFrameBuilder &builder,
     return PaxWriterCallbacks{
         .begin_slice =
             [&](uint64_t slice_num) {
-                builder.set_current_slice(slice_num + 1);
+                builder.set_current_slice(slice_num);
             },
         .write_chunk =
             [&](PaxChunk chunk) {
@@ -72,9 +72,9 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
                     throw std::runtime_error("frame consumer disconnected");
                 }
             }
-            uint64_t const last_global_seq = builder.last_global_seq_num();
             if (!frame_queue.push(
-                    VolumeRecord{{}, last_global_seq, false, true})) {
+                    VolumeRecord{{}, builder.next_global_seq_num(), false,
+                                 true})) {
                 throw std::runtime_error("frame consumer disconnected");
             }
         });

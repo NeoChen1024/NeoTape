@@ -30,7 +30,6 @@ using neotape::FrameValidator;
 using neotape::has_frame_flag_clean_end;
 using neotape::has_frame_flag_end;
 using neotape::has_frame_flag_signed;
-using neotape::has_frame_flag_start;
 using neotape::Hash;
 using std::format;
 using std::string;
@@ -375,8 +374,6 @@ class TapeFrameReader final : public FrameReader {
 
 string flags_str(uint64_t flags) {
     string s;
-    if (has_frame_flag_start(flags))
-        s += 'S';
     if (has_frame_flag_end(flags))
         s += 'E';
     if (has_frame_flag_clean_end(flags))
@@ -422,7 +419,7 @@ struct Stats {
 };
 
 void print_separator() {
-    std::cout << "------+------+--------+-------+-----------+-----+"
+    std::cout << "------+------+--------+----------+-----------+----------+"
                  "---------+-------+-------\n";
 }
 
@@ -444,11 +441,12 @@ int do_inspect(const Options &opts) {
     // --- header ---
     std::cout << format("Source: {:<40s}\n", opts.source.path);
     std::cout << "\n";
-    std::cout << format("  {:>3s} | {:>4s} | {:>6s} | {:>5s} | {:>9s} | "
-                        "{:>3s} | {:>7s} | {:>5s} | {:>5s}\n",
-                        "#", "File", "GblSeq", "Slice", "Channel", "ChSeq",
+    std::cout << format("  {:>3s} | {:>4s} | {:>6s} | {:>8s} | {:>9s} | "
+                        "{:>8s} | {:>7s} | {:>5s} | {:>5s}\n",
+                        "#", "File", "GblSeq", "SliceSeq", "Channel",
+                        "ChFrmSeq",
                         "Payload", "Flags", "Hash");
-    std::cout << "------+------+--------+-------+-----------+-----+"
+    std::cout << "------+------+--------+----------+-----------+----------+"
                  "---------+-------+-------\n";
 
     for (;;) {
@@ -466,8 +464,8 @@ int do_inspect(const Options &opts) {
 
         if (rr.is_filemark) {
             ++stats.filemarks;
-            std::cout << format("  {:>3s} | {:>4s} | {:>6s} | {:>5s} | "
-                                "{:>9s} | {:>3s} | {:>7s} | {:>5s} | {:>5s}\n",
+            std::cout << format("  {:>3s} | {:>4s} | {:>6s} | {:>8s} | "
+                                "{:>9s} | {:>8s} | {:>7s} | {:>5s} | {:>5s}\n",
                                 "", "", "", "", "filemark", "", "", "", "");
             continue;
         }
@@ -485,7 +483,7 @@ int do_inspect(const Options &opts) {
             issues.push_back(format("Frame #{}: header parse error: {}",
                                     frame_number, e.what()));
             std::cout << format(
-                "  {:>3d} | {:>4d} | {:>6s} | {:>5s} | {:>9s} | {:>3s} | "
+                "  {:>3d} | {:>4d} | {:>6s} | {:>8s} | {:>9s} | {:>8s} | "
                 "{:>7s} | {:>5s} | FAIL\n",
                 frame_number, static_cast<int>(rr.file_num), "-", "-", "-", "-",
                 "-", "-");
@@ -527,12 +525,12 @@ int do_inspect(const Options &opts) {
         }
 
         std::cout << format(
-            "  {:>3d} | {:>4d} | {:>6d} | {:>5d} | {:>9s} | {:>3d} | "
+            "  {:>3d} | {:>4d} | {:>6d} | {:>8d} | {:>9s} | {:>8d} | "
             "{:>7d} | {:>5s} | {:>5s}\n",
             frame_number, static_cast<int>(rr.file_num),
-            header.global_frame_seq_num, header.logical_slice_seq_num,
+            header.global_frame_seq_num, header.slice_seq_num,
             channel_abbrev(header.channel_type),
-            header.frame_seq_num_within_channel, header.frame_payload_size,
+            header.channel_frame_seq_num, header.frame_payload_size,
             flags_str(header.flags), hash_status(header.frame_hash, computed));
     }
 

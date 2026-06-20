@@ -46,8 +46,8 @@ if ! grep -F 'volume_seq=1' "$WRITER_LOG" >/dev/null; then
 	cat "$WRITER_LOG"
 	exit 1
 fi
-if ! grep -F 'logical_slice_seq=1' "$WRITER_LOG" >/dev/null; then
-	echo "smoke_tcp_archive: missing first-frame logical slice sequence log"
+if ! grep -F 'slice_seq=0' "$WRITER_LOG" >/dev/null; then
+	echo "smoke_tcp_archive: missing first-frame slice sequence log"
 	cat "$WRITER_LOG"
 	exit 1
 fi

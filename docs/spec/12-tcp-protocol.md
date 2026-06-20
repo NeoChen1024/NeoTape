@@ -93,7 +93,7 @@ rules:
 - Monotonic, gapless `global_frame_seq_num`
 - Monotonic `volume_seq_num` (advisory — must not go backward, may skip at
   most 1)
-- `logical_slice_seq_num` and `frame_seq_num_within_channel` per spec
+- `slice_seq_num` and `channel_frame_seq_num` per spec
 - Channel ordering (`ch_metadata` before `ch_content`)
 - `frame_hash`, except for the restore-mode metadata exception below
 

@@ -118,29 +118,33 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
         if (!has_frame_flag_clean_end(header.flags)) {
             return "archive_end frame missing CLEAN_END";
         }
-        if (header.logical_slice_seq_num != 0) {
-            return format("archive_end logical_slice_seq_num {} != 0",
-                          header.logical_slice_seq_num);
+        if (header.slice_seq_num != 0) {
+            return format("archive_end slice_seq_num {} != 0",
+                          header.slice_seq_num);
+        }
+        if (header.channel_frame_seq_num != 0) {
+            return format("archive_end channel_frame_seq_num {} != 0",
+                          header.channel_frame_seq_num);
         }
         saw_archive_end = true;
         return std::nullopt;
     }
 
-    // --- logical_slice_seq_num ---
+    // --- slice_seq_num ---
     bool slice_changed = false;
     if (!saw_any_frame) {
-        if (header.logical_slice_seq_num != 1) {
-            return format("first frame logical_slice_seq_num {} != 1",
-                          header.logical_slice_seq_num);
+        if (header.slice_seq_num != 0) {
+            return format("first frame slice_seq_num {} != 0",
+                          header.slice_seq_num);
         }
-        current_slice_seq_num = 1;
+        current_slice_seq_num = 0;
         saw_any_frame = true;
     }
 
-    if (header.logical_slice_seq_num != current_slice_seq_num) {
-        if (header.logical_slice_seq_num != current_slice_seq_num + 1) {
-            return format("logical_slice_seq_num {} jumped from {}",
-                          header.logical_slice_seq_num, current_slice_seq_num);
+    if (header.slice_seq_num != current_slice_seq_num) {
+        if (header.slice_seq_num != current_slice_seq_num + 1) {
+            return format("slice_seq_num {} jumped from {}", header.slice_seq_num,
+                          current_slice_seq_num);
         }
         // Previous slice must have ended cleanly.
         if (had_previous_frame && !last_frame_had_end) {
@@ -148,9 +152,9 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
                           header.global_frame_seq_num);
         }
         slice_changed = true;
-        current_slice_seq_num = header.logical_slice_seq_num;
+        current_slice_seq_num = header.slice_seq_num;
         current_phase = Phase::none;
-        expected_frame_seq_within_channel = 1;
+        expected_channel_frame_seq_num = 0;
     }
 
     // --- channel ordering: metadata before content within same slice ---
@@ -163,17 +167,16 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
         current_phase = Phase::metadata;
     }
 
-    // --- START / END flags and channel-group boundaries ---
+    // --- END flag and channel-group boundaries ---
     bool const channel_changed =
         had_previous_frame && !slice_changed &&
         header.channel_type != last_channel_type;
-    bool const start_flag = has_frame_flag_start(header.flags);
 
     if (had_previous_frame && !slice_changed &&
         header.channel_type == last_channel_type && last_frame_had_end) {
-        return format("multiple {} groups in logical slice {}",
+        return format("multiple {} groups in slice {}",
                       channel_type_name(header.channel_type),
-                      header.logical_slice_seq_num);
+                      header.slice_seq_num);
     }
 
     // Previous channel group must have ended before a new one starts.
@@ -183,39 +186,27 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
                       header.global_frame_seq_num);
     }
 
-    bool const new_group = !had_previous_frame || slice_changed || channel_changed;
-    if (new_group && !start_flag) {
-        return format("missing START flag at new channel group start "
-                      "global_seq={}",
-                      header.global_frame_seq_num);
-    }
-    if (!new_group && start_flag) {
-        return format("unexpected START flag inside existing channel group "
-                      "at global_seq={}",
-                      header.global_frame_seq_num);
-    }
-
-    // --- frame_seq_num_within_channel ---
+    bool const new_group =
+        !had_previous_frame || slice_changed || channel_changed;
+    // --- channel_frame_seq_num ---
     if (new_group) {
-        if (header.frame_seq_num_within_channel != 1) {
-            return format("frame_seq_num_within_channel {} != 1 at start "
-                          "of new channel group",
-                          header.frame_seq_num_within_channel);
+        if (header.channel_frame_seq_num != 0) {
+            return format("channel_frame_seq_num {} != 0 at start of new "
+                          "channel group",
+                          header.channel_frame_seq_num);
         }
     } else {
-        if (header.frame_seq_num_within_channel !=
-            expected_frame_seq_within_channel) {
-            return format("frame_seq_num_within_channel {} != expected {}",
-                          header.frame_seq_num_within_channel,
-                          expected_frame_seq_within_channel);
+        if (header.channel_frame_seq_num != expected_channel_frame_seq_num) {
+            return format("channel_frame_seq_num {} != expected {}",
+                          header.channel_frame_seq_num,
+                          expected_channel_frame_seq_num);
         }
     }
 
     if (has_frame_flag_end(header.flags)) {
-        expected_frame_seq_within_channel = 1;
+        expected_channel_frame_seq_num = 0;
     } else {
-        expected_frame_seq_within_channel =
-            header.frame_seq_num_within_channel + 1;
+        expected_channel_frame_seq_num = header.channel_frame_seq_num + 1;
     }
     last_channel_type = header.channel_type;
     last_frame_had_end = has_frame_flag_end(header.flags);
@@ -254,12 +245,12 @@ FrameValidator::validate_restore_frame(const FrameHeader &header,
 void FrameValidator::reset() {
     archive_uuid.clear();
     archive_label.clear();
-    expected_global_frame_seq = 1;
+    expected_global_frame_seq = 0;
     expected_volume_seq_num = 0;
     current_slice_seq_num = 0;
     volume_block_size = 0;
     last_channel_type = {};
-    expected_frame_seq_within_channel = 1;
+    expected_channel_frame_seq_num = 0;
     current_phase = Phase::none;
     saw_first_volume_seq = false;
     saw_any_frame = false;

@@ -11,18 +11,20 @@
 
 namespace {
 
-[[noreturn]] void fail(const std::string &msg) {
+using std::string;
+
+[[noreturn]] void fail(const string &msg) {
     std::cerr << "test_format: " << msg << "\n";
     std::exit(1);
 }
 
-void expect(bool ok, const std::string &msg) {
+void expect(bool ok, const string &msg) {
     if (!ok) {
         fail(msg);
-}
+    }
 }
 
-template <class Fn> void expect_throw(Fn fn, const std::string &msg) {
+template <class Fn> void expect_throw(Fn fn, const string &msg) {
     try {
         fn();
     } catch (const std::exception &) {
@@ -32,114 +34,115 @@ template <class Fn> void expect_throw(Fn fn, const std::string &msg) {
 }
 
 uint16_t le16(const neotape::HeaderBytes &b, std::size_t off) {
-    return static_cast<uint16_t>(b[off]) | static_cast<uint16_t>(b[off + 1])
-                                               << 8;
+    return static_cast<uint16_t>(b[off]) |
+           static_cast<uint16_t>(b[off + 1]) << 8;
 }
 
 uint32_t le32(const neotape::HeaderBytes &b, std::size_t off) {
-    uint32_t v = 0;
+    uint32_t value = 0;
     for (std::size_t i = 0; i < 4; ++i) {
-        v |= static_cast<uint32_t>(b[off + i]) << (8 * i);
+        value |= static_cast<uint32_t>(b[off + i]) << (8 * i);
     }
-    return v;
+    return value;
 }
 
 uint64_t le64(const neotape::HeaderBytes &b, std::size_t off) {
-    uint64_t v = 0;
+    uint64_t value = 0;
     for (std::size_t i = 0; i < 8; ++i) {
-        v |= static_cast<uint64_t>(b[off + i]) << (8 * i);
-}
-    return v;
+        value |= static_cast<uint64_t>(b[off + i]) << (8 * i);
+    }
+    return value;
 }
 
 neotape::FrameHeader make_content_header() {
-    neotape::FrameHeader h;
-    h.channel_type = neotape::ChannelType::CH_CONTENT;
-    h.volume_block_size_kib = 4;
-    h.archive_uuid = "00000000-0000-4000-8000-000000000123";
-    h.archive_label = "unit-test";
-    h.volume_seq_num = 7;
-    h.global_frame_seq_num = 9;
-    h.logical_slice_seq_num = 2;
-    h.frame_seq_num_within_channel = 1;
-    h.frame_payload_size = 123;
-    h.flags = neotape::frame_flag_start | neotape::frame_flag_end;
-    h.frame_hash[0] = 0xcc;
-    h.frame_hash[31] = 0xdd;
-    return h;
+    neotape::FrameHeader header;
+    header.channel_type = neotape::ChannelType::CH_CONTENT;
+    header.volume_block_size_kib = 4;
+    header.archive_uuid = "00000000-0000-4000-8000-000000000123";
+    header.archive_label = "unit-test";
+    header.volume_seq_num = 7;
+    header.global_frame_seq_num = 9;
+    header.slice_seq_num = 2;
+    header.channel_frame_seq_num = 0;
+    header.frame_payload_size = 123;
+    header.flags = neotape::frame_flag_end;
+    header.frame_hash[0] = 0xcc;
+    header.frame_hash[31] = 0xdd;
+    return header;
 }
 
 neotape::FrameHeader make_archive_end_header() {
-    neotape::FrameHeader h;
-    h.channel_type = neotape::ChannelType::ARCHIVE_END;
-    h.volume_block_size_kib = 4;
-    h.archive_uuid = "00000000-0000-4000-8000-000000000123";
-    h.archive_label = "unit-test";
-    h.volume_seq_num = 1;
-    h.global_frame_seq_num = 10;
-    h.logical_slice_seq_num = 0;
-    h.frame_seq_num_within_channel = 1;
-    h.frame_payload_size = 0;
-    h.flags = neotape::frame_flag_start | neotape::frame_flag_end |
-              neotape::frame_flag_clean_end;
-    return h;
+    neotape::FrameHeader header;
+    header.channel_type = neotape::ChannelType::ARCHIVE_END;
+    header.volume_block_size_kib = 4;
+    header.archive_uuid = "00000000-0000-4000-8000-000000000123";
+    header.archive_label = "unit-test";
+    header.volume_seq_num = 1;
+    header.global_frame_seq_num = 10;
+    header.slice_seq_num = 0;
+    header.channel_frame_seq_num = 0;
+    header.frame_payload_size = 0;
+    header.flags = neotape::frame_flag_end | neotape::frame_flag_clean_end;
+    return header;
 }
 
 void test_channel_type_values() {
-    neotape::FrameHeader h = make_content_header();
+    neotape::FrameHeader header = make_content_header();
 
-    h.channel_type = neotape::ChannelType::CH_CONTENT;
-    neotape::HeaderBytes b = neotape::serialize_frame_header(h);
-    expect(b[9] == 1, "bad content channel value");
-    expect(neotape::parse_fixed_header(b.data(), b.size()).channel_type ==
+    header.channel_type = neotape::ChannelType::CH_CONTENT;
+    neotape::HeaderBytes bytes = neotape::serialize_frame_header(header);
+    expect(bytes[9] == 1, "bad content channel value");
+    expect(neotape::parse_fixed_header(bytes.data(), bytes.size()).channel_type ==
                neotape::ChannelType::CH_CONTENT,
            "content channel should parse");
 
-    h.channel_type = neotape::ChannelType::CH_METADATA;
-    b = neotape::serialize_frame_header(h);
-    expect(b[9] == 2, "bad metadata channel value");
-    expect(neotape::parse_fixed_header(b.data(), b.size()).channel_type ==
+    header.channel_type = neotape::ChannelType::CH_METADATA;
+    bytes = neotape::serialize_frame_header(header);
+    expect(bytes[9] == 2, "bad metadata channel value");
+    expect(neotape::parse_fixed_header(bytes.data(), bytes.size()).channel_type ==
                neotape::ChannelType::CH_METADATA,
            "metadata channel should parse");
 
-    h = make_archive_end_header();
-    b = neotape::serialize_frame_header(h);
-    expect(b[9] == 255, "bad archive-end channel value");
-    expect(neotape::parse_fixed_header(b.data(), b.size()).channel_type ==
+    header = make_archive_end_header();
+    bytes = neotape::serialize_frame_header(header);
+    expect(bytes[9] == 255, "bad archive-end channel value");
+    expect(neotape::parse_fixed_header(bytes.data(), bytes.size()).channel_type ==
                neotape::ChannelType::ARCHIVE_END,
            "archive-end channel should parse");
 }
 
 void test_layout_round_trip() {
-    neotape::FrameHeader const h = make_content_header();
-    neotape::HeaderBytes b = neotape::serialize_frame_header(h);
+    neotape::FrameHeader const header = make_content_header();
+    neotape::HeaderBytes bytes = neotape::serialize_frame_header(header);
 
-    expect(b.size() == 512, "header size should be 512");
-    expect(std::memcmp(b.data(), "NeoTape\0", 8) == 0, "bad magic");
-    expect(b[8] == 1, "bad header version");
-    expect(b[9] == 1, "bad channel type");
-    expect(le16(b, 10) == 4, "bad volume_block_size_kib");
-    expect(le64(b, 114) == 7, "bad volume_seq_num");
-    expect(le64(b, 122) == 9, "bad global_frame_seq_num");
-    expect(le64(b, 130) == 2, "bad logical_slice_seq_num");
-    expect(le64(b, 138) == 1, "bad frame_seq_num_within_channel");
-    expect(le32(b, 146) == 123, "bad frame_payload_size");
-    expect(le64(b, 150) ==
-               (neotape::frame_flag_start | neotape::frame_flag_end),
-           "bad flags");
-    expect(b[408] == 0, "unsigned signature start should be zero");
-    expect(b[479] == 0, "unsigned signature end should be zero");
-    expect(b[480] == 0xcc, "bad frame_hash start offset");
-    expect(b[511] == 0xdd, "bad frame_hash end offset");
+    expect(bytes.size() == 512, "header size should be 512");
+    expect(std::memcmp(bytes.data(), "NeoTape\0", 8) == 0, "bad magic");
+    expect(bytes[8] == 1, "bad header version");
+    expect(bytes[9] == 1, "bad channel type");
+    expect(le16(bytes, 10) == 4, "bad volume_block_size_kib");
+    expect(le64(bytes, 114) == 7, "bad volume_seq_num");
+    expect(le64(bytes, 122) == 9, "bad global_frame_seq_num");
+    expect(le64(bytes, 130) == 2, "bad slice_seq_num");
+    expect(le64(bytes, 138) == 0, "bad channel_frame_seq_num");
+    expect(le32(bytes, 146) == 123, "bad frame_payload_size");
+    expect(le64(bytes, 150) == neotape::frame_flag_end, "bad flags");
+    expect(bytes[408] == 0, "unsigned signature start should be zero");
+    expect(bytes[479] == 0, "unsigned signature end should be zero");
+    expect(bytes[480] == 0xcc, "bad frame_hash start offset");
+    expect(bytes[511] == 0xdd, "bad frame_hash end offset");
 
     neotape::FrameHeader parsed =
-        neotape::parse_fixed_header(b.data(), b.size());
+        neotape::parse_fixed_header(bytes.data(), bytes.size());
     expect(parsed.channel_type == neotape::ChannelType::CH_CONTENT,
            "parsed channel mismatch");
     expect(parsed.volume_block_size_kib == 4, "parsed block size mismatch");
-    expect(parsed.archive_uuid == h.archive_uuid, "parsed uuid mismatch");
-    expect(parsed.archive_label == h.archive_label, "parsed label mismatch");
+    expect(parsed.archive_uuid == header.archive_uuid, "parsed uuid mismatch");
+    expect(parsed.archive_label == header.archive_label,
+           "parsed label mismatch");
     expect(parsed.global_frame_seq_num == 9, "parsed global seq mismatch");
+    expect(parsed.slice_seq_num == 2, "parsed slice seq mismatch");
+    expect(parsed.channel_frame_seq_num == 0,
+           "parsed channel frame seq mismatch");
     expect(parsed.frame_payload_size == 123, "parsed payload size mismatch");
     expect(parsed.signature[0] == 0 && parsed.signature[71] == 0,
            "parsed unsigned signature mismatch");
@@ -150,41 +153,41 @@ void test_layout_round_trip() {
 }
 
 void test_signed_frame_signature_round_trip() {
-    neotape::FrameHeader h = make_content_header();
-    h.flags |= neotape::frame_flag_signed;
-    h.signature[0] = 0xaa;
-    h.signature[71] = 0xbb;
+    neotape::FrameHeader header = make_content_header();
+    header.flags |= neotape::frame_flag_signed;
+    header.signature[0] = 0xaa;
+    header.signature[71] = 0xbb;
 
-    neotape::HeaderBytes b = neotape::serialize_frame_header(h);
-    expect(b[408] == 0xaa, "signed signature start offset should be preserved");
-    expect(b[479] == 0xbb, "signed signature end offset should be preserved");
+    neotape::HeaderBytes bytes = neotape::serialize_frame_header(header);
+    expect(bytes[408] == 0xaa, "signed signature start offset should persist");
+    expect(bytes[479] == 0xbb, "signed signature end offset should persist");
 
     neotape::FrameHeader parsed =
-        neotape::parse_fixed_header(b.data(), b.size());
+        neotape::parse_fixed_header(bytes.data(), bytes.size());
     expect(parsed.signature[0] == 0xaa && parsed.signature[71] == 0xbb,
            "parsed signed signature mismatch");
 }
 
 void test_unsigned_serializer_rejects_signature() {
-    neotape::FrameHeader h = make_content_header();
-    h.signature[0] = 0xaa;
+    neotape::FrameHeader header = make_content_header();
+    header.signature[0] = 0xaa;
 
-    expect_throw([&] { neotape::serialize_frame_header(h); },
-                 "unsigned serializer should reject non-zero signature bytes");
+    expect_throw([&] { neotape::serialize_frame_header(header); },
+                 "unsigned serializer should reject signature bytes");
 }
 
 void test_validation() {
-    neotape::FrameHeader const h = make_content_header();
-    neotape::HeaderBytes b = neotape::serialize_frame_header(h);
+    neotape::FrameHeader const header = make_content_header();
+    neotape::HeaderBytes bytes = neotape::serialize_frame_header(header);
 
-    auto reserved = b;
+    auto reserved = bytes;
     reserved[158] = 1;
     expect_throw(
         [&] { neotape::parse_fixed_header(reserved.data(), reserved.size()); },
         "reserved byte should be rejected");
 
-    auto reserved_flag = b;
-    reserved_flag[150] = static_cast<uint8_t>(reserved_flag[150] | 0x08u);
+    auto reserved_flag = bytes;
+    reserved_flag[150] = static_cast<uint8_t>(reserved_flag[150] | 0x04u);
     expect_throw(
         [&] {
             neotape::parse_fixed_header(reserved_flag.data(),
@@ -192,8 +195,7 @@ void test_validation() {
         },
         "reserved flag bit should be rejected");
 
-    auto content_clean_end =
-        neotape::serialize_frame_header(make_content_header());
+    auto content_clean_end = neotape::serialize_frame_header(make_content_header());
     content_clean_end[157] =
         static_cast<uint8_t>(content_clean_end[157] | 0x80u);
     expect_throw(
@@ -203,44 +205,39 @@ void test_validation() {
         },
         "CLEAN_END on content frame should be rejected");
 
-    b = neotape::serialize_frame_header(make_archive_end_header());
+    bytes = neotape::serialize_frame_header(make_archive_end_header());
     neotape::FrameHeader const parsed =
-        neotape::parse_fixed_header(b.data(), b.size());
+        neotape::parse_fixed_header(bytes.data(), bytes.size());
     expect(parsed.channel_type == neotape::ChannelType::ARCHIVE_END,
            "archive end should parse");
 
-    b[157] = static_cast<uint8_t>(b[157] & 0x7fu);
-    expect_throw([&] { neotape::parse_fixed_header(b.data(), b.size()); },
+    bytes[157] = static_cast<uint8_t>(bytes[157] & 0x7fu);
+    expect_throw([&] { neotape::parse_fixed_header(bytes.data(), bytes.size()); },
                  "archive end without CLEAN_END should be rejected");
 
-    b = neotape::serialize_frame_header(make_archive_end_header());
-    b[150] = static_cast<uint8_t>(b[150] & ~0x01u);
-    expect_throw([&] { neotape::parse_fixed_header(b.data(), b.size()); },
-                 "archive end without START should be rejected");
-
-    b = neotape::serialize_frame_header(make_archive_end_header());
-    b[150] = static_cast<uint8_t>(b[150] & ~0x02u);
-    expect_throw([&] { neotape::parse_fixed_header(b.data(), b.size()); },
+    bytes = neotape::serialize_frame_header(make_archive_end_header());
+    bytes[150] = static_cast<uint8_t>(bytes[150] & ~0x01u);
+    expect_throw([&] { neotape::parse_fixed_header(bytes.data(), bytes.size()); },
                  "archive end without END should be rejected");
 
-    b = neotape::serialize_frame_header(make_archive_end_header());
-    b[130] = 1;
-    expect_throw([&] { neotape::parse_fixed_header(b.data(), b.size()); },
-                 "archive end with logical slice should be rejected");
+    bytes = neotape::serialize_frame_header(make_archive_end_header());
+    bytes[130] = 1;
+    expect_throw([&] { neotape::parse_fixed_header(bytes.data(), bytes.size()); },
+                 "archive end with non-zero slice_seq_num should be rejected");
 
-    b = neotape::serialize_frame_header(make_archive_end_header());
-    b[138] = 2;
+    bytes = neotape::serialize_frame_header(make_archive_end_header());
+    bytes[138] = 1;
     expect_throw(
-        [&] { neotape::parse_fixed_header(b.data(), b.size()); },
-        "archive end with non-one channel sequence should be rejected");
+        [&] { neotape::parse_fixed_header(bytes.data(), bytes.size()); },
+        "archive end with non-zero channel_frame_seq_num should be rejected");
 }
 
 void test_frame_hash_canonicalization() {
-    neotape::FrameHeader const h = make_content_header();
-    neotape::HeaderBytes header = neotape::serialize_frame_header(h);
+    neotape::FrameHeader const header = make_content_header();
+    neotape::HeaderBytes header_bytes = neotape::serialize_frame_header(header);
 
     std::vector<uint8_t> record(4096, 0);
-    std::copy(header.begin(), header.end(), record.begin());
+    std::copy(header_bytes.begin(), header_bytes.end(), record.begin());
     record[512] = 0x42;
     record[513] = 0x43;
 

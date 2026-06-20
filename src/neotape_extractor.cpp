@@ -96,7 +96,7 @@ struct ExtractorState {
     }
 
     // Slice boundary: flush the previous slice's accumulated payload.
-    if (header.logical_slice_seq_num != prev_slice_seq) {
+    if (header.slice_seq_num != prev_slice_seq) {
         if (!flush_slice(state, output)) {
             return false;
         }

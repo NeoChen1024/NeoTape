@@ -56,7 +56,7 @@ if [ "$FILE_COUNT" -ne 2 ]; then
 	exit 1
 fi
 
-CONTENT=$(find "$SPOOL" -maxdepth 1 -type f -name '*.slice-000001.nts' | sort | head -n1)
+CONTENT=$(find "$SPOOL" -maxdepth 1 -type f -name '*.slice-000000.nts' | sort | head -n1)
 ARCHIVE_END=$(find "$SPOOL" -maxdepth 1 -type f -name '*.archive-end.nts' | sort | head -n1)
 if [ -z "$CONTENT" ] || [ -z "$ARCHIVE_END" ]; then
 	echo "smoke_raw_store: missing content or archive-end spool file"
@@ -82,8 +82,7 @@ if len(content) != expected_records * block:
 if len(archive_end) != block:
     raise SystemExit(f"archive_end size {len(archive_end)} != {block}")
 
-START = 1
-END = 2
+END = 1
 payloads = []
 for idx in range(expected_records):
     rec = content[idx * block:(idx + 1) * block]
@@ -93,24 +92,22 @@ for idx in range(expected_records):
     if channel != 1:
         raise SystemExit(f"record {idx + 1}: channel {channel} != ch_content")
     global_seq = struct.unpack_from('<Q', rec, 122)[0]
-    logical_slice = struct.unpack_from('<Q', rec, 130)[0]
-    within_channel = struct.unpack_from('<Q', rec, 138)[0]
+    slice_seq = struct.unpack_from('<Q', rec, 130)[0]
+    channel_frame_seq = struct.unpack_from('<Q', rec, 138)[0]
     payload_size = struct.unpack_from('<I', rec, 146)[0]
     flags = struct.unpack_from('<Q', rec, 150)[0]
 
     expected_payload = cap if idx + 1 < expected_records else input_size - cap * idx
     expected_flags = 0
-    if idx == 0:
-        expected_flags |= START
     if idx + 1 == expected_records:
         expected_flags |= END
 
-    if global_seq != idx + 1:
+    if global_seq != idx:
         raise SystemExit(f"record {idx + 1}: global_seq {global_seq}")
-    if logical_slice != 1:
-        raise SystemExit(f"record {idx + 1}: logical_slice {logical_slice}")
-    if within_channel != idx + 1:
-        raise SystemExit(f"record {idx + 1}: within_channel {within_channel}")
+    if slice_seq != 0:
+        raise SystemExit(f"record {idx + 1}: slice_seq {slice_seq}")
+    if channel_frame_seq != idx:
+        raise SystemExit(f"record {idx + 1}: channel_frame_seq {channel_frame_seq}")
     if payload_size != expected_payload:
         raise SystemExit(f"record {idx + 1}: payload_size {payload_size} != {expected_payload}")
     if flags != expected_flags:
@@ -124,9 +121,9 @@ if archive_end[:8] != b"NeoTape\0" or archive_end[9] != 0xff:
     raise SystemExit("archive_end frame mismatch")
 archive_end_global = struct.unpack_from('<Q', archive_end, 122)[0]
 archive_end_flags = struct.unpack_from('<Q', archive_end, 150)[0]
-if archive_end_global != expected_records + 1:
+if archive_end_global != expected_records:
     raise SystemExit(f"archive_end global_seq {archive_end_global}")
-if archive_end_flags != (START | END | (1 << 63)):
+if archive_end_flags != (END | (1 << 63)):
     raise SystemExit(f"archive_end flags {archive_end_flags}")
 PY
 
