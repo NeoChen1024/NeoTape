@@ -14,11 +14,11 @@ Reviewed all current files under `docs/spec/`:
 - `05-spool-dir.md`
 - `06-security.md`
 - `07-open-questions.md`
-- `08-future-extensions.md`
-- `09-plan-metadata.md`
-- `10-appendix-cli.md`
-- `11-appendix-layout-examples.md`
-- `12-tcp-protocol.md`
+- `07-future-extensions.md`
+- `08-plan-metadata.md`
+- `09-appendix-cli.md`
+- `10-appendix-layout-examples.md`
+- `11-tcp-protocol.md`
 
 This review focuses on cross-document consistency, stale references, and places
 where two spec chapters currently prescribe different behavior.
@@ -43,7 +43,7 @@ Evidence:
   while also claiming a 512-byte total.
 - `docs/spec/02-terminology.md:194-210` defines
   `frame_payload_size` as `uint64`.
-- `docs/spec/11-appendix-layout-examples.md:101-109` also shows
+- `docs/spec/10-appendix-layout-examples.md:101-109` also shows
   `frame_payload_size (8)` and `_reserved (246)`.
 
 Suggested fix:
@@ -103,7 +103,7 @@ Evidence:
   emit only `ch_content`, MUST NOT reject solely because `ch_metadata` is
   missing/truncated/corrupt, and SHOULD warn-and-continue on metadata hash
   failure.
-- `docs/spec/12-tcp-protocol.md:87-100` says the Server validates every
+- `docs/spec/11-tcp-protocol.md:87-100` says the Server validates every
   `frame_record` for `frame_hash` and closes the connection on validation
   failure, with no metadata exception.
 - `docs/spec/06-security.md:18-22` also reinforces that catalog data is
@@ -129,12 +129,12 @@ Impact:
 
 Evidence:
 
-- `docs/spec/10-appendix-cli.md:67-74` says `neotape-plan` generates
+- `docs/spec/09-appendix-cli.md:67-74` says `neotape-plan` generates
   "slice-metadata JSON".
-- `docs/spec/09-plan-metadata.md:11-16` defines records terminated by `\0\n`.
-- `docs/spec/09-plan-metadata.md:40-52` defines valid `<kind>` values as
+- `docs/spec/08-plan-metadata.md:11-16` defines records terminated by `\0\n`.
+- `docs/spec/08-plan-metadata.md:40-52` defines valid `<kind>` values as
   `f`, `d`, `l`, `c`, `b`, `p`, `s`.
-- `docs/spec/09-plan-metadata.md:65-71` uses `h` in the example record.
+- `docs/spec/08-plan-metadata.md:65-71` uses `h` in the example record.
 
 Suggested fix:
 
@@ -156,16 +156,16 @@ Impact:
 
 Evidence:
 
-- `docs/spec/09-plan-metadata.md:58-90` says the plan record format doubles as
+- `docs/spec/08-plan-metadata.md:58-90` says the plan record format doubles as
   the slice-scoped `ch_metadata` catalog format.
 - `docs/spec/07-open-questions.md:21-23` says the exact metadata item table and
   catalog entry format are not settled.
 
 Suggested fix:
 
-- Either declare `09-plan-metadata.md` as the current proposed catalog format
+- Either declare `08-plan-metadata.md` as the current proposed catalog format
   and narrow `07-open-questions.md` to remaining unsolved details, or
-- mark the catalog mapping in `09-plan-metadata.md` as explicitly provisional.
+- mark the catalog mapping in `08-plan-metadata.md` as explicitly provisional.
 
 ### S6. A stale cross-reference still points at `13-tcp-protocol.md`
 
@@ -179,11 +179,11 @@ Impact:
 Evidence:
 
 - `docs/spec/06-security.md:44` references `docs/spec/13-tcp-protocol.md`.
-- The current TCP protocol document is `docs/spec/12-tcp-protocol.md`.
+- The current TCP protocol document is `docs/spec/11-tcp-protocol.md`.
 
 Suggested fix:
 
-- Update the link to `12-tcp-protocol.md`.
+- Update the link to `11-tcp-protocol.md`.
 - Search the repo for other stale `13-tcp-protocol` references in docs and tests
   so the numbering is consistent everywhere.
 
@@ -205,7 +205,7 @@ Evidence:
   filemark".
 - `docs/spec/04-volume-layout.md:85-111` shows EOT interrupting an in-progress
   slice and resuming it on the next tape.
-- `docs/spec/12-tcp-protocol.md:72-77` also models the reader side as "hit
+- `docs/spec/11-tcp-protocol.md:72-77` also models the reader side as "hit
   physical EOT → send `tape_eof` → reconnect", not "read a filemark first".
 
 Suggested fix:

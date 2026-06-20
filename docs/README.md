@@ -22,11 +22,11 @@ docs/
     04-volume-layout.md         Logical and physical tape layout
     05-spool-dir.md             Spool directory format
     06-security.md              Trust model, path safety, signing
-    08-future-extensions.md     Extension ideas (multi-channel, FEC, encryption)
-    09-plan-metadata.md         Plan metadata format (`neotape plan`)
-    10-appendix-cli.md          CLI usage examples for all tools
-    11-appendix-layout-examples.md  Single-volume, multi-volume, multi-archive layouts
-    12-tcp-protocol.md          TCP/Unix-domain socket request-response protocol
+    07-future-extensions.md     Extension ideas (multi-channel, FEC, encryption)
+    08-plan-metadata.md         Plan metadata format (`neotape plan`)
+    09-appendix-cli.md          CLI usage examples for all tools
+    10-appendix-layout-examples.md  Single-volume, multi-volume, multi-archive layouts
+    11-tcp-protocol.md          TCP/Unix-domain socket request-response protocol
 
   superpowers/
     specs/                      Design specs and proposals

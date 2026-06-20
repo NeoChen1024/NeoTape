@@ -41,7 +41,7 @@ When restoring payload bytes through a downstream tool (e.g. bsdtar), path safet
 
 ## Transport Security
 
-The NeoTape TCP protocol ([`12-tcp-protocol.md`](12-tcp-protocol.md)) provides no
+The NeoTape TCP protocol ([`11-tcp-protocol.md`](11-tcp-protocol.md)) provides no
 authentication, encryption, replay defense, or peer identity verification.
 It is designed for localhost or trusted LAN deployments (2.5 Gbps minimum;
 typical target 10 Gbps or higher).

@@ -71,7 +71,7 @@ bin/neotape-plan -C /data -o home.plan photos docs
 ```
 
 Generates the record-oriented plan metadata stream consumed by
-`neotape-archiver --plan`; see [09-plan-metadata.md](09-plan-metadata.md).
+`neotape-archiver --plan`; see [08-plan-metadata.md](08-plan-metadata.md).
 
 ## Extractor / Reader (reading pipeline)
 
