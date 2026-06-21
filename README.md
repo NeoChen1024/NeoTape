@@ -8,8 +8,9 @@ This is an early implementation-stage project. The current implementation
 includes a standalone pax writer (`bin/mt-pax`), a planner (`bin/neotape-plan`)
 for slicing metadata, long-running data producers (`bin/neotape-archiver`,
 `bin/neotape-raw-store`), per-volume tape/spool clients (`bin/neotape-write`,
-`bin/neotape-read`), a payload extractor (`bin/neotape-extractor`), and an
-inspection/compliance tool (`bin/neotape-inspect`).
+`bin/neotape-read`), a payload extractor (`bin/neotape-extractor`), an
+inspection/compliance tool (`bin/neotape-inspect`), and an archive-identity
+scanner (`bin/neotape-scan`).
 
 ## Specification Status
 
@@ -82,7 +83,8 @@ make
 
 Produces `bin/mt-pax`, `bin/neotape-plan`, `bin/neotape-archiver`,
 `bin/neotape-raw-store`, `bin/neotape-write`, `bin/neotape-read`,
-`bin/neotape-extractor`, `bin/neotape-inspect`, and test binaries.
+`bin/neotape-extractor`, `bin/neotape-inspect`, `bin/neotape-scan`, and test
+binaries.
 
 ## Usage
 
@@ -151,7 +153,8 @@ bin/neotape-raw-store --listen unix:///run/neotape/raw.sock \
 ```
 
 Reads raw bytes from stdin, wraps them as a single logical content slice with
-correct START/END sequencing, emits a `tape_eof` slice boundary, then an
+correct channel-local frame sequencing and `END` on the final content frame,
+emits a `tape_eof` slice boundary, then an
 `archive_end`.  The `--retention-frame-count` limits the send window for tape
 back-pressure.
 
@@ -187,6 +190,19 @@ with BLAKE3 hash verification, followed by an archive-level compliance report
 (frame integrity, sequence continuity, channel ordering, SIGNED/signature
 consistency, archive-end rules).
 
+### bin/neotape-scan (archive identity scan)
+
+```sh
+bin/neotape-scan --source spool:./vol1.spool
+bin/neotape-scan --source tape:/dev/nst0 -v
+```
+
+Scans a spool directory or tape device by reading the first NeoTape frame in
+each tapefile, deduplicates archive identities by `archive_uuid` and
+`archive_label`, and prints each newly discovered archive identity as soon as it
+is first seen. Use `-v` to list every tapefile's first frame instead, including
+whether that tapefile introduced a new archive identity.
+
 ### Examples
 
 ```sh
@@ -213,6 +229,10 @@ bin/neotape-read --source spool:./vol1.spool \
 # Inspect a spool or tape for compliance
 bin/neotape-inspect --source spool:./vol1.spool
 bin/neotape-inspect --source tape:/dev/nst0
+
+# Scan tapefile starts for archive identities
+bin/neotape-scan --source spool:./vol1.spool
+bin/neotape-scan --source tape:/dev/nst0 -v
 
 # Pack a directory with 4 I/O threads
 bin/mt-pax -f backup.tar --io-thread 4 src/

@@ -6,7 +6,7 @@ INCS	= -Iinclude -Itests -Llib -I/usr/local/include -Lusr/local/lib
 CFLAGS	= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c17 -march=native -pedantic $(INCS)
 CXXFLAGS= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c++20 -march=native -pedantic $(INCS)
 LDLIBS	= lib/libb3sum.a -larchive
-EXE	= bin/mt-pax bin/neotape-plan bin/test_pax_pipeline bin/test_tcp_protocol bin/test_format bin/test_validate bin/neotape-archiver bin/neotape-write bin/neotape-read bin/neotape-extractor bin/neotape-raw-store bin/neotape-inspect
+EXE	= bin/mt-pax bin/neotape-plan bin/test_pax_pipeline bin/test_tcp_protocol bin/test_format bin/test_validate bin/neotape-archiver bin/neotape-write bin/neotape-read bin/neotape-extractor bin/neotape-raw-store bin/neotape-inspect bin/neotape-scan
 BINDIR	= bin
 LIBDIR	= lib
 BUILDDIR= build
@@ -74,7 +74,10 @@ $(BINDIR)/neotape-extractor : src/neotape_extractor_cmd.o src/neotape_extractor.
 $(BINDIR)/neotape-inspect : src/neotape_inspect_cmd.o src/neotape_validate.o src/neotape_format.o src/neotape_tape.o src/neotape_common.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_format $(BINDIR)/test_validate $(BINDIR)/mt-pax $(BINDIR)/neotape-plan $(BINDIR)/neotape-archiver $(BINDIR)/neotape-raw-store $(BINDIR)/neotape-write $(BINDIR)/neotape-read $(BINDIR)/neotape-inspect
+$(BINDIR)/neotape-scan : src/neotape_scan_cmd.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o $(B3LIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+
+test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_format $(BINDIR)/test_validate $(BINDIR)/mt-pax $(BINDIR)/neotape-plan $(BINDIR)/neotape-archiver $(BINDIR)/neotape-raw-store $(BINDIR)/neotape-write $(BINDIR)/neotape-read $(BINDIR)/neotape-inspect $(BINDIR)/neotape-scan
 	$(BINDIR)/test_pax_pipeline
 	$(BINDIR)/test_tcp_protocol
 	$(BINDIR)/test_format
@@ -85,6 +88,7 @@ test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_for
 	sh tests/smoke_raw_store.sh
 	sh tests/smoke_mt_pax_parity.sh
 	sh tests/smoke_inspect.sh
+	sh tests/smoke_scan.sh
 	sh tests/smoke_tcp_extract.sh
 	sh tests/smoke_tcp_extract_multi.sh
 	sh tests/smoke_plan_hardlink.sh

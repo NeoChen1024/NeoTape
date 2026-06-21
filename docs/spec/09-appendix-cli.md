@@ -130,6 +130,22 @@ The compliance report checks:
   channel ordering (metadata before content),
   `channel_frame_seq_num` continuity, `archive_end` frame rules.
 
+## Scan tool
+
+`neotape-scan` reads only the first NeoTape frame from each tapefile in a spool
+directory or tape, deduplicates by `archive_uuid` plus `archive_label`, and
+prints each new archive identity immediately when first seen. With `-v`, it
+also prints every tapefile's first frame and marks whether that frame
+introduced a new archive identity:
+
+```sh
+# Summarize archive identities found in a spool:
+bin/neotape-scan --source spool:./out
+
+# Also list each tapefile's first frame on tape:
+bin/neotape-scan --source tape:/dev/nst0 -v
+```
+
 ## Backend locators
 
 Backend locators use `<kind>:<locator>` syntax.  The split occurs at the first
