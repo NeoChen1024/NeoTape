@@ -156,11 +156,12 @@ Options parse_args(int argc, char **argv) {
     if (!opts.listen_address.empty() && opts.explicit_output) {
         fail("-f cannot be used with --listen");
     }
-    if (!opts.listen_address.empty() && opts.pax.sources.empty()) {
-        usage(argv[0]);
-        std::exit(2);
+    bool const has_plan = opts.pax.plan_path.has_value();
+    bool const has_sources = !opts.pax.sources.empty();
+    if (has_plan && has_sources) {
+        fail("positional sources cannot be used with --plan");
     }
-    if (opts.listen_address.empty() && opts.pax.sources.empty()) {
+    if (!has_plan && !has_sources) {
         usage(argv[0]);
         std::exit(2);
     }
