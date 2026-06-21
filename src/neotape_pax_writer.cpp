@@ -26,6 +26,7 @@
 #include <getopt.h>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -1139,6 +1140,181 @@ class PaxPipeline {
     bool joined_ = false;
 };
 
+class PlannedSliceOutput {
+  public:
+    PlannedSliceOutput(const Options &opts, PaxWriterCallbacks &callbacks,
+                       ArchiveStats &stats, blake3_hasher &hasher)
+        : opts_(opts), callbacks_(callbacks), stats_(stats), hasher_(hasher) {}
+
+    ~PlannedSliceOutput() noexcept {
+        try {
+            abort();
+        } catch (...) {
+        }
+    }
+
+    void begin_slice(uint64_t slice) {
+        if (active_slice_.has_value()) {
+            throw std::runtime_error("planned slice output already active");
+        }
+        rethrow_if_failed();
+
+        callbacks_.begin_slice(slice);
+        active_slice_ = slice;
+        buffer_ = std::make_unique<BoundedBuffer>(opts_.output_buf_size);
+        try {
+            output_thread_ = std::thread([this, slice] { output_main(slice); });
+        } catch (...) {
+            buffer_.reset();
+            active_slice_.reset();
+            throw;
+        }
+    }
+
+    void emit_entry(archive_entry *entry, int fd) {
+        if (!active_slice_.has_value()) {
+            throw std::runtime_error("planned slice output is not active");
+        }
+        rethrow_if_failed();
+
+        la_int64_t const size = archive_entry_size(entry);
+        if (fd >= 0 && std::cmp_greater(size, SMALL_FILE_THRESHOLD)) {
+            BBSink sink{buffer_.get(), &stats_, {}, false};
+            sink.accum.reserve(STREAM_FLUSH_THRESH);
+            stream_large_entry(sink, entry, fd);
+            return;
+        }
+
+        push_bytes(serialize_entry(entry, fd), true);
+    }
+
+    void emit_eoa() {
+        push_bytes(vector<std::byte>(1024, std::byte{0}), false);
+    }
+
+    void finish_slice() {
+        if (!active_slice_.has_value()) {
+            return;
+        }
+        rethrow_if_failed();
+
+        buffer_->close();
+        join_output_thread();
+        rethrow_if_failed();
+
+        uint64_t const slice = *active_slice_;
+        buffer_.reset();
+        active_slice_.reset();
+        callbacks_.end_slice(slice);
+    }
+
+    void abort() {
+        if (buffer_ != nullptr) {
+            buffer_->close();
+        }
+        join_output_thread();
+        buffer_.reset();
+        active_slice_.reset();
+    }
+
+    size_t buffered_bytes() const {
+        if (buffer_ == nullptr) {
+            return 0;
+        }
+        return buffer_->size_bytes();
+    }
+
+    size_t buffer_capacity() const {
+        if (buffer_ == nullptr) {
+            return 0;
+        }
+        return buffer_->capacity_bytes();
+    }
+
+  private:
+    void push_bytes(vector<std::byte> bytes, bool count_input) {
+        rethrow_if_failed();
+        if (bytes.empty()) {
+            return;
+        }
+
+        size_t const chunk_size = bytes.size();
+        if (buffer_ == nullptr || !buffer_->push(std::move(bytes))) {
+            rethrow_if_failed();
+            throw std::runtime_error("planned output buffer closed");
+        }
+        if (count_input) {
+            stats_.input_bytes.fetch_add(chunk_size, std::memory_order_relaxed);
+        }
+    }
+
+    void output_main(uint64_t slice) {
+        BoundedBuffer *buffer = buffer_.get();
+        size_t const output_restart_bytes =
+            opts_.output_buf_size * opts_.buffer_percent / 100;
+        bool wait_for_waterline = output_restart_bytes > 0;
+
+        try {
+            for (;;) {
+                auto chunk =
+                    wait_for_waterline
+                        ? buffer->pop_after_fill(output_restart_bytes)
+                        : buffer->pop();
+                if (chunk.empty()) {
+                    break;
+                }
+                callbacks_.write_chunk(PaxChunk{
+                    .slice = slice,
+                    .bytes =
+                        std::span<const std::byte>(chunk.data(), chunk.size()),
+                });
+                blake3_hasher_update(&hasher_, chunk.data(), chunk.size());
+                stats_.output_bytes.fetch_add(chunk.size(),
+                                              std::memory_order_relaxed);
+                wait_for_waterline =
+                    output_restart_bytes > 0 && buffer->size_bytes() == 0;
+            }
+        } catch (...) {
+            record_failure(std::current_exception());
+            buffer->close();
+        }
+    }
+
+    void join_output_thread() {
+        if (output_thread_.joinable()) {
+            output_thread_.join();
+        }
+    }
+
+    void record_failure(std::exception_ptr failure) {
+        std::scoped_lock const lock(failure_mtx_);
+        if (!failure_) {
+            failure_ = std::move(failure);
+        }
+    }
+
+    void rethrow_if_failed() {
+        std::exception_ptr failure;
+        {
+            std::scoped_lock const lock(failure_mtx_);
+            failure = failure_;
+        }
+        if (failure) {
+            std::rethrow_exception(failure);
+        }
+    }
+
+    const Options &opts_;
+    PaxWriterCallbacks &callbacks_;
+    ArchiveStats &stats_;
+    blake3_hasher &hasher_;
+    std::optional<uint64_t> active_slice_;
+    std::unique_ptr<BoundedBuffer> buffer_;
+    std::thread output_thread_;
+    std::mutex failure_mtx_;
+    std::exception_ptr failure_;
+};
+
 // ====================== Archive Emission =====================
 
 PaxWriteResult write_planned_pax_archive(const Options &opts,
@@ -1160,6 +1336,7 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
     ArchiveStats stats;
     blake3_hasher hasher;
     blake3_hasher_init(&hasher);
+    PlannedSliceOutput slice_output(opts, callbacks, stats, hasher);
 
     std::optional<uint64_t> current_slice;
     std::atomic<uint64_t> emitted_slices{0};
@@ -1202,11 +1379,17 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
                 static_cast<uint64_t>((current_out - last_out) / seconds);
             auto const file_rate =
                 static_cast<uint64_t>((current_files - last_files) / seconds);
+            size_t const buffered = slice_output.buffered_bytes();
+            size_t const capacity = slice_output.buffer_capacity();
+            size_t const percent =
+                capacity == 0
+                    ? 0
+                    : std::min<size_t>(100, buffered * 100 / capacity);
 
             print_pax_progress(
                 in_rate, out_rate, file_rate,
                 current_slice_seq.load(std::memory_order_relaxed), current_out,
-                0);
+                percent);
 
             last_in = current_in;
             last_out = current_out;
@@ -1215,7 +1398,7 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
         }
     });
 
-    auto emit_entry = [&](EntryHandle entry, uint64_t slice) {
+    auto emit_entry = [&](EntryHandle entry) {
         if (!entry) {
             return;
         }
@@ -1235,18 +1418,7 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
             return;
         }
 
-        vector<std::byte> bytes = serialize_entry(entry.get(), fd.get());
-        if (bytes.empty()) {
-            return;
-        }
-
-        callbacks.write_chunk(PaxChunk{
-            .slice = slice,
-            .bytes = std::span<const std::byte>(bytes.data(), bytes.size()),
-        });
-        blake3_hasher_update(&hasher, bytes.data(), bytes.size());
-        stats.input_bytes.fetch_add(bytes.size(), std::memory_order_relaxed);
-        stats.output_bytes.fetch_add(bytes.size(), std::memory_order_relaxed);
+        slice_output.emit_entry(entry.get(), fd.get());
     };
 
     try {
@@ -1288,13 +1460,13 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
             const PlannedEntry &planned = *record.entry;
             if (!current_slice.has_value() || *current_slice != planned.slice) {
                 if (current_slice.has_value()) {
-                    callbacks.end_slice(*current_slice);
+                    slice_output.finish_slice();
                 }
                 current_slice = planned.slice;
-                callbacks.begin_slice(*current_slice);
                 current_slice_seq.store(
                     emitted_slices.fetch_add(1, std::memory_order_relaxed) + 1,
                     std::memory_order_relaxed);
+                slice_output.begin_slice(*current_slice);
             }
 
             archive_entry *entry_raw =
@@ -1303,8 +1475,8 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
             archive_entry_linkify(resolver, &entry_raw, &spare_raw);
             EntryHandle entry(entry_raw);
             EntryHandle spare(spare_raw);
-            emit_entry(std::move(entry), planned.slice);
-            emit_entry(std::move(spare), planned.slice);
+            emit_entry(std::move(entry));
+            emit_entry(std::move(spare));
         }
 
         for (;;) {
@@ -1316,24 +1488,17 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
             }
             EntryHandle entry(entry_raw);
             EntryHandle spare(spare_raw);
-            uint64_t const slice = current_slice.value_or(0);
-            emit_entry(std::move(entry), slice);
-            emit_entry(std::move(spare), slice);
+            emit_entry(std::move(entry));
+            emit_entry(std::move(spare));
         }
 
         if (current_slice.has_value()) {
-            // Write pax end-of-archive marker (two 512-byte blocks of
-            // zeros) so that tools like bsdtar / GNU tar can detect the
-            // archive end.
-            std::array<std::byte, 1024> eoa{};
-            callbacks.write_chunk(
-                PaxChunk{.slice = *current_slice, .bytes = std::span(eoa)});
-            blake3_hasher_update(&hasher, eoa.data(), eoa.size());
-            stats.output_bytes.fetch_add(eoa.size(), std::memory_order_relaxed);
-            callbacks.end_slice(*current_slice);
+            slice_output.emit_eoa();
+            slice_output.finish_slice();
         }
     } catch (...) {
         failure = std::current_exception();
+        slice_output.abort();
     }
 
     if (resolver != nullptr) {
@@ -1353,7 +1518,12 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
 
     print_pax_progress(0, 0, 0,
                        current_slice_seq.load(std::memory_order_relaxed),
-                       stats.output_bytes.load(std::memory_order_relaxed), 0);
+                       stats.output_bytes.load(std::memory_order_relaxed),
+                       slice_output.buffer_capacity() == 0
+                           ? 0
+                           : std::min<size_t>(
+                                 100, slice_output.buffered_bytes() * 100 /
+                                          slice_output.buffer_capacity()));
     cerr << "\n";
 
     std::array<uint8_t, BLAKE3_OUT_LEN> hash{};

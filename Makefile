@@ -90,6 +90,7 @@ test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_for
 	sh tests/smoke_inspect.sh
 	sh tests/smoke_scan.sh
 	sh tests/smoke_tcp_extract.sh
+	sh tests/smoke_tcp_plan_extract.sh
 	sh tests/smoke_tcp_extract_multi.sh
 	sh tests/smoke_plan_hardlink.sh
 
