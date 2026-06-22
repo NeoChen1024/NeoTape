@@ -118,7 +118,7 @@ Options parse_args(int argc, char **argv) {
 
 struct ReadResult {
     vector<std::byte> record;
-    uint64_t file_num = 0; // spool tape-file number (0-based)
+    uint64_t file_num = 0; // tape-file number (0-based)
     bool is_filemark = false;
     bool eod = false;   // end of data (no more records)
     string source_name; // display name for this record's source
@@ -321,6 +321,7 @@ class TapeFrameReader final : public FrameReader {
 
     ReadResult next() override {
         for (;;) {
+            uint64_t const file_num = current_file_num();
             ssize_t const n =
                 ::read(dev_->fd(), buffer_.data(), buffer_.size());
             if (n < 0) {
@@ -328,44 +329,45 @@ class TapeFrameReader final : public FrameReader {
                     // Filemark on tape.
                     dev_->space_fwd_filemark(1);
                     return ReadResult{{},
-                                      0,
+                                      file_num,
                                       true,
                                       false,
-                                      format("filemark #{}", ++filemarks_)};
+                                      format("filemark after file #{}",
+                                             file_num)};
                 }
                 throw std::runtime_error(format(
                     "read {}: {}", dev_->device_path(), std::strerror(errno)));
             }
             if (n == 0) {
                 // Could be filemark or EOD.
-                if (!saw_first_eof) {
-                    saw_first_eof = true;
-                    dev_->space_fwd_filemark(1);
-                    return ReadResult{{},
-                                      0,
-                                      true,
-                                      false,
-                                      format("filemark #{}", ++filemarks_)};
-                }
                 if (dev_->status().eod()) {
-                    return ReadResult{{}, 0, false, true, "end"};
+                    return ReadResult{{}, file_num, false, true, "end"};
                 }
-                ++filemarks_;
-                return ReadResult{
-                    {}, 0, true, false, format("filemark #{}", filemarks_)};
+                dev_->space_fwd_filemark(1);
+                return ReadResult{{},
+                                  file_num,
+                                  true,
+                                  false,
+                                  format("filemark after file #{}", file_num)};
             }
 
-            return ReadResult{
-                vector<std::byte>(buffer_.data(), buffer_.data() + n), 0, false,
-                false, dev_->device_path()};
+            return ReadResult{vector<std::byte>(buffer_.data(),
+                                                buffer_.data() + n),
+                              file_num,
+                              false,
+                              false,
+                              dev_->device_path()};
         }
     }
 
   private:
+    uint64_t current_file_num() const {
+        int const fileno = dev_->get_fileno();
+        return fileno >= 0 ? static_cast<uint64_t>(fileno) : 0;
+    }
+
     std::unique_ptr<mt::TapeDevice> dev_;
     vector<std::byte> buffer_;
-    uint64_t filemarks_ = 0;
-    bool saw_first_eof = false;
 };
 
 // -----------------------------------------------------------------------
@@ -453,12 +455,6 @@ int do_inspect(const Options &opts) {
         ReadResult rr = reader->next();
 
         if (rr.eod) {
-            // If we have accumulated a partial slice with no archive_end,
-            // track it as an issue.
-            if (validator.saw_any_frame && !validator.saw_archive_end) {
-                issues.push_back(
-                    "Archive does not have a clean archive_end marker");
-            }
             break;
         }
 

@@ -129,6 +129,7 @@ class TapeSourceReader final : public SourceReader {
                 eod = true;
                 return std::nullopt;
             }
+            dev_->space_fwd_filemark(1);
             ++filemark_count;
             return std::nullopt;
         }

@@ -5,6 +5,8 @@ SOCK=/tmp/neotape-multi-$$
 SPOOL1=/tmp/neotape-multi-vol1-$$
 SPOOL2=/tmp/neotape-multi-vol2-$$
 SRC=/tmp/neotape-multi-src-$$
+INSPECT1=/tmp/neotape-multi-inspect1-$$.log
+INSPECT2=/tmp/neotape-multi-inspect2-$$.log
 BLOCK=4096
 MAX_VOL_BYTES=$((8 * BLOCK)) # force EOT after ~8 frames
 HEADER_SIZE=512
@@ -14,7 +16,7 @@ cleanup() {
         kill "$ARCHIVER_PID" 2>/dev/null || true
         wait "$ARCHIVER_PID" 2>/dev/null || true
     fi
-    rm -rf "$SOCK" "$SPOOL1" "$SPOOL2" "$SRC"
+    rm -rf "$SOCK" "$SPOOL1" "$SPOOL2" "$SRC" "$INSPECT1" "$INSPECT2"
 }
 trap cleanup EXIT
 
@@ -86,6 +88,25 @@ AE_MAGIC=$(od -An -tx1 -N8 -j$AE_OFFSET "$LAST" | tr -d ' \n')
 AE_TYPE=$(od -An -tx1 -N1 -j$((AE_OFFSET + 9)) "$LAST" | tr -d ' \n')
 if [ "$AE_MAGIC" != "4e656f5461706500" ] || [ "$AE_TYPE" != "ff" ]; then
     echo "smoke_tcp_archive_multi: second spool missing archive end frame"
+    exit 1
+fi
+
+./bin/neotape-inspect --source "spool:$SPOOL1" >"$INSPECT1" 2>&1
+if ! grep -F 'Compliance: PASS' "$INSPECT1" >/dev/null; then
+    echo "smoke_tcp_archive_multi: partial volume should pass inspect"
+    cat "$INSPECT1"
+    exit 1
+fi
+if ! grep -F 'Archive_end:      0' "$INSPECT1" >/dev/null; then
+    echo "smoke_tcp_archive_multi: expected no archive_end on partial volume"
+    cat "$INSPECT1"
+    exit 1
+fi
+
+./bin/neotape-inspect --source "spool:$SPOOL2" >"$INSPECT2" 2>&1
+if ! grep -F 'Compliance: PASS' "$INSPECT2" >/dev/null; then
+    echo "smoke_tcp_archive_multi: completed second volume should pass inspect"
+    cat "$INSPECT2"
     exit 1
 fi
 
