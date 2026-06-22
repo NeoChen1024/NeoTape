@@ -63,6 +63,7 @@ struct ArchiveStats {
     std::atomic<uint64_t> input_bytes{0};
     std::atomic<uint64_t> output_bytes{0};
     std::atomic<uint64_t> walked_entries{0};
+    std::atomic<uint64_t> walked_entries_since_status{0};
     std::atomic<bool> done{false};
 };
 
@@ -1349,7 +1350,6 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
         using clock = std::chrono::steady_clock;
         uint64_t last_in = 0;
         uint64_t last_out = 0;
-        uint64_t last_files = 0;
         auto last_time = clock::now();
 
         while (!stats.done.load(std::memory_order_relaxed)) {
@@ -1371,14 +1371,13 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
                 stats.input_bytes.load(std::memory_order_relaxed);
             uint64_t const current_out =
                 stats.output_bytes.load(std::memory_order_relaxed);
-            uint64_t const current_files =
-                stats.walked_entries.load(std::memory_order_relaxed);
             auto const in_rate =
                 static_cast<uint64_t>((current_in - last_in) / seconds);
             auto const out_rate =
                 static_cast<uint64_t>((current_out - last_out) / seconds);
             auto const file_rate =
-                static_cast<uint64_t>((current_files - last_files) / seconds);
+                stats.walked_entries_since_status.exchange(
+                    0, std::memory_order_relaxed);
             size_t const buffered = slice_output.buffered_bytes();
             size_t const capacity = slice_output.buffer_capacity();
             size_t const percent =
@@ -1393,7 +1392,6 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
 
             last_in = current_in;
             last_out = current_out;
-            last_files = current_files;
             last_time = now;
         }
     });
@@ -1403,6 +1401,8 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
             return;
         }
         stats.walked_entries.fetch_add(1, std::memory_order_relaxed);
+        stats.walked_entries_since_status.fetch_add(1,
+                                                    std::memory_order_relaxed);
 
         if (opts.verbose > 1) {
             cerr << format("\n{}", verbose_line(entry.get()));
@@ -1564,7 +1564,6 @@ PaxWriteResult write_pax_archive(const Options &opts,
         using clock = std::chrono::steady_clock;
         uint64_t last_in = 0;
         uint64_t last_out = 0;
-        uint64_t last_files = 0;
         auto last_time = clock::now();
 
         while (!stats.done.load(std::memory_order_relaxed)) {
@@ -1586,14 +1585,13 @@ PaxWriteResult write_pax_archive(const Options &opts,
                 stats.input_bytes.load(std::memory_order_relaxed);
             uint64_t const current_out =
                 stats.output_bytes.load(std::memory_order_relaxed);
-            uint64_t const current_files =
-                stats.walked_entries.load(std::memory_order_relaxed);
             auto const in_rate =
                 static_cast<uint64_t>((current_in - last_in) / seconds);
             auto const out_rate =
                 static_cast<uint64_t>((current_out - last_out) / seconds);
             auto const file_rate =
-                static_cast<uint64_t>((current_files - last_files) / seconds);
+                stats.walked_entries_since_status.exchange(
+                    0, std::memory_order_relaxed);
             size_t buffered = pipeline.buffered_bytes();
             size_t capacity = pipeline.buffer_capacity();
             size_t percent =
@@ -1606,7 +1604,6 @@ PaxWriteResult write_pax_archive(const Options &opts,
 
             last_in = current_in;
             last_out = current_out;
-            last_files = current_files;
             last_time = now;
         }
     });
@@ -1652,6 +1649,8 @@ PaxWriteResult write_pax_archive(const Options &opts,
             return;
         }
         stats.walked_entries.fetch_add(1, std::memory_order_relaxed);
+        stats.walked_entries_since_status.fetch_add(1,
+                                                    std::memory_order_relaxed);
 
         bool const is_reg = (archive_entry_filetype(entry.get()) == AE_IFREG);
         la_int64_t const size = archive_entry_size(entry.get());
