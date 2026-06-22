@@ -9,7 +9,7 @@ printf 'hello plan mode\n' >"$tmp/input/hello.txt"
 dd if=/dev/zero of="$tmp/input/blob.bin" bs=1M count=6 status=none
 
 bin/neotape-plan -C "$tmp/input" -o "$tmp/plan" hello.txt blob.bin
-bin/neotape-archiver -f "$tmp/reference.pax" --plan "$tmp/plan"
+bin/neotape-archiver -f "$tmp/reference.pax" --plan "$tmp/plan" --io-thread 4
 
 archiver_sock="unix://$tmp/archiver.sock"
 bin/neotape-archiver --listen "$archiver_sock" \

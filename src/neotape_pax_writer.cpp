@@ -111,43 +111,6 @@ struct EntryHandle {
     }
 };
 
-struct FdHandle {
-    int fd = -1;
-
-    FdHandle() = default;
-    explicit FdHandle(int file_fd) : fd(file_fd) {}
-    ~FdHandle() { reset(); }
-
-    FdHandle(const FdHandle &) = delete;
-    FdHandle &operator=(const FdHandle &) = delete;
-
-    FdHandle(FdHandle &&other) noexcept : fd(other.fd) { other.fd = -1; }
-
-    FdHandle &operator=(FdHandle &&other) noexcept {
-        if (this != &other) {
-            reset();
-            fd = other.fd;
-            other.fd = -1;
-        }
-        return *this;
-    }
-
-    [[nodiscard]] int get() const { return fd; }
-    int release() {
-        int const file_fd = fd;
-        fd = -1;
-        return file_fd;
-    }
-    explicit operator bool() const { return fd >= 0; }
-
-    void reset(int file_fd = -1) {
-        if (fd >= 0) {
-            close(fd);
-        }
-        fd = file_fd;
-    }
-};
-
 struct PipelineWorkItem {
     uint64_t seq = 0;
     EntryHandle entry;
@@ -162,6 +125,7 @@ enum class PipelineOrderKind : uint8_t {
 struct PipelineOrderItem {
     PipelineOrderKind kind = PipelineOrderKind::InlineBytes;
     uint64_t seq = 0;
+    bool count_input = true;
     vector<std::byte> bytes;
     EntryHandle entry;
 };
@@ -886,7 +850,8 @@ void pipeline_worker_main(ClosableQueue<PipelineWorkItem> &work_queue,
     }
 }
 
-bool emit_bytes_to_bb1(BBSink &sink, vector<std::byte> bytes) {
+bool emit_bytes_to_bb1(BBSink &sink, vector<std::byte> bytes,
+                       bool count_input) {
     if (bytes.empty()) {
         return true;
     }
@@ -894,7 +859,10 @@ bool emit_bytes_to_bb1(BBSink &sink, vector<std::byte> bytes) {
     if (!sink.dest->push(std::move(bytes))) {
         return false;
     }
-    sink.stats->input_bytes.fetch_add(chunk_size, std::memory_order_relaxed);
+    if (count_input) {
+        sink.stats->input_bytes.fetch_add(chunk_size,
+                                          std::memory_order_relaxed);
+    }
     return true;
 }
 
@@ -911,8 +879,8 @@ void pipeline_serializer_main(ClosableQueue<PipelineWorkItem> &work_queue,
             bool keep_running = true;
             switch (item->kind) {
             case PipelineOrderKind::InlineBytes:
-                keep_running =
-                    emit_bytes_to_bb1(bb1_sink, std::move(item->bytes));
+                keep_running = emit_bytes_to_bb1(
+                    bb1_sink, std::move(item->bytes), item->count_input);
                 break;
             case PipelineOrderKind::WorkerResult: {
                 auto result = results.take(item->seq);
@@ -920,8 +888,9 @@ void pipeline_serializer_main(ClosableQueue<PipelineWorkItem> &work_queue,
                     keep_running = false;
                     break;
                 }
-                keep_running =
-                    emit_bytes_to_bb1(bb1_sink, std::move(result->bytes));
+                keep_running = emit_bytes_to_bb1(bb1_sink,
+                                                 std::move(result->bytes),
+                                                 true);
                 break;
             }
             case PipelineOrderKind::LargeEntry: {
@@ -966,13 +935,14 @@ size_t pipeline_result_capacity(const Options &opts) {
 class PaxPipeline {
   public:
     PaxPipeline(const Options &opts, PaxWriterCallbacks &callbacks,
-                ArchiveStats &stats, blake3_hasher &hasher)
+                ArchiveStats &stats, blake3_hasher &hasher,
+                uint64_t output_slice = 0)
         : opts_(opts), callbacks_(callbacks), stats_(stats), hasher_(hasher),
           bb1_(opts.output_buf_size),
           order_queue_(pipeline_order_queue_capacity(opts)),
           work_queue_(pipeline_work_queue_capacity(opts)),
           results_(pipeline_result_capacity(opts)),
-          bb1_sink_{&bb1_, &stats_, {}, false} {}
+          bb1_sink_{&bb1_, &stats_, {}, false}, output_slice_(output_slice) {}
 
     ~PaxPipeline() noexcept {
         if (!started_ || joined_) {
@@ -1016,10 +986,12 @@ class PaxPipeline {
         }
     }
 
-    bool enqueue_inline(uint64_t seq, vector<std::byte> bytes) {
+    bool enqueue_inline(uint64_t seq, vector<std::byte> bytes,
+                        bool count_input = true) {
         PipelineOrderItem item;
         item.kind = PipelineOrderKind::InlineBytes;
         item.seq = seq;
+        item.count_input = count_input;
         item.bytes = std::move(bytes);
         return order_queue_.push(std::move(item));
     }
@@ -1109,7 +1081,7 @@ class PaxPipeline {
                     break;
                 }
                 callbacks_.write_chunk(PaxChunk{
-                    .slice = 0,
+                    .slice = output_slice_,
                     .bytes =
                         std::span<const std::byte>(chunk.data(), chunk.size()),
                 });
@@ -1134,6 +1106,7 @@ class PaxPipeline {
     ResultStore results_;
     PipelineCancel cancel_;
     BBSink bb1_sink_;
+    uint64_t output_slice_ = 0;
     vector<std::thread> workers_;
     std::thread serializer_thread_;
     std::thread output_thread_;
@@ -1141,13 +1114,60 @@ class PaxPipeline {
     bool joined_ = false;
 };
 
-class PlannedSliceOutput {
+void dispatch_entry_to_pipeline(const Options &opts, ArchiveStats &stats,
+                                PaxPipeline &pipeline, uint64_t &next_seq,
+                                EntryHandle entry) {
+    if (!entry) {
+        return;
+    }
+    stats.walked_entries.fetch_add(1, std::memory_order_relaxed);
+    stats.walked_entries_since_status.fetch_add(1,
+                                                std::memory_order_relaxed);
+
+    bool const is_reg = (archive_entry_filetype(entry.get()) == AE_IFREG);
+    la_int64_t const size = archive_entry_size(entry.get());
+    bool const has_data = (is_reg && size > 0);
+
+    if (opts.verbose > 1) {
+        cerr << format("\n{}", verbose_line(entry.get()));
+    } else if (opts.verbose > 0) {
+        cerr << format("\na {}", entry_display_path(entry.get()));
+    }
+
+    if (!has_data) {
+        uint64_t const seq = next_seq++;
+        vector<std::byte> bytes = serialize_entry(entry.get(), -1);
+        entry.reset();
+        if (!pipeline.enqueue_inline(seq, std::move(bytes))) {
+            pipeline.rethrow_if_failed();
+            throw std::runtime_error(
+                "pax pipeline closed while enqueueing metadata entry");
+        }
+        return;
+    }
+
+    uint64_t const seq = next_seq++;
+    unsigned const nworkers = opts.io_thread > 0 ? opts.io_thread - 1 : 0;
+    bool queued = false;
+    if (nworkers == 0 || std::cmp_greater(size, SMALL_FILE_THRESHOLD)) {
+        queued = pipeline.enqueue_large(seq, std::move(entry));
+    } else {
+        queued = pipeline.enqueue_small(seq, std::move(entry));
+    }
+    if (!queued) {
+        pipeline.rethrow_if_failed();
+        throw std::runtime_error(
+            "pax pipeline closed while enqueueing file entry");
+    }
+}
+
+class PlannedSlicePipeline {
   public:
-    PlannedSliceOutput(const Options &opts, PaxWriterCallbacks &callbacks,
-                       ArchiveStats &stats, blake3_hasher &hasher)
+    PlannedSlicePipeline(const Options &opts, PaxWriterCallbacks &callbacks,
+                         ArchiveStats &stats, blake3_hasher &hasher)
         : opts_(opts), callbacks_(callbacks), stats_(stats), hasher_(hasher) {}
 
-    ~PlannedSliceOutput() noexcept {
+    ~PlannedSlicePipeline() noexcept {
         try {
             abort();
         } catch (...) {
@@ -1158,162 +1178,98 @@ class PlannedSliceOutput {
         if (active_slice_.has_value()) {
             throw std::runtime_error("planned slice output already active");
         }
-        rethrow_if_failed();
 
         callbacks_.begin_slice(slice);
         active_slice_ = slice;
-        buffer_ = std::make_unique<BoundedBuffer>(opts_.output_buf_size);
+        next_seq_ = 0;
+        pipeline_ = std::make_unique<PaxPipeline>(opts_, callbacks_, stats_,
+                                                  hasher_, slice);
         try {
-            output_thread_ = std::thread([this, slice] { output_main(slice); });
+            pipeline_->start();
         } catch (...) {
-            buffer_.reset();
+            pipeline_.reset();
             active_slice_.reset();
             throw;
         }
     }
 
-    void emit_entry(archive_entry *entry, int fd) {
+    void emit_entry(EntryHandle entry) {
         if (!active_slice_.has_value()) {
-            throw std::runtime_error("planned slice output is not active");
+            throw std::runtime_error("planned slice pipeline is not active");
         }
-        rethrow_if_failed();
-
-        la_int64_t const size = archive_entry_size(entry);
-        if (fd >= 0 && std::cmp_greater(size, SMALL_FILE_THRESHOLD)) {
-            BBSink sink{buffer_.get(), &stats_, {}, false};
-            sink.accum.reserve(STREAM_FLUSH_THRESH);
-            stream_large_entry(sink, entry, fd);
-            return;
+        if (pipeline_ == nullptr) {
+            throw std::runtime_error("planned slice pipeline is not available");
         }
-
-        push_bytes(serialize_entry(entry, fd), true);
+        dispatch_entry_to_pipeline(opts_, stats_, *pipeline_, next_seq_,
+                                   std::move(entry));
     }
 
     void emit_eoa() {
-        push_bytes(vector<std::byte>(1024, std::byte{0}), false);
+        if (pipeline_ == nullptr) {
+            throw std::runtime_error("planned slice pipeline is not available");
+        }
+        if (!pipeline_->enqueue_inline(next_seq_++,
+                                       vector<std::byte>(1024, std::byte{0}),
+                                       false)) {
+            pipeline_->rethrow_if_failed();
+            throw std::runtime_error(
+                "pax pipeline closed while enqueueing end-of-archive marker");
+        }
     }
 
     void finish_slice() {
         if (!active_slice_.has_value()) {
             return;
         }
-        rethrow_if_failed();
-
-        buffer_->close();
-        join_output_thread();
-        rethrow_if_failed();
+        if (pipeline_ == nullptr) {
+            throw std::runtime_error("planned slice pipeline is not available");
+        }
+        pipeline_->finish_input();
+        pipeline_->join();
 
         uint64_t const slice = *active_slice_;
-        buffer_.reset();
+        pipeline_.reset();
         active_slice_.reset();
+        next_seq_ = 0;
         callbacks_.end_slice(slice);
     }
 
     void abort() {
-        if (buffer_ != nullptr) {
-            buffer_->close();
+        if (pipeline_ != nullptr) {
+            pipeline_->request_cancel(std::make_exception_ptr(
+                std::runtime_error("planned slice pipeline aborted")));
+            try {
+                pipeline_->join();
+            } catch (...) {
+            }
         }
-        join_output_thread();
-        buffer_.reset();
+        pipeline_.reset();
         active_slice_.reset();
+        next_seq_ = 0;
     }
 
     size_t buffered_bytes() const {
-        if (buffer_ == nullptr) {
+        if (pipeline_ == nullptr) {
             return 0;
         }
-        return buffer_->size_bytes();
+        return pipeline_->buffered_bytes();
     }
 
     size_t buffer_capacity() const {
-        if (buffer_ == nullptr) {
+        if (pipeline_ == nullptr) {
             return 0;
         }
-        return buffer_->capacity_bytes();
+        return pipeline_->buffer_capacity();
     }
 
   private:
-    void push_bytes(vector<std::byte> bytes, bool count_input) {
-        rethrow_if_failed();
-        if (bytes.empty()) {
-            return;
-        }
-
-        size_t const chunk_size = bytes.size();
-        if (buffer_ == nullptr || !buffer_->push(std::move(bytes))) {
-            rethrow_if_failed();
-            throw std::runtime_error("planned output buffer closed");
-        }
-        if (count_input) {
-            stats_.input_bytes.fetch_add(chunk_size, std::memory_order_relaxed);
-        }
-    }
-
-    void output_main(uint64_t slice) {
-        BoundedBuffer *buffer = buffer_.get();
-        size_t const output_restart_bytes =
-            opts_.output_buf_size * opts_.buffer_percent / 100;
-        bool wait_for_waterline = output_restart_bytes > 0;
-
-        try {
-            for (;;) {
-                auto chunk =
-                    wait_for_waterline
-                        ? buffer->pop_after_fill(output_restart_bytes)
-                        : buffer->pop();
-                if (chunk.empty()) {
-                    break;
-                }
-                callbacks_.write_chunk(PaxChunk{
-                    .slice = slice,
-                    .bytes =
-                        std::span<const std::byte>(chunk.data(), chunk.size()),
-                });
-                blake3_hasher_update(&hasher_, chunk.data(), chunk.size());
-                stats_.output_bytes.fetch_add(chunk.size(),
-                                              std::memory_order_relaxed);
-                wait_for_waterline =
-                    output_restart_bytes > 0 && buffer->size_bytes() == 0;
-            }
-        } catch (...) {
-            record_failure(std::current_exception());
-            buffer->close();
-        }
-    }
-
-    void join_output_thread() {
-        if (output_thread_.joinable()) {
-            output_thread_.join();
-        }
-    }
-
-    void record_failure(std::exception_ptr failure) {
-        std::scoped_lock const lock(failure_mtx_);
-        if (!failure_) {
-            failure_ = std::move(failure);
-        }
-    }
-
-    void rethrow_if_failed() {
-        std::exception_ptr failure;
-        {
-            std::scoped_lock const lock(failure_mtx_);
-            failure = failure_;
-        }
-        if (failure) {
-            std::rethrow_exception(failure);
-        }
-    }
-
     const Options &opts_;
     PaxWriterCallbacks &callbacks_;
     ArchiveStats &stats_;
     blake3_hasher &hasher_;
     std::optional<uint64_t> active_slice_;
-    std::unique_ptr<BoundedBuffer> buffer_;
-    std::thread output_thread_;
-    std::mutex failure_mtx_;
-    std::exception_ptr failure_;
+    std::unique_ptr<PaxPipeline> pipeline_;
+    uint64_t next_seq_ = 0;
 };
 
 // ====================== Archive Emission =====================
@@ -1337,7 +1293,7 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
     ArchiveStats stats;
     blake3_hasher hasher;
     blake3_hasher_init(&hasher);
-    PlannedSliceOutput slice_output(opts, callbacks, stats, hasher);
+    PlannedSlicePipeline slice_output(opts, callbacks, stats, hasher);
 
     std::optional<uint64_t> current_slice;
     std::atomic<uint64_t> emitted_slices{0};
@@ -1400,25 +1356,7 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
         if (!entry) {
             return;
         }
-        stats.walked_entries.fetch_add(1, std::memory_order_relaxed);
-        stats.walked_entries_since_status.fetch_add(1,
-                                                    std::memory_order_relaxed);
-
-        if (opts.verbose > 1) {
-            cerr << format("\n{}", verbose_line(entry.get()));
-        } else if (opts.verbose > 0) {
-            cerr << format("\na {}", entry_display_path(entry.get()));
-        }
-
-        bool const is_reg = (archive_entry_filetype(entry.get()) == AE_IFREG);
-        la_int64_t const size = archive_entry_size(entry.get());
-        bool const has_data = (is_reg && size > 0);
-        FdHandle const fd(has_data ? open_entry_file(entry.get()) : -1);
-        if (has_data && !fd) {
-            return;
-        }
-
-        slice_output.emit_entry(entry.get(), fd.get());
+        slice_output.emit_entry(std::move(entry));
     };
 
     try {
@@ -1644,49 +1582,8 @@ PaxWriteResult write_pax_archive(const Options &opts,
     uint64_t next_seq = 0;
 
     auto dispatch_entry = [&](archive_entry *raw_entry) {
-        EntryHandle entry(raw_entry);
-        if (!entry) {
-            return;
-        }
-        stats.walked_entries.fetch_add(1, std::memory_order_relaxed);
-        stats.walked_entries_since_status.fetch_add(1,
-                                                    std::memory_order_relaxed);
-
-        bool const is_reg = (archive_entry_filetype(entry.get()) == AE_IFREG);
-        la_int64_t const size = archive_entry_size(entry.get());
-        bool const has_data = (is_reg && size > 0);
-
-        if (opts.verbose > 1) {
-            cerr << format("\n{}", verbose_line(entry.get()));
-        } else if (opts.verbose > 0) {
-            cerr << format("\na {}", entry_display_path(entry.get()));
-        }
-
-        if (!has_data) {
-            uint64_t const seq = next_seq++;
-            vector<std::byte> bytes = serialize_entry(entry.get(), -1);
-            entry.reset();
-            if (!pipeline.enqueue_inline(seq, std::move(bytes))) {
-                pipeline.rethrow_if_failed();
-                throw std::runtime_error(
-                    "pax pipeline closed while enqueueing metadata entry");
-            }
-            return;
-        }
-
-        uint64_t const seq = next_seq++;
-        unsigned const nworkers = opts.io_thread > 0 ? opts.io_thread - 1 : 0;
-        bool queued = false;
-        if (nworkers == 0 || std::cmp_greater(size, SMALL_FILE_THRESHOLD)) {
-            queued = pipeline.enqueue_large(seq, std::move(entry));
-        } else {
-            queued = pipeline.enqueue_small(seq, std::move(entry));
-        }
-        if (!queued) {
-            pipeline.rethrow_if_failed();
-            throw std::runtime_error(
-                "pax pipeline closed while enqueueing file entry");
-        }
+        dispatch_entry_to_pipeline(opts, stats, pipeline, next_seq,
+                                   EntryHandle(raw_entry));
     };
 
     std::exception_ptr failure;

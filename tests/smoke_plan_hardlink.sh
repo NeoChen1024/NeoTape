@@ -17,7 +17,7 @@ if ! grep -F '/0/1/h/0/' "$tmp/plan.txt" >/dev/null; then
     exit 1
 fi
 
-bin/neotape-archiver -f "$tmp/planned.pax" --plan "$tmp/plan" .
+bin/neotape-archiver -f "$tmp/planned.pax" --plan "$tmp/plan" --io-thread 4
 
 mkdir "$tmp/out"
 bsdtar -xpf "$tmp/planned.pax" -C "$tmp/out"
