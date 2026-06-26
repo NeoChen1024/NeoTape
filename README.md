@@ -1,5 +1,9 @@
 # NeoTape
 
+<p align="center">
+  <img src="NeoTape-256px.png" alt="NeoTape pixel art logo">
+</p>
+
 A seekable multi-volume length-framed payload transport container designed for LTO tape drives.
 
 NeoTape wraps a payload byte stream (typically a POSIX pax/tar archive) in a
