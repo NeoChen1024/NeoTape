@@ -1,6 +1,7 @@
 #pragma once
 
 #include "neotape/format.hpp"
+#include "neotape/signature.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -20,20 +21,24 @@ void copy_header_to_record(const HeaderBytes &header,
                            std::vector<std::byte> &record);
 
 // Serialize the header into the record, compute BLAKE3 frame hash over
-// the full record, and patch the hash back into the header in-place.
-void finalize_record_hash(FrameHeader &header,
-                          std::vector<std::byte> &record);
+// the full record, optionally sign `frame_hash`, and patch the final
+// header back into the record in-place.
+void finalize_record(FrameHeader &header, std::vector<std::byte> &record,
+                     const SignifySecretKey *signer = nullptr);
 
-// Update the volume_seq_num in a frame record and re-hash.
+// Update the volume_seq_num in a frame record and re-finalize hash/signature.
 void patch_volume_seq_num(std::vector<std::byte> &record,
-                          uint64_t new_volume_seq_num);
+                          uint64_t new_volume_seq_num,
+                          const SignifySecretKey *signer = nullptr);
 
 // Build a complete archive_end record.
 std::vector<std::byte> build_archive_end_record(uint32_t block_size,
                                                  uint64_t volume_seq_num,
                                                  const std::string &archive_uuid,
                                                  const std::string &archive_name,
-                                                 uint64_t global_seq_num);
+                                                 uint64_t global_seq_num,
+                                                 const SignifySecretKey *signer =
+                                                     nullptr);
 
 // ── Frame retention buffer ───────────────────────────────────────────
 
@@ -79,6 +84,10 @@ struct BuiltFrame {
 // resetting the global frame counter.  Metadata-channel frames are not
 // handled by this builder (the archiver is the metadata source, not the
 // frame builder).
+//
+// Server-mode content records are emitted with header fields and payload
+// populated but without a finalized `frame_hash`/signature.  The volume
+// server finalizes them exactly once when assigning the real volume_seq_num.
 class ContentFrameBuilder {
   public:
     ContentFrameBuilder(uint32_t block_size, std::string archive_uuid,

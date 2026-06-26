@@ -5,6 +5,7 @@
 #include "neotape/tcp_protocol.hpp"
 #include "neotape/thread_util.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <exception>
@@ -26,6 +27,41 @@ using neotape::tcp::Message;
 using neotape::tcp::MessageType;
 using std::format;
 using std::string;
+
+std::vector<std::byte>
+detached_signature_payload(const DetachedSignatureBytes &signature) {
+    std::vector<std::byte> payload(signature.size());
+    for (std::size_t i = 0; i < signature.size(); ++i) {
+        payload[i] = static_cast<std::byte>(signature[i]);
+    }
+    return payload;
+}
+
+bool handle_auth_challenge(int client, const VolumeServerOptions &opts,
+                           const std::vector<std::byte> &payload) {
+    if (payload.size() != auth_nonce_size) {
+        send_error(client,
+                   format("auth_challenge payload must be {} bytes",
+                          auth_nonce_size)
+                       .c_str());
+        return false;
+    }
+    if (!opts.frame_signer.has_value()) {
+        send_error(client, "auth challenge requires configured frame signer");
+        return false;
+    }
+
+    AuthNonceBytes nonce{};
+    for (std::size_t i = 0; i < nonce.size(); ++i) {
+        nonce[i] = static_cast<uint8_t>(payload[i]);
+    }
+    DetachedSignatureBytes const signature =
+        sign_auth_nonce(*opts.frame_signer, nonce);
+    neotape::tcp::write_message(
+        client, Message{MessageType::auth_response,
+                        detached_signature_payload(signature)});
+    return true;
+}
 
 int process_ack_payload(int client, const VolumeServerOptions &opts,
                         VolumeServeState &state,
@@ -107,8 +143,20 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
     };
 
     try {
+        std::optional<Message> pending_request = neotape::tcp::read_message(client);
+        if (pending_request.has_value() &&
+            pending_request->type == MessageType::auth_challenge) {
+            if (!handle_auth_challenge(client, opts, pending_request->payload)) {
+                return VolumeServeResult{false, volume_committed, frames_served};
+            }
+            pending_request = neotape::tcp::read_message(client);
+        }
+
         for (;;) {
-            auto req = neotape::tcp::read_message(client);
+            auto req = pending_request.has_value()
+                           ? std::move(pending_request)
+                           : neotape::tcp::read_message(client);
+            pending_request.reset();
             if (!req.has_value()) {
                 break;
             }
@@ -177,7 +225,9 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
                         uint64_t const ae_seq = next->global_seq_num;
                         auto ae_record = build_archive_end_record(
                             opts.volume_block_size, state.next_volume_seq_num,
-                            archive_uuid, opts.archive_name, ae_seq);
+                            archive_uuid, opts.archive_name, ae_seq,
+                            opts.frame_signer ? &*opts.frame_signer
+                                              : nullptr);
                         retention.add(ae_seq, ae_record);
                         archive_end_seq = ae_seq;
                         neotape::tcp::write_message(
@@ -204,7 +254,9 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
                     return VolumeServeResult{false, volume_committed,
                                              frames_served};
                 }
-                patch_volume_seq_num(record, state.next_volume_seq_num);
+                patch_volume_seq_num(record, state.next_volume_seq_num,
+                                     opts.frame_signer ? &*opts.frame_signer
+                                                       : nullptr);
                 NEOTAPE_DEBUG("{}: sending frame global_seq={}\n",
                               opts.log_label, seq);
                 neotape::tcp::write_message(
@@ -233,6 +285,12 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
 
             case MessageType::tape_eof:
                 send_error(client, "unexpected tape_eof request");
+                return VolumeServeResult{false, volume_committed, frames_served};
+            case MessageType::auth_challenge:
+                send_error(client, "auth_challenge must be the first request");
+                return VolumeServeResult{false, volume_committed, frames_served};
+            case MessageType::auth_response:
+                send_error(client, "unexpected auth_response request");
                 return VolumeServeResult{false, volume_committed, frames_served};
 
             default:

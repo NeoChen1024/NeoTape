@@ -1,5 +1,6 @@
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
+#include "neotape/signature.hpp"
 #include "neotape/tape.hpp"
 #include "neotape/validate.hpp"
 
@@ -57,6 +58,9 @@ struct Options {
     SourceLocator source;
     bool debug = false;
     bool raw = false; // raw header dump
+    bool require_signed = false;
+    vector<string> verify_pubkey_paths;
+    vector<neotape::SignifyPublicKey> verify_keys;
 };
 
 [[noreturn]] void fail(const string &msg) {
@@ -71,7 +75,8 @@ struct Options {
 
 void usage(const char *prog) {
     std::cerr << format("usage: {} --source <spool:./dir|tape:/dev/nst0>\n"
-                        "       [--debug] [--raw] [-h]\n",
+                        "       [--verify-pubkey <file.pub>]...\n"
+                        "       [--require-signed] [--debug] [--raw] [-h]\n",
                         prog);
 }
 
@@ -80,6 +85,8 @@ Options parse_args(int argc, char **argv) {
         {"source", required_argument, nullptr, 's'},
         {"debug", no_argument, nullptr, 256},
         {"raw", no_argument, nullptr, 257},
+        {"verify-pubkey", required_argument, nullptr, 258},
+        {"require-signed", no_argument, nullptr, 259},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
@@ -95,6 +102,12 @@ Options parse_args(int argc, char **argv) {
             break;
         case 257:
             opts.raw = true;
+            break;
+        case 258:
+            opts.verify_pubkey_paths.emplace_back(optarg);
+            break;
+        case 259:
+            opts.require_signed = true;
             break;
         case 'h':
             usage(argv[0]);
@@ -417,12 +430,30 @@ struct Stats {
     uint64_t archive_end_frames = 0;
     uint64_t filemarks = 0;
     uint64_t errors = 0;
+    uint64_t signed_frames = 0;
+    uint64_t signature_errors = 0;
     uint64_t total_payload_bytes = 0;
 };
 
 void print_separator() {
     std::cout << "------+------+--------+----------+-----------+----------+"
                  "---------+-------+-------\n";
+}
+
+void seed_validator_for_volume_start(FrameValidator &validator,
+                                     const FrameHeader &header) {
+    validator.expected_global_frame_seq = header.global_frame_seq_num;
+    validator.current_slice_seq_num = header.slice_seq_num;
+    validator.expected_channel_frame_seq_num = header.channel_frame_seq_num;
+    validator.last_channel_type = header.channel_type;
+    validator.current_phase = header.channel_type == ChannelType::CH_CONTENT
+                                  ? FrameValidator::Phase::content
+                              : header.channel_type == ChannelType::CH_METADATA
+                                  ? FrameValidator::Phase::metadata
+                                  : FrameValidator::Phase::none;
+    validator.saw_any_frame = true;
+    validator.last_frame_had_end =
+        header.channel_type == ChannelType::ARCHIVE_END;
 }
 
 int do_inspect(const Options &opts) {
@@ -489,6 +520,11 @@ int do_inspect(const Options &opts) {
         uint32_t const block_size = neotape::decoded_block_size(header);
 
         // Validate via shared FrameValidator.
+        if (frame_number == 1) {
+            // A spool or tape scan may begin at any volume boundary, not
+            // necessarily at archive-global frame 0 or channel-frame 0.
+            seed_validator_for_volume_start(validator, header);
+        }
         auto err = validator.validate(header, data, rr.record.size());
         if (err.has_value()) {
             ++stats.errors;
@@ -519,6 +555,16 @@ int do_inspect(const Options &opts) {
             ++stats.archive_end_frames;
             break;
         }
+        if (has_frame_flag_signed(header.flags)) {
+            ++stats.signed_frames;
+        }
+        if (auto sig_error = neotape::validate_frame_signature(
+                header, opts.verify_keys, opts.require_signed);
+            sig_error.has_value()) {
+            ++stats.errors;
+            ++stats.signature_errors;
+            issues.push_back(format("Frame #{}: {}", frame_number, *sig_error));
+        }
 
         std::cout << format(
             "  {:>3d} | {:>4d} | {:>6d} | {:>8d} | {:>9s} | {:>8d} | "
@@ -539,6 +585,8 @@ int do_inspect(const Options &opts) {
     std::cout << format("  Metadata frames:  {}\n", stats.metadata_frames);
     std::cout << format("  Archive_end:      {}\n", stats.archive_end_frames);
     std::cout << format("  Filemarks:        {}\n", stats.filemarks);
+    std::cout << format("  Signed frames:    {}\n", stats.signed_frames);
+    std::cout << format("  Signature errors: {}\n", stats.signature_errors);
 
     if (validator.saw_any_frame && !validator.archive_uuid.empty()) {
         std::cout << format("  Archive UUID:     {}\n", validator.archive_uuid);
@@ -571,6 +619,9 @@ int do_inspect(const Options &opts) {
 int main(int argc, char **argv) {
     try {
         Options opts = parse_args(argc, argv);
+        for (const string &path : opts.verify_pubkey_paths) {
+            opts.verify_keys.push_back(neotape::load_signify_public_key(path));
+        }
         neotape::g_debug = opts.debug;
         return do_inspect(opts);
     } catch (const std::exception &e) {

@@ -1,7 +1,10 @@
 #pragma once
 
+#include "neotape/signature.hpp"
+
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace neotape {
 
@@ -9,6 +12,8 @@ struct ExtractorOptions {
     std::string listen_address; // "tcp://host:port" or "unix://path"
     std::string output_path;    // empty = stdout
     bool verbose = false;
+    bool require_signed = false;
+    std::vector<SignifyPublicKey> verify_keys;
 };
 
 // Blocks until the first reader connects, the archive is fully extracted, or

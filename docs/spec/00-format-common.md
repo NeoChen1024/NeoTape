@@ -87,8 +87,10 @@ Padding bytes after `frame_payload_size` and before the end of the decoded recor
 The `signature` field (72 bytes) holds a binary, unarmored Ed25519
 signature payload when the `SIGNED` flag is set.  Bytes 0-7 hold a 64-bit
 key ID.  Bytes 8-71 hold the raw 64-byte Ed25519 signature over the
-domain-separated message `"NeoTape-frame" || frame_hash` (see
-[Format Write Order](#format-write-order) step 4).  This mirrors OpenBSD
+domain-separated message `NeoTape-frame\0 || frame_hash` (see
+[Format Write Order](#format-write-order) step 4).  The domain string
+includes its trailing NUL byte and is followed immediately by the 32 raw
+bytes of `frame_hash`.  This mirrors OpenBSD
 signify's Ed25519 signature payload without the leading two `Ed` bytes.
 When `SIGNED` is clear, writers MUST write the entire `signature` field
 as zero and readers MUST ignore it.
@@ -99,7 +101,7 @@ The writer-side sequence is:
 2. Write payload bytes and zero-fill all padding bytes through the decoded record size.
 3. Compute `frame_hash` over the canonical image (see above).
 4. If `SIGNED` is set, produce an Ed25519 signature over the
-   domain-separated message `"NeoTape-frame" || frame_hash` and write
+   domain-separated message `NeoTape-frame\0 || frame_hash` and write
    the 8-byte key ID followed by the 64-byte Ed25519 signature into
    `signature`.
 5. Write `frame_hash` into the final 32 bytes of the header.

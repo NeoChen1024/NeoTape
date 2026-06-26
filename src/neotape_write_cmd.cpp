@@ -1,10 +1,12 @@
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
+#include "neotape/signature.hpp"
 #include "neotape/socket_util.hpp"
 #include "neotape/tape.hpp"
 #include "neotape/tape_ioctl.hpp"
 #include "neotape/tcp_protocol.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -22,6 +24,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -33,6 +36,7 @@ using neotape::FdGuard;
 using neotape::uint64_to_le_bytes;
 using std::format;
 using std::string;
+using std::string_view;
 using std::vector;
 
 struct TargetLocator {
@@ -57,6 +61,7 @@ struct Options {
     bool append = false;
     size_t output_buffer_size = 256ULL * 1024 * 1024;
     std::optional<uint64_t> max_volume_bytes;
+    vector<string> verify_pubkey_paths;
     bool debug = false;
 };
 
@@ -73,6 +78,7 @@ struct Options {
 void usage(const char *prog) {
     std::cerr << format("usage: {} --source <tcp://host:port|unix://path>\n"
                         "       --target <tape:/dev/nst0|spool:./dir>\n"
+                        "       [--verify-pubkey <file.pub>]...\n"
                         "       [--erase | --append]\n"
                         "       [--output-buffer-size <bytes>]\n"
                         "       [--max-volume-bytes <bytes>] [--debug]\n",
@@ -88,6 +94,7 @@ Options parse_args(int argc, char **argv) {
         {"output-buffer-size", required_argument, nullptr, 259},
         {"max-volume-bytes", required_argument, nullptr, 260},
         {"debug", no_argument, nullptr, 261},
+        {"verify-pubkey", required_argument, nullptr, 262},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
@@ -130,6 +137,9 @@ Options parse_args(int argc, char **argv) {
         case 261:
             opts.debug = true;
             break;
+        case 262:
+            opts.verify_pubkey_paths.emplace_back(optarg);
+            break;
         case 'h':
             usage(argv[0]);
             std::exit(0);
@@ -160,6 +170,105 @@ Options parse_args(int argc, char **argv) {
     }
 
     return opts;
+}
+
+string decode_error_payload(const vector<std::byte> &payload,
+                            string_view fallback) {
+    string reason;
+    reason.reserve(payload.size());
+    for (std::byte const b : payload) {
+        reason.push_back(static_cast<char>(b));
+    }
+    if (reason.empty()) {
+        reason = fallback;
+    }
+    return reason;
+}
+
+std::vector<std::byte>
+auth_challenge_payload(const neotape::AuthNonceBytes &nonce) {
+    std::vector<std::byte> payload(nonce.size());
+    for (std::size_t i = 0; i < nonce.size(); ++i) {
+        payload[i] = static_cast<std::byte>(nonce[i]);
+    }
+    return payload;
+}
+
+neotape::DetachedSignatureBytes
+decode_auth_response_payload(const vector<std::byte> &payload) {
+    if (payload.size() != neotape::DetachedSignatureBytes{}.size()) {
+        throw std::runtime_error(format("auth_response payload must be {} bytes",
+                                        neotape::DetachedSignatureBytes{}.size()));
+    }
+
+    neotape::DetachedSignatureBytes signature{};
+    for (std::size_t i = 0; i < signature.size(); ++i) {
+        signature[i] = static_cast<uint8_t>(payload[i]);
+    }
+    return signature;
+}
+
+void authenticate_source_server(int fd,
+                                const vector<neotape::SignifyPublicKey> &keys) {
+    if (keys.empty()) {
+        return;
+    }
+
+    neotape::AuthNonceBytes const nonce = neotape::random_auth_nonce();
+    neotape::tcp::write_message(
+        fd, neotape::tcp::Message{neotape::tcp::MessageType::auth_challenge,
+                                  auth_challenge_payload(nonce)});
+    auto response = neotape::tcp::read_message(fd);
+    if (!response.has_value()) {
+        throw std::runtime_error("unexpected disconnect during auth handshake");
+    }
+
+    using neotape::tcp::MessageType;
+    switch (response->type) {
+    case MessageType::auth_response: {
+        neotape::DetachedSignatureBytes const signature =
+            decode_auth_response_payload(response->payload);
+        bool verified = false;
+        for (const auto &key : keys) {
+            if (neotape::verify_auth_nonce_signature(signature, nonce, key)) {
+                verified = true;
+                break;
+            }
+        }
+        if (!verified) {
+            throw std::runtime_error(
+                "auth_response signature verification failed");
+        }
+        return;
+    }
+    case MessageType::error:
+        throw std::runtime_error(
+            decode_error_payload(response->payload, "archiver auth failure"));
+    default:
+        throw std::runtime_error(format(
+            "expected auth_response, got {}",
+            neotape::tcp::message_type_name(response->type)));
+    }
+}
+
+void verify_frame_record(const vector<std::byte> &record,
+                         const neotape::FrameHeader &header,
+                         const vector<neotape::SignifyPublicKey> &keys) {
+    if (keys.empty()) {
+        return;
+    }
+
+    neotape::Hash const computed = neotape::compute_frame_hash(
+        reinterpret_cast<const uint8_t *>(record.data()), record.size());
+    if (computed != header.frame_hash) {
+        throw std::runtime_error(
+            format("frame hash mismatch at global_seq={}",
+                   header.global_frame_seq_num));
+    }
+    if (auto sig_error = neotape::validate_frame_signature(header, keys, true);
+        sig_error.has_value()) {
+        throw std::runtime_error(*sig_error);
+    }
 }
 
 struct PendingFrame {
@@ -440,9 +549,15 @@ int main(int argc, char **argv) {
     try {
         Options opts = parse_args(argc, argv);
         neotape::g_debug = opts.debug;
+        vector<neotape::SignifyPublicKey> verify_keys;
+        verify_keys.reserve(opts.verify_pubkey_paths.size());
+        for (const string &path : opts.verify_pubkey_paths) {
+            verify_keys.push_back(neotape::load_signify_public_key(path));
+        }
 
         FdGuard const fd_guard(connect_to_server(opts.source_address));
         int fd = fd_guard.fd;
+        authenticate_source_server(fd, verify_keys);
 
         using neotape::tcp::Message;
         using neotape::tcp::MessageType;
@@ -583,6 +698,11 @@ int main(int argc, char **argv) {
                         format("frame size mismatch: expected {}, got {}",
                                *volume_block_size, msg->payload.size()));
                 }
+                try {
+                    verify_frame_record(msg->payload, header, verify_keys);
+                } catch (const std::exception &e) {
+                    joined_fail(e.what());
+                }
 
                 if (header.channel_type == neotape::ChannelType::ARCHIVE_END) {
                     NEOTAPE_DEBUG(
@@ -646,17 +766,16 @@ int main(int argc, char **argv) {
 
             case MessageType::error: {
                 joiner.join();
-                string reason;
-                reason.reserve(msg->payload.size());
-                for (std::byte const b : msg->payload) {
-                    reason.push_back(static_cast<char>(b));
-                }
-                if (reason.empty()) {
-                    reason = "archiver reported error";
-                }
+                string const reason = decode_error_payload(
+                    msg->payload, "archiver reported error");
                 std::cerr << format("neotape-write: {}\n", reason);
                 std::exit(2);
             }
+            case MessageType::auth_challenge:
+            case MessageType::auth_response:
+                joined_fail(format("unexpected message type {}",
+                                   static_cast<int>(msg->type)));
+                break;
             default:
                 joined_fail(format("unexpected message type {}",
                                    static_cast<int>(msg->type)));

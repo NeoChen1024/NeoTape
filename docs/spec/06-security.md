@@ -25,7 +25,7 @@ The catalog is an advisory index, not authoritative metadata. Readers MUST:
 
 BLAKE3 (`frame_hash`) is used for per-frame integrity verification, not authentication.
 
-The `signature` field (72 bytes) holds an 8-byte key ID plus a 64-byte Ed25519 signature over `frame_hash`. When the `SIGNED` flag is set, the signature provides authenticity and tamper resistance. When the flag is clear, the entire `signature` field MUST be zero.
+The `signature` field (72 bytes) holds an 8-byte key ID plus a 64-byte Ed25519 signature over the domain-separated message `NeoTape-frame\0 || frame_hash`. The context string includes its trailing NUL byte. When the `SIGNED` flag is set, the signature provides authenticity and tamper resistance. When the flag is clear, the entire `signature` field MUST be zero.
 
 ## Executable Content
 
@@ -47,7 +47,7 @@ It is designed for localhost or trusted LAN deployments (2.5 Gbps minimum;
 typical target 10 Gbps or higher).
 
 When signed frames are used ([`SIGNED` flag](01-frame-header.md) with
-[Ed25519 signature](00-format-common.md) over `frame_hash`), **integrity
+[Ed25519 signature](00-format-common.md) over `NeoTape-frame\0 || frame_hash`), **integrity
 and authenticity are protected at the frame level** — a tampered frame
 will fail verification regardless of transport.
 

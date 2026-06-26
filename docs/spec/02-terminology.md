@@ -58,7 +58,7 @@ Advisory metadata bytes carried by `ch_metadata` frames for one slice. It is tra
 
 ### Frame Header
 
-The unified 512-byte fixed header at the start of every NeoTape frame. It records channel type, frame sequencing, payload size, archive identity, flags, and a BLAKE3 `frame_hash` covering the entire frame. A `signature` field holds a binary signify-style signature over `frame_hash` when the `SIGNED` flag is set. There is only one header layout — no separate Volume Header or Archive End Header exists.
+The unified 512-byte fixed header at the start of every NeoTape frame. It records channel type, frame sequencing, payload size, archive identity, flags, and a BLAKE3 `frame_hash` covering the entire frame. A `signature` field holds a binary signify-style signature over the domain-separated message `NeoTape-frame\0 || frame_hash` when the `SIGNED` flag is set. There is only one header layout — no separate Volume Header or Archive End Header exists.
 
 The exact field widths, field order, and byte positions are defined in
 [01-frame-header.md](01-frame-header.md).
@@ -85,7 +85,7 @@ Frame flag indicating the last frame of a channel group within a slice.
 
 ### SIGNED
 
-Frame flag indicating that `signature` contains a binary signify-style signature over `frame_hash`.
+Frame flag indicating that `signature` contains a binary signify-style signature over the domain-separated message `NeoTape-frame\0 || frame_hash`.
 
 ### CLEAN_END
 
@@ -106,7 +106,7 @@ The fundamental I/O unit. Every frame header, every frame payload, and every pad
 
 The 512-byte fixed field area at the start of every frame.
 
-The final 32 bytes of the header are `frame_hash`, a BLAKE3 digest over the canonical image of the entire frame. The 72-byte `signature` field holds an 8-byte key ID followed by a 64-byte Ed25519 signature over `frame_hash` when the `SIGNED` flag is set.
+The final 32 bytes of the header are `frame_hash`, a BLAKE3 digest over the canonical image of the entire frame. The 72-byte `signature` field holds an 8-byte key ID followed by a 64-byte Ed25519 signature over the domain-separated message `NeoTape-frame\0 || frame_hash` when the `SIGNED` flag is set.
 
 ### Common Header Prefix
 
@@ -125,7 +125,7 @@ BLAKE3 hash computed over the canonical image of the entire frame (`volume_block
 
 ### signature
 
-72-byte field in the fixed header used when the `SIGNED` flag is set. Bytes 0-7 hold a 64-bit key ID; bytes 8-71 hold a raw 64-byte Ed25519 signature over `frame_hash`. This mirrors OpenBSD signify's Ed25519 signature payload without the leading two `Ed` bytes. When `SIGNED` is clear, the entire field must be zero.
+72-byte field in the fixed header used when the `SIGNED` flag is set. Bytes 0-7 hold a 64-bit key ID; bytes 8-71 hold a raw 64-byte Ed25519 signature over the domain-separated message `NeoTape-frame\0 || frame_hash`. The context string includes its trailing NUL byte. This mirrors OpenBSD signify's Ed25519 signature payload without the leading two `Ed` bytes. When `SIGNED` is clear, the entire field must be zero.
 
 ## Encoding Rules
 

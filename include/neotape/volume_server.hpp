@@ -2,6 +2,7 @@
 
 #include "neotape/closable_queue.hpp"
 #include "neotape/frame_builder.hpp"
+#include "neotape/signature.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -41,6 +42,7 @@ struct VolumeServerOptions {
     uint64_t retention_frame_count = 256;
     std::string log_label;
     std::size_t queue_capacity = 8;
+    std::optional<SignifySecretKey> frame_signer;
 };
 
 using VolumeProducer =

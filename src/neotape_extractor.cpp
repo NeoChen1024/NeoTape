@@ -35,6 +35,8 @@ struct ExtractorState {
     FrameValidator validator;
     bool saw_archive_end = false;
     vector<uint8_t> slice_payload;
+    bool require_signed = false;
+    vector<SignifyPublicKey> verify_keys;
 };
 
 [[nodiscard]] bool flush_slice(ExtractorState &state, FILE *output) {
@@ -80,6 +82,13 @@ struct ExtractorState {
         std::cerr << format("extractor: warning: {}\n", validation.message);
     } else if (validation.status == RestoreFrameValidationStatus::fatal) {
         std::cerr << format("extractor: {}\n", validation.message);
+        return false;
+    }
+
+    if (auto sig_error = validate_frame_signature(
+            header, state.verify_keys, state.require_signed);
+        sig_error.has_value()) {
+        std::cerr << format("extractor: {}\n", *sig_error);
         return false;
     }
 
@@ -182,6 +191,8 @@ struct ExtractorState {
             }
             case MessageType::next_frame:
             case MessageType::ack_frame:
+            case MessageType::auth_challenge:
+            case MessageType::auth_response:
                 send_error(client, "unexpected request from extractor client");
                 return false;
             }
@@ -224,6 +235,8 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
     OutputGuard const output_guard{output, output_owned};
 
     ExtractorState state;
+    state.require_signed = opts.require_signed;
+    state.verify_keys = opts.verify_keys;
     uint64_t total_frames = 0;
 
     while (!state.saw_archive_end) {

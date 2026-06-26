@@ -244,11 +244,21 @@ Hash compute_frame_hash(const uint8_t *data, std::size_t size) {
             "record size does not match decoded block size");
     }
 
-    std::vector<uint8_t> canonical(data, data + size);
-    for (size_t i = off_signature; i < fixed_header_size; ++i) {
-        canonical[i] = 0;
+    Hash hash{};
+    blake3_hasher hasher;
+    blake3_hasher_init(&hasher);
+    blake3_hasher_update(&hasher, data, off_signature);
+
+    std::array<uint8_t, fixed_header_size - off_signature> zero_bytes{};
+    blake3_hasher_update(&hasher, zero_bytes.data(), zero_bytes.size());
+
+    if (size > fixed_header_size) {
+        blake3_hasher_update(
+            &hasher, data + static_cast<std::ptrdiff_t>(fixed_header_size),
+            size - fixed_header_size);
     }
-    return blake3_hash(canonical.data(), canonical.size());
+    blake3_hasher_finalize(&hasher, hash.data(), hash.size());
+    return hash;
 }
 
 std::string utc_timestamp_now() {

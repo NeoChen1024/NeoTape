@@ -1,6 +1,7 @@
 #pragma once
 
 #include "neotape/pax_writer.hpp"
+#include "neotape/signature.hpp"
 #include "neotape/tcp_protocol.hpp"
 
 #include <cstdint>
@@ -14,6 +15,7 @@ struct TcpArchiverOptions {
     std::string archive_name;
     uint64_t initial_volume_seq_num = 1;
     uint64_t retention_frame_count = 256;
+    std::optional<SignifySecretKey> frame_signer;
 
     PaxWriterOptions pax;
 };

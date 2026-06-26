@@ -26,7 +26,7 @@ All NeoTape records use a single unified 512-byte fixed header. The final 32 byt
 | `frame_payload_size`           | `uint32`     | 4               | MUST        | Meaningful payload bytes after the fixed header.                                                            |
 | `flags`                        | `uint64`     | 8               | MUST        | Frame flags. See [Flags](#flags).                                                                          |
 | `_reserved`                    | `byte[250]`  | 250             | MUST        | Zero-filled padding.                                                                                        |
-| `signature`                    | `byte[72]`   | 72              | MAY         | 8-byte key ID plus 64-byte Ed25519 signature over `"NeoTape-frame" \|\| frame_hash` when `SIGNED` is set. |
+| `signature`                    | `byte[72]`   | 72              | MAY         | 8-byte key ID plus 64-byte Ed25519 signature over `NeoTape-frame\0 \|\| frame_hash` when `SIGNED` is set. |
 | `frame_hash`                   | `nt_hash`    | 32              | MUST        | BLAKE3 over the canonical image of the whole frame.                                                         |
 
 Total: 512 bytes.
@@ -50,7 +50,7 @@ A UTF-8 label, not an archive identifier. It is encoded as a 65-byte NUL-termina
 The `signature` and `frame_hash` fields are defined in [docs/spec/00-format-common.md](00-format-common.md):
 
 - `frame_hash` is a BLAKE3 digest over the canonical image of the entire frame.
-- `signature` is a 72-byte field used when the `SIGNED` flag is set. Bytes 0-7 hold a 64-bit key ID; bytes 8-71 hold a raw 64-byte Ed25519 signature over `"NeoTape-frame" || frame_hash`. This mirrors OpenBSD signify's Ed25519 signature payload without the leading two `Ed` bytes.
+- `signature` is a 72-byte field used when the `SIGNED` flag is set. Bytes 0-7 hold a 64-bit key ID; bytes 8-71 hold a raw 64-byte Ed25519 signature over `NeoTape-frame\0 || frame_hash`. The context string includes its trailing NUL byte. This mirrors OpenBSD signify's Ed25519 signature payload without the leading two `Ed` bytes.
 
 ## Channel Types
 
@@ -71,7 +71,7 @@ Values 0, 3–254 are reserved for future channels. A reader that encounters an 
 | Bit  | Name          | Meaning                                                                                                |
 | ---- | ------------- | ------------------------------------------------------------------------------------------------------ |
 | 0    | `END`       | Last frame of the current channel group.                                                               |
-| 1    | `SIGNED`    | `signature` contains an 8-byte key ID plus Ed25519 signature over `"NeoTape-frame" \|\| frame_hash`. |
+| 1    | `SIGNED`    | `signature` contains an 8-byte key ID plus Ed25519 signature over `NeoTape-frame\0 \|\| frame_hash`. |
 | 2-62 | _reserved_  | Must be zero.                                                                                          |
 | 63   | `CLEAN_END` | Only valid for `archive_end`. Must be `1` on a valid end-of-archive frame.                         |
 

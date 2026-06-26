@@ -1,5 +1,6 @@
 #include "neotape/common.hpp"
 #include "neotape/extractor.hpp"
+#include "neotape/signature.hpp"
 
 #include <csignal>
 #include <cstdlib>
@@ -7,6 +8,7 @@
 #include <getopt.h>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -20,7 +22,8 @@ using std::string;
 
 void usage(const char *prog) {
     std::cerr << format("usage: {} --listen <tcp://host:port|unix://path>\n"
-                        "       [-o <file>] [-v] [-h]\n",
+                        "       [-o <file>] [--verify-pubkey <file.pub>]...\n"
+                        "       [--require-signed] [-v] [-h]\n",
                         prog);
 }
 
@@ -28,6 +31,8 @@ struct Options {
     string listen_address;
     string output_path;
     bool verbose = false;
+    bool require_signed = false;
+    std::vector<string> verify_pubkey_paths;
 };
 
 Options parse_args(int argc, char **argv) {
@@ -35,6 +40,8 @@ Options parse_args(int argc, char **argv) {
         {"listen", required_argument, nullptr, 'l'},
         {"output", required_argument, nullptr, 'o'},
         {"verbose", no_argument, nullptr, 'v'},
+        {"verify-pubkey", required_argument, nullptr, 256},
+        {"require-signed", no_argument, nullptr, 257},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
@@ -50,6 +57,12 @@ Options parse_args(int argc, char **argv) {
             break;
         case 'v':
             opts.verbose = true;
+            break;
+        case 256:
+            opts.verify_pubkey_paths.emplace_back(optarg);
+            break;
+        case 257:
+            opts.require_signed = true;
             break;
         case 'h':
             usage(argv[0]);
@@ -77,7 +90,7 @@ Options parse_args(int argc, char **argv) {
 int main(int argc, char **argv) {
     try {
         neotape::ensure_utf8_ctype_locale();
-        Options const opts = parse_args(argc, argv);
+        Options opts = parse_args(argc, argv);
         neotape::g_debug = opts.verbose;
 
         if (std::signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
@@ -88,6 +101,10 @@ int main(int argc, char **argv) {
         ex_opts.listen_address = opts.listen_address;
         ex_opts.output_path = opts.output_path;
         ex_opts.verbose = opts.verbose;
+        ex_opts.require_signed = opts.require_signed;
+        for (const string &path : opts.verify_pubkey_paths) {
+            ex_opts.verify_keys.push_back(neotape::load_signify_public_key(path));
+        }
 
         uint64_t const frames = neotape::run_tcp_extractor(ex_opts);
         std::cerr << format("extractor validated {} frames\n", frames);

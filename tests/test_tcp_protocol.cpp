@@ -131,6 +131,38 @@ int main() {
         }
     }
 
+    // auth_challenge / auth_response round-trip.
+    {
+        std::vector<std::byte> challenge(32, std::byte{0x5a});
+        Message out{MessageType::auth_challenge, challenge};
+        neotape::tcp::write_message(fds[1], out);
+
+        auto in = neotape::tcp::read_message(fds[0]);
+        if (!in.has_value()) {
+            fail("expected auth_challenge message");
+        }
+        if (in->type != MessageType::auth_challenge) {
+            fail("wrong message type for auth_challenge");
+        }
+        if (in->payload.size() != challenge.size()) {
+            fail("wrong auth_challenge payload size");
+        }
+
+        std::vector<std::byte> response(64, std::byte{0xa5});
+        neotape::tcp::write_message(
+            fds[1], Message{MessageType::auth_response, response});
+        in = neotape::tcp::read_message(fds[0]);
+        if (!in.has_value()) {
+            fail("expected auth_response message");
+        }
+        if (in->type != MessageType::auth_response) {
+            fail("wrong message type for auth_response");
+        }
+        if (in->payload.size() != response.size()) {
+            fail("wrong auth_response payload size");
+        }
+    }
+
     // Clean close returns nullopt.
     close(fds[1]);
     auto end = neotape::tcp::read_message(fds[0]);

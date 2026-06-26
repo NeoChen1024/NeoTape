@@ -1,5 +1,6 @@
 #include "neotape/frame_builder.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <span>
@@ -16,31 +17,49 @@ void copy_header_to_record(const HeaderBytes &header,
     }
 }
 
-void finalize_record_hash(FrameHeader &header, std::vector<std::byte> &record) {
+void finalize_record(FrameHeader &header, std::vector<std::byte> &record,
+                     const SignifySecretKey *signer) {
+    if (signer != nullptr) {
+        header.flags |= frame_flag_signed;
+    } else {
+        header.flags &= ~frame_flag_signed;
+    }
+    header.signature.fill(0);
+
     HeaderBytes header_bytes = serialize_frame_header(header);
     copy_header_to_record(header_bytes, record);
     header.frame_hash = compute_frame_hash(
         reinterpret_cast<const uint8_t *>(record.data()), record.size());
+    if (signer != nullptr) {
+        header.signature = sign_frame_hash(*signer, header.frame_hash);
+    }
     header_bytes = serialize_frame_header(header);
     copy_header_to_record(header_bytes, record);
 }
 
 void patch_volume_seq_num(std::vector<std::byte> &record,
-                          uint64_t new_volume_seq_num) {
+                          uint64_t new_volume_seq_num,
+                          const SignifySecretKey *signer) {
     FrameHeader hdr = parse_fixed_header(
         reinterpret_cast<const uint8_t *>(record.data()), record.size());
-    if (hdr.volume_seq_num == new_volume_seq_num) {
+    bool const wants_signed = signer != nullptr;
+    bool const has_hash = std::ranges::any_of(hdr.frame_hash, [](uint8_t byte) {
+        return byte != 0;
+    });
+    if (hdr.volume_seq_num == new_volume_seq_num &&
+        has_frame_flag_signed(hdr.flags) == wants_signed && has_hash) {
         return;
     }
     hdr.volume_seq_num = new_volume_seq_num;
-    finalize_record_hash(hdr, record);
+    finalize_record(hdr, record, signer);
 }
 
 std::vector<std::byte> build_archive_end_record(uint32_t block_size,
                                                  uint64_t volume_seq_num,
                                                  const std::string &archive_uuid,
                                                  const std::string &archive_name,
-                                                 uint64_t global_seq_num) {
+                                                 uint64_t global_seq_num,
+                                                 const SignifySecretKey *signer) {
     FrameHeader h;
     h.channel_type = ChannelType::ARCHIVE_END;
     h.volume_block_size_kib = static_cast<uint16_t>(block_size / 1024U);
@@ -54,7 +73,7 @@ std::vector<std::byte> build_archive_end_record(uint32_t block_size,
     h.flags = frame_flag_end | frame_flag_clean_end;
 
     std::vector<std::byte> record(block_size, std::byte{0});
-    finalize_record_hash(h, record);
+    finalize_record(h, record, signer);
     return record;
 }
 
@@ -124,7 +143,6 @@ ContentFrameBuilder::build_content_frame(std::span<const std::byte> payload,
     copy_header_to_record(header, record);
     std::copy(payload.begin(), payload.end(),
               record.begin() + static_cast<std::ptrdiff_t>(fixed_header_size));
-    finalize_record_hash(fh, record);
     return BuiltFrame{std::move(record), fh.global_frame_seq_num};
 }
 

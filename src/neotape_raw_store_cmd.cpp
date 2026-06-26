@@ -1,6 +1,7 @@
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
 #include "neotape/frame_builder.hpp"
+#include "neotape/signature.hpp"
 #include "neotape/volume_server.hpp"
 
 #include <cerrno>
@@ -11,6 +12,7 @@
 #include <format>
 #include <getopt.h>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -28,6 +30,8 @@ struct Options {
     uint32_t volume_block_size = 4 * 1024 * 1024;
     string archive_name = "raw";
     uint64_t retention_frame_count = 256;
+    std::optional<string> sign_secret_key_file;
+    std::optional<string> sign_passphrase_file;
     bool debug = false;
 };
 
@@ -50,6 +54,8 @@ void usage(const char *prog) {
         "usage: {} --listen <tcp://host:port|unix://path>\n"
         "       [--input <file|->] [--volume-block-size <bytes>]\n"
         "       [--archive-name <name>] [--retention-frame-count <N>]\n"
+        "       [--sign-secret-key <file.sec>]\n"
+        "       [--sign-passphrase-file <path>]\n"
         "       [--debug] [-h]\n",
         prog);
 }
@@ -62,6 +68,8 @@ Options parse_args(int argc, char **argv) {
         {"archive-name", required_argument, nullptr, 'n'},
         {"retention-frame-count", required_argument, nullptr, 256},
         {"debug", no_argument, nullptr, 257},
+        {"sign-secret-key", required_argument, nullptr, 258},
+        {"sign-passphrase-file", required_argument, nullptr, 259},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
@@ -97,6 +105,12 @@ Options parse_args(int argc, char **argv) {
         case 257:
             opts.debug = true;
             break;
+        case 258:
+            opts.sign_secret_key_file = optarg;
+            break;
+        case 259:
+            opts.sign_passphrase_file = optarg;
+            break;
         case 'h':
             usage(argv[0]);
             std::exit(0);
@@ -116,6 +130,10 @@ Options parse_args(int argc, char **argv) {
     }
     if (!neotape::valid_block_size(opts.volume_block_size)) {
         usage_error("invalid volume block size");
+    }
+    if (opts.sign_passphrase_file.has_value() &&
+        !opts.sign_secret_key_file.has_value()) {
+        usage_error("--sign-passphrase-file requires --sign-secret-key");
     }
 
     return opts;
@@ -189,6 +207,14 @@ uint64_t run_raw_store(FILE *input, const Options &opts) {
     server_opts.archive_name = opts.archive_name;
     server_opts.retention_frame_count = opts.retention_frame_count;
     server_opts.log_label = "raw-store";
+    if (opts.sign_secret_key_file.has_value()) {
+        server_opts.frame_signer = neotape::load_signify_secret_key(
+            *opts.sign_secret_key_file,
+            opts.sign_passphrase_file.has_value()
+                ? std::optional<string>(neotape::read_signify_passphrase_file(
+                      *opts.sign_passphrase_file))
+                : std::nullopt);
+    }
 
     return neotape::run_volume_server(
         server_opts,

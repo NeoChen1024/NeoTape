@@ -57,6 +57,7 @@ uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
     server_opts.initial_volume_seq_num = opts.initial_volume_seq_num;
     server_opts.retention_frame_count = opts.retention_frame_count;
     server_opts.log_label = "archiver";
+    server_opts.frame_signer = opts.frame_signer;
 
     return run_volume_server(
         server_opts,

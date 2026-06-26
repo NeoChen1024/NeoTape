@@ -53,9 +53,9 @@ void write_exact(int fd, const void *buf, std::size_t n) {
 
 } // namespace
 
-// valid message types: 0x01 through 0x05
+// valid message types: 0x01 through 0x07
 constexpr bool is_valid_message_type(uint8_t const b) {
-    return b >= 0x01 && b <= 0x05;
+    return b >= 0x01 && b <= 0x07;
 }
 
 std::optional<Message> read_message(int fd) {
@@ -125,6 +125,10 @@ std::string message_type_name(MessageType type) {
         return "ERROR";
     case MessageType::ack_frame:
         return "ACK_FRAME";
+    case MessageType::auth_challenge:
+        return "AUTH_CHALLENGE";
+    case MessageType::auth_response:
+        return "AUTH_RESPONSE";
     }
     return std::format("UNKNOWN({})", static_cast<int>(type));
 }

@@ -134,12 +134,18 @@ deployment target 10 Gbps or faster).
 ### Frame-level protection (SIGNED flag)
 
 When the archive producer uses signed frames ([`SIGNED` flag](01-frame-header.md)
-with [Ed25519 signature](00-format-common.md) over `frame_hash`), **integrity
+with [Ed25519 signature](00-format-common.md) over `NeoTape-frame\0 || frame_hash`), **integrity
 and authenticity are guaranteed at the frame level** regardless of transport.
 A tampered or forged frame will fail BLAKE3 hash verification and Ed25519
-signature validation during extraction, even if the TCP connection is
+signature validation during extraction or any other verifying receiver, even if the TCP connection is
 unencrypted and routed over an untrusted network.  Sequence number checks
 further prevent replay and reordering.
+
+In the writing pipeline, a Writer that is configured with a trusted public key
+SHOULD verify each signed `frame_record` before committing it to media, so a
+forged or misrouted TCP peer cannot cause bad frames to be written to tape or
+spool.  In the reading pipeline, the Reader client MAY remain a dumb forwarder;
+authoritative signed-frame validation remains the Extractor's responsibility.
 
 When signed frames are in use, the remaining threats that an external
 tunnel addresses are:
@@ -164,61 +170,75 @@ the connection through an external secure channel (e.g. SSH port forwarding,
 WireGuard, or a TLS proxy).  The NeoTape wire protocol remains plaintext by
 design.
 
-### Future: challenge-response authentication
+### Challenge-response authentication
+
+This extension is primarily for the writing pipeline (Archiver = Server,
+Writer = Client).  The goal is for the Writer to authenticate the Archiver
+before accepting frames, using the same trust root as frame-signature
+verification.
 
 If Ed25519 signing is already in use for frames (`SIGNED` flag), the same
 key material can authenticate the TCP peer at connection time with minimal
-added complexity.  The envisioned extension adds two message types:
+added complexity.  The protocol adds two message types:
 
 | ID | Name | Direction | Payload |
 |---|---|---|---|
-| 0x06 | `auth_challenge` | Server → Client | 32-byte random nonce |
-| 0x07 | `auth_response` | Client → Server | 64-byte Ed25519 signature |
+| 0x06 | `auth_challenge` | Client → Server | 32-byte random nonce |
+| 0x07 | `auth_response` | Server → Client | 64-byte Ed25519 signature |
 
 The flow:
 
 ```
-Server                                   Client
+Writer                                   Archiver
   |                                        |
-  |  ← TCP connect                         |
+  |  → TCP connect                         |
   |                                        |
   |  auth_challenge(32B random nonce)  →   |
   |                                        |
-  |            sign(sk, "NeoTape-auth"      |
+  |            sign(sk, "NeoTape-auth\0"    |
   |                  || nonce)              |
   |  ← auth_response(64B Ed25519 sig)      |
   |                                        |
-  |  verify(pk, "NeoTape-auth"             |
+  |  verify(pk, "NeoTape-auth\0"           |
   |         || nonce, sig)                 |
   |  → ok → protocol proceeds              |
   |  → fail → error, close                 |
 ```
 
 **Domain separation.**  The signed message is the concatenation of a constant
-context string and the nonce (`"NeoTape-auth" || nonce`), not the bare nonce.
-This prevents cross-context signature replay — a valid `ack_frame` signature
-over `frame_hash` cannot be submitted as an `auth_response`, and vice-versa,
-even when the same Ed25519 key is used for both purposes.
+context string and the nonce (`NeoTape-auth\0 || nonce`), not the bare nonce.
+The context string includes its trailing NUL byte. This prevents
+cross-context signature replay — a valid frame signature over
+`NeoTape-frame\0 || frame_hash` cannot be submitted as an `auth_response`,
+and vice-versa, even when the same Ed25519 key is used for both purposes.
 
 The context string is a fixed, null-terminated ASCII literal compiled into
-both Server and Client.  It does not travel over the wire.
+both Server and Client.  The terminating NUL byte is part of the signed
+message.  The context string does not travel over the wire.
 
 When this extension is active, both frame signing and challenge-response
 auth use the same Ed25519 key material over different domain strings:
-`"NeoTape-frame"` (format spec: [00-format-common.md](00-format-common.md))
-and `"NeoTape-auth"` (this section).  The signatures are cryptographically
+`NeoTape-frame\0` (format spec: [00-format-common.md](00-format-common.md))
+and `NeoTape-auth\0` (this section).  The signatures are cryptographically
 independent even with a shared key.
 
-The Server issues a fresh random nonce per connection, so replay of a
+The Writer issues a fresh random nonce per connection, so replay of a
 previous `auth_response` is impossible.  The exchange costs one round-trip
-after TCP handshake (negligible on localhost or LAN).
+after TCP handshake (negligible on localhost or LAN).  Because the Writer
+verifies `auth_response` with the same trusted public key it later uses for
+per-frame signature checks, connection-time peer authentication and
+frame-level authenticity point at the same trust anchor.
 
-This design assumes Server and Client share the same Ed25519 secret key
-(e.g. via a local file or out-of-band distribution).  It authenticates
-the Client to the Server (one-way); mutual authentication would add a
-second challenge in the opposite direction but is unnecessary when the
-Server is a trusted, operator-controlled host.
+This design assumes the Archiver alone holds the Ed25519 secret key already
+used for frame signing, while the Writer is provisioned only with the trusted
+public key (e.g. via a local file or out-of-band distribution).  It
+authenticates the Server to the Client (one-way).  It does **not** replace
+per-frame signature verification; it only proves that the peer answering the
+TCP connection possesses the expected signing key.
 
-The implementation footprint is small: two libsodium calls
-(`crypto_sign_detached` / `crypto_sign_verify_detached`), ~50 lines of
-code, and no external PKI.
+The reading pipeline does not need the same handshake.  The Reader client can
+remain a simple frame forwarder, while the Extractor continues to perform the
+authoritative frame-signature, sequence, and archive-continuity validation.
+
+The implementation footprint is small: one nonce generator, one Ed25519 sign
+operation, one Ed25519 verify operation, and no external PKI.

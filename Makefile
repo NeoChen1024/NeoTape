@@ -2,11 +2,11 @@
 CC	= cc
 CXX	= c++
 .DEFAULT_GOAL := all
-INCS	= -Iinclude -Itests -Llib -I/usr/local/include -Lusr/local/lib
+INCS	= -Iinclude -Itests -I3rdparty/signify -Llib -I/usr/local/include -Lusr/local/lib
 CFLAGS	= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c17 -march=native -pedantic $(INCS)
 CXXFLAGS= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c++20 -march=native -pedantic $(INCS)
 LDLIBS	= lib/libb3sum.a -larchive
-EXE	= bin/mt-pax bin/neotape-plan bin/test_pax_pipeline bin/test_tcp_protocol bin/test_format bin/test_validate bin/neotape-archiver bin/neotape-write bin/neotape-read bin/neotape-extractor bin/neotape-raw-store bin/neotape-inspect bin/neotape-scan
+EXE	= bin/mt-pax bin/neotape-plan bin/test_pax_pipeline bin/test_tcp_protocol bin/test_format bin/test_validate bin/test_signature bin/neotape-archiver bin/neotape-write bin/neotape-read bin/neotape-extractor bin/neotape-raw-store bin/neotape-inspect bin/neotape-scan
 BINDIR	= bin
 LIBDIR	= lib
 BUILDDIR= build
@@ -14,6 +14,7 @@ BUILDDIR= build
 # Header dependencies are listed where they matter.
 
 include 3rdparty/blake3.mk
+include 3rdparty/signify.mk
 
 CLANG_FORMAT ?= clang-format
 SRC_FILES = $(wildcard src/*.cpp include/neotape/*.hpp)
@@ -35,6 +36,7 @@ src/%.o : src/%.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 src/neotape_format.o: include/neotape/format.hpp
+src/neotape_signature.o: include/neotape/signature.hpp
 
 # ── binaries ──
 
@@ -56,32 +58,36 @@ $(BINDIR)/test_format : tests/test_format.cpp src/neotape_format.o $(B3LIB) | $(
 $(BINDIR)/test_validate : tests/test_validate.cpp src/neotape_validate.o src/neotape_format.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< $(filter %.o,$^) -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-archiver : src/neotape_archiver_cmd.o src/neotape_tcp_server.o src/neotape_volume_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_frame_builder.o src/neotape_socket_util.o src/neotape_common.o src/neotape_pax_writer.o src/neotape_bounded_buffer.o $(B3LIB) | $(BINDIR)
+$(BINDIR)/test_signature : tests/test_signature.cpp src/neotape_frame_builder.o src/neotape_signature.o src/neotape_format.o $(SIGNIFYLIB) $(B3LIB) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $< $(filter %.o,$^) -o $@ $(LDLIBS) $(SIGNIFYLIB)
+
+$(BINDIR)/neotape-archiver : src/neotape_archiver_cmd.o src/neotape_tcp_server.o src/neotape_volume_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_frame_builder.o src/neotape_signature.o src/neotape_socket_util.o src/neotape_common.o src/neotape_pax_writer.o src/neotape_bounded_buffer.o $(SIGNIFYLIB) $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-raw-store : src/neotape_raw_store_cmd.o src/neotape_volume_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_frame_builder.o src/neotape_socket_util.o src/neotape_common.o $(B3LIB) | $(BINDIR)
+$(BINDIR)/neotape-raw-store : src/neotape_raw_store_cmd.o src/neotape_volume_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_frame_builder.o src/neotape_signature.o src/neotape_socket_util.o src/neotape_common.o $(SIGNIFYLIB) $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-write : src/neotape_write_cmd.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o src/neotape_socket_util.o $(B3LIB) | $(BINDIR)
+$(BINDIR)/neotape-write : src/neotape_write_cmd.o src/neotape_signature.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o src/neotape_socket_util.o $(SIGNIFYLIB) $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 $(BINDIR)/neotape-read : src/neotape_read_cmd.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o src/neotape_socket_util.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-extractor : src/neotape_extractor_cmd.o src/neotape_extractor.o src/neotape_validate.o src/neotape_format.o src/neotape_tcp_protocol.o src/neotape_common.o src/neotape_socket_util.o $(B3LIB) | $(BINDIR)
+$(BINDIR)/neotape-extractor : src/neotape_extractor_cmd.o src/neotape_extractor.o src/neotape_validate.o src/neotape_signature.o src/neotape_format.o src/neotape_tcp_protocol.o src/neotape_common.o src/neotape_socket_util.o $(SIGNIFYLIB) $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-$(BINDIR)/neotape-inspect : src/neotape_inspect_cmd.o src/neotape_validate.o src/neotape_format.o src/neotape_tape.o src/neotape_common.o $(B3LIB) | $(BINDIR)
+$(BINDIR)/neotape-inspect : src/neotape_inspect_cmd.o src/neotape_validate.o src/neotape_signature.o src/neotape_format.o src/neotape_tape.o src/neotape_common.o $(SIGNIFYLIB) $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 $(BINDIR)/neotape-scan : src/neotape_scan_cmd.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o $(B3LIB) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_format $(BINDIR)/test_validate $(BINDIR)/mt-pax $(BINDIR)/neotape-plan $(BINDIR)/neotape-archiver $(BINDIR)/neotape-raw-store $(BINDIR)/neotape-write $(BINDIR)/neotape-read $(BINDIR)/neotape-inspect $(BINDIR)/neotape-scan
+test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_format $(BINDIR)/test_validate $(BINDIR)/test_signature $(BINDIR)/mt-pax $(BINDIR)/neotape-plan $(BINDIR)/neotape-archiver $(BINDIR)/neotape-raw-store $(BINDIR)/neotape-write $(BINDIR)/neotape-read $(BINDIR)/neotape-inspect $(BINDIR)/neotape-scan
 	$(BINDIR)/test_pax_pipeline
 	$(BINDIR)/test_tcp_protocol
 	$(BINDIR)/test_format
 	$(BINDIR)/test_validate
+	$(BINDIR)/test_signature
 	sh tests/smoke_mt_pax_pipeline.sh
 	sh tests/smoke_tcp_archive.sh
 	sh tests/smoke_tcp_archive_multi.sh
@@ -90,6 +96,8 @@ test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_for
 	sh tests/smoke_inspect.sh
 	sh tests/smoke_scan.sh
 	sh tests/smoke_tcp_extract.sh
+	sh tests/smoke_signed_tcp_extract.sh
+	sh tests/smoke_writer_auth_fail.sh
 	sh tests/smoke_tcp_plan_extract.sh
 	sh tests/smoke_tcp_extract_multi.sh
 	sh tests/smoke_plan_hardlink.sh
@@ -107,4 +115,4 @@ fix:
 	$(CLANG_TIDY) --fix $(SRC_FILES) -- $(CXXFLAGS)
 	$(CLANG_FORMAT) -i $(SRC_FILES)
 clean:
-	-rm -f ${EXE} ${BINDIR}/*.o src/*.o tests/*.o $(B3LIB) $(B3OBJ)
+	-rm -f ${EXE} ${BINDIR}/*.o src/*.o tests/*.o $(B3LIB) $(B3OBJ) $(SIGNIFYLIB) $(SIGNIFYOBJ)

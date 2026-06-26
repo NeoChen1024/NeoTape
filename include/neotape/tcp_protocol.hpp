@@ -23,6 +23,10 @@ namespace neotape::tcp {
 //     tape_eof     — Reader signals physical EOT           (Client → Server)
 //     ack_frame    — Extractor confirms frame validated    (Server → Client)
 //
+//   Optional writing-pipeline auth extension:
+//     auth_challenge — Writer sends a fresh nonce          (Client → Server)
+//     auth_response  — Archiver signs that nonce           (Server → Client)
+//
 //   error — always bidirectional.
 //
 
@@ -32,6 +36,8 @@ enum class MessageType : uint8_t {
     tape_eof = 0x03,
     error = 0x04,
     ack_frame = 0x05,
+    auth_challenge = 0x06,
+    auth_response = 0x07,
 };
 
 struct Message {
