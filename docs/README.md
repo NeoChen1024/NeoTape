@@ -1,76 +1,90 @@
 # NeoTape Documentation
 
-This directory is the entry point for NeoTape design notes, format drafts, and implementation planning.
+This directory is the entry point for the active NeoTape specification,
+implementation notes, and archived review material.
 
 ## Specification Precedence
 
-`docs/spec/` is the active home of the NeoTape format specification.
+`docs/spec/` is the authoritative home of the current NeoTape format and
+protocol specification.
 
-The documentation is split by stability and purpose.
+Use other directories for implementation-specific notes or historical material,
+not for normative format rules.
 
 ## Layout
 
 ```text
 docs/
-  README.md                     This file
+  README.md                         This file
 
-  spec/                         Normative or near-normative format specification
-    00-format-common.md         Common format rules, datatypes, encoding, frame hash
-    01-frame-header.md          Fixed header layout, channel types, flags, field semantics
-    02-terminology.md           Common terms and definitions
-    03-frames-and-slices.md     Frame model, channels, sequence numbering
-    04-volume-layout.md         Logical and physical tape layout
-    05-spool-dir.md             Spool directory format
-    06-security.md              Trust model, path safety, signing
-    07-future-extensions.md     Extension ideas (multi-channel, FEC, encryption)
-    08-plan-metadata.md         Plan metadata format (`neotape plan`)
-    09-appendix-cli.md          CLI usage examples for all tools
-    10-appendix-layout-examples.md  Single-volume, multi-volume, multi-archive layouts
-    11-tcp-protocol.md          TCP/Unix-domain socket request-response protocol
+  spec/                             Active format and protocol specification
+    00-format-common.md             Common datatypes, canonical hashing, signatures
+    01-frame-header.md              Unified 512-byte header layout and flags
+    02-terminology.md               Shared terms and definitions
+    03-frames-and-slices.md         Frame model, channels, and sequence numbering
+    04-volume-layout.md             Logical and physical volume layout
+    05-spool-dir.md                 Spool directory format
+    06-security.md                  Trust model, path safety, frame signing
+    07-future-extensions.md         Reserved extension space and ideas
+    08-plan-metadata.md             Plan metadata emitted by `neotape-plan`
+    09-appendix-cli.md              CLI reference and examples
+    10-appendix-layout-examples.md  Single-volume and multi-volume examples
+    11-tcp-protocol.md              TCP/UDS protocol and writer auth handshake
 
-  superpowers/
-    specs/                      Design specs and proposals
-      ...                       See individual files for archived and active designs
-    plans/                      Implementation plans derived from designs
+  implementation/                   Implementation-specific notes
+    lto-behavior-notes.md           Empirical LTO EOT/EOM observations
+    mt-pax-architecture.md          mt-pax thread roles and data flow
+    path-pitfalls.md                Path handling conventions and gotchas
+    phase-3.5-mt-pax-writer.md      Historical mt-pax writer phase notes
 
-  implementation/               Implementation-specific notes
-    phase-3.5-mt-pax-writer.md  Multi-threaded pax writer architecture
-    lto-behavior-notes.md       LTO EOT/EOM empirical observations
-    mt-pax-architecture.md      mt-pax thread roles and data flow
-    path-pitfalls.md            Path handling conventions and gotchas
+  archive/                          Historical review and migration notes
+    2026-06-17-project-review-findings.md
+    2026-06-17-spec-consistency-review.md
 ```
 
 ## Document Layers
 
 ### `spec/`
 
-Use `docs/spec/` for the NeoTape format specification: tape model, unified frame header layout, channel semantics, frame and slice rules, continuation behavior, reader state machine, and error handling.
+Use `docs/spec/` for stable format commitments: unified frame header layout,
+canonical `frame_hash` rules, frame-signature semantics, tape/spool layout,
+and the TCP/Unix-domain socket protocol.
 
-NeoTape uses a **single unified Frame Header** for all records. The header layout is specified in `docs/spec/01-frame-header.md`.
+Security- and transport-related behavior is split intentionally:
+
+- `06-security.md` covers trust model, path safety, and frame signing.
+- `11-tcp-protocol.md` covers the writer/reader request-response protocol,
+  including writer-side challenge-response authentication of the source server.
 
 ### `implementation/`
 
-Use `docs/implementation/` for implementation-specific notes: empirical LTO observations, mt-pax architecture, pax writer details, and path handling gotchas.
+Use `docs/implementation/` for implementation-specific notes: empirical tape
+behavior, mt-pax architecture, and local engineering conventions.
+
+### `archive/`
+
+Use `docs/archive/` for historical review documents and migration notes that
+are useful context but are no longer the active spec.
 
 ## Splitting Guidance
 
 - Put stable format commitments in `spec/`.
-- Put experiments, implementation tradeoffs, and local build notes in `implementation/`.
+- Put implementation tradeoffs, local behavior notes, and architecture detail
+  in `implementation/`.
+- Put superseded reviews or one-off migration notes in `archive/`.
 - Keep each file centered on one topic that is likely to change together.
-- Avoid very tiny files for every subsection; split where ownership and edit frequency naturally separate.
 - Prefer cross-links over repeating the same rule in multiple files.
-- Keep open questions close to the topic they affect rather than collecting them in a separate catch-all file.
 
-## Key Format Changes (June 2026)
+## Current Focus
 
-The format was significantly simplified in June 2026:
+As of June 2026, the active spec reflects these major current-format decisions:
 
-- **Single unified 512-byte Frame Header** replaces the three previous headers (Volume, Frame, Archive End).
-- **`channel_type`** (`ch_content`, `ch_metadata`, `archive_end`) replaces `header_type` and `frame_content_type`.
-- **`frame_hash`** (BLAKE3 over the entire frame) replaces `header_crc32c` and `frame_payload_blake3`.
-- **`volume_seq_num`** is now advisory; archive continuity is validated by `archive_uuid` and sequence numbers.
-- **No payload profile** in core format; core is payload-format agnostic.
-- **No slice-level hash**; per-frame `frame_hash` is sufficient.
-- **Channel-local `channel_frame_seq_num`** replaces `frame_seq_num_within_slice`.
-- **Metadata-first ordering**: `ch_metadata` MUST precede `ch_content` within each slice.
-- **`volume_block_size_kib`** (`uint16`, KiB-encoded) replaces `volume_block_size` (`uint32`, bytes).
+- NeoTape uses one unified 512-byte frame header for all records.
+- `frame_hash` is a canonical BLAKE3 digest over the whole frame with the
+  `signature` and `frame_hash` fields zeroed during hashing.
+- Optional signed frames use a binary signify-style Ed25519 signature over
+  `NeoTape-frame\0 || frame_hash`.
+- In the writing pipeline, a verifying writer may authenticate the archiver by
+  checking a signature over `NeoTape-auth\0 || nonce` before it accepts frames.
+- Authoritative signed-frame validation in the reading pipeline remains the
+  extractor's responsibility.

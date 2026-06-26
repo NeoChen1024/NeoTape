@@ -13,7 +13,8 @@ consumers and write/read frames to/from tape or spool. An
 payload stream. An `bin/neotape-inspect` scans spool or tape for frame-level
 verification and archive compliance reporting. The tape-device backend
 (`namespace mt`) implements both tape and spool I/O behind a shared
-`mt::TapeDevice` interface.
+`mt::TapeDevice` interface. Optional Ed25519 frame signing uses external
+signify-compatible key files; NeoTape verifies but does not generate keys.
 
 ## Build
 
@@ -23,11 +24,13 @@ make -j "$(nproc)"      # produces bin/mt-pax, bin/neotape-archiver,
                         # bin/neotape-read, bin/neotape-extractor,
                         # bin/neotape-inspect, bin/neotape-plan,
                         # and test binaries
+make test
 make clean
 ```
 
-Dependencies: libarchive (system, `-larchive`) and BLAKE3 (bundled submodule
-`3rdparty/BLAKE3` → `lib/libb3sum.a`).
+Dependencies: libarchive (system, `-larchive`), BLAKE3 (bundled submodule
+`3rdparty/BLAKE3` → `lib/libb3sum.a`), and bundled signify sources
+(`3rdparty/signify` → `lib/libsignify.a`).
 
 ## clangd / LSP
 
@@ -59,19 +62,21 @@ headers currently confuse clangd 22.
 - `src/neotape_extractor_cmd.cpp` — `bin/neotape-extractor` CLI entry point
 - `src/neotape_extractor.cpp` — extractor state machine (frame accumulation, payload reassembly)
 - `src/neotape_inspect_cmd.cpp` — `bin/neotape-inspect` CLI entry point
+- `src/neotape_signature.cpp` — signify-compatible key loading, frame signing, auth nonce signing
 - `src/neotape_validate.cpp` — shared archive-frame validation (root: `include/neotape/validate.hpp`)
 - `src/neotape_write_cmd.cpp` — `bin/neotape-write` CLI entry point
 - `src/neotape_tcp_server.cpp` — archiver server and frame packing
 - `src/neotape_tcp_protocol.cpp` — framed TCP message I/O
 - `src/neotape_*.cpp` — NeoTape format and tape manipulation library (format layer and `namespace mt`)
+- `include/neotape/signature.hpp` — signify-compatible signing / verification interface
 - `include/neotape/tcp_protocol.hpp` — TCP archive protocol message types
 - `include/neotape/tcp_server.hpp` — archiver server interface
 - `include/neotape/extractor.hpp` — extractor interface
 - `include/neotape/bounded_buffer.hpp` — thread-safe bounded buffer used by mt-pax
 - `include/neotape/` — shared project headers (common types, format helpers)
 - `3rdparty/` — git submodules (BLAKE3, signify). Init with `git submodule update --init --recursive`
-- `docs/spec/` — active format spec; `docs/mt-pax.md` — mt-pax architecture
-- `tests/smoke_mt_pax_pipeline.sh`, `tests/smoke_tcp_archive.sh`, `tests/smoke_raw_store.sh`, `tests/smoke_inspect.sh`, `tests/smoke_mt_pax_parity.sh`, `tests/smoke_tcp_archive_multi.sh`, `tests/smoke_tcp_extract.sh`, `tests/smoke_tcp_extract_multi.sh` — smoke tests; no test framework or CI yet
+- `docs/spec/` — active format spec; `docs/implementation/mt-pax-architecture.md` — mt-pax architecture
+- `tests/smoke_mt_pax_pipeline.sh`, `tests/smoke_tcp_archive.sh`, `tests/smoke_raw_store.sh`, `tests/smoke_inspect.sh`, `tests/smoke_mt_pax_parity.sh`, `tests/smoke_tcp_archive_multi.sh`, `tests/smoke_tcp_extract.sh`, `tests/smoke_signed_tcp_extract.sh`, `tests/smoke_writer_auth_fail.sh`, `tests/smoke_tcp_extract_multi.sh` — smoke tests; no test framework or CI yet
 
 ## Architecture pattern
 
@@ -94,6 +99,13 @@ This split lets archive generation/extraction run on one host while tape
 hardware is attached to another, keeps media handling out of the archive state
 machine, and provides natural back-pressure because the client requests frames
 one at a time.
+
+When signed frames are enabled, the writing pipeline is asymmetric by design:
+the Archiver/Raw Store holds the secret key, while the Writer is provisioned
+only with trusted public keys. The Writer may authenticate the source server by
+verifying `NeoTape-auth\0 || nonce`, then verifies each signed frame before
+writing it. In the reading pipeline, the Reader remains a dumb forwarder and
+the Extractor is the authoritative signed-frame validator.
 
 ## mt-pax CLI
 
@@ -124,13 +136,17 @@ bin/neotape-archiver --listen <tcp://host:port|unix://path>
                      [--volume-block-size <bytes>] [--archive-name <name>]
                      [-C <dir>] [-P <percent>] [--io-thread <N>]
                      [--output-buffer-size <bytes>] [--plan <file>]
-                     [--retention-frame-count <N>] [--debug]
+                     [--retention-frame-count <N>]
+                     [--sign-secret-key <file.sec>]
+                     [--sign-passphrase-file <path>] [--debug]
                      [-v|-vv] [-x] <path> [path...]
 ```
 
 In server mode (`--listen`) the archiver is a long-running producer that serves
 NeoTape records over a single TCP/UDS connection. Without `--listen` it behaves
-like `mt-pax` and writes a plain pax stream to `-f`.
+like `mt-pax` and writes a plain pax stream to `-f`. `--sign-secret-key` is
+server-mode only and signs every served frame with a signify-compatible secret
+key file.
 
 ## neotape-raw-store CLI
 
@@ -139,19 +155,23 @@ bin/neotape-raw-store --listen <tcp://host:port|unix://path>
                        [--input <file|->]
                        [--volume-block-size <bytes>]
                        [--archive-name <name>]
-                       [--retention-frame-count <N>] [--debug]
+                       [--retention-frame-count <N>]
+                       [--sign-secret-key <file.sec>]
+                       [--sign-passphrase-file <path>] [--debug]
 ```
 
 Long-running raw byte-stream producer. It reads raw bytes from stdin by default
 or from `--input`, stores the entire input as one logical content slice, uses
 spec-correct channel frame sequencing/START/END flags, emits a slice-closing
-`tape_eof`, then emits `archive_end`.
+`tape_eof`, then emits `archive_end`. It can also sign frames with the same
+signify-compatible key handling as `neotape-archiver`.
 
 ## neotape-inspect CLI
 
 ```
 bin/neotape-inspect --source <spool:./dir|tape:/dev/nst0>
-                    [--debug] [--raw] [-h]
+                    [--verify-pubkey <file.pub>]...
+                    [--require-signed] [--debug] [--raw] [-h]
 ```
 
 Scans a spool directory or tape device for NeoTape frames, parses and validates
@@ -159,7 +179,9 @@ every frame header, and prints a human-readable table with frame hash
 verification, followed by an archive-level compliance report.  Compliance checks
 cover per-frame integrity (magic, version, block size, hash, flags, signature
 consistency, reserved bytes) and archive continuity (`global_frame_seq_num`,
-slice/channel sequence, channel ordering, archive-end rules).
+slice/channel sequence, channel ordering, archive-end rules). With
+`--verify-pubkey`, it also validates frame signatures; `--require-signed`
+upgrades unsigned frames to compliance failures.
 
 ## neotape-read CLI
 
@@ -176,30 +198,38 @@ or Unix-domain socket. One reader process handles exactly one volume.
 
 ```
 bin/neotape-extractor --listen <tcp://host:port|unix://path>
-       [-o <file>] [-v] [-h]
+       [-o <file>] [--verify-pubkey <file.pub>]...
+       [--require-signed] [-v] [-h]
 ```
 
 Long-running payload consumer. Listens for incoming reader connections,
 receives NeoTape frames, validates them via the shared `FrameValidator`, and
 reconstructs the original payload byte stream. Writes to a file or stdout.
+Signature validation is optional unless `--verify-pubkey` is configured;
+`--require-signed` rejects unsigned frames.
 
 ## neotape-write CLI
 
 ```
 bin/neotape-write --source <tcp://host:port|unix://path>
                   --target <tape:/dev/nst0|spool:./dir>
+                  [--verify-pubkey <file.pub>]...
                   [--erase | --append]
+                  [--output-buffer-size <bytes>]
+                  [--max-volume-bytes <bytes>] [--debug]
 ```
 
 Short-lived per-volume writer client. Connects to an archiver and requests frames
 one at a time. Writes to a tape device or filesystem spool directory.
 
 By default the writer refuses to overwrite existing content. Use `--erase` to
-rewind to BOT and overwrite, or `--append` to space to EOD and continue.
+rewind to BOT and overwrite, or `--append` to space to EOD and continue. When
+`--verify-pubkey` is present, the writer authenticates the source server before
+opening/rewinding media, then verifies every signed frame before writing it.
 
 ## Thread architecture (mt-pax)
 
-See `docs/mt-pax.md` for the full data-flow diagram and detailed
+See `docs/implementation/mt-pax-architecture.md` for the full data-flow diagram and detailed
 responsibilities of each thread role:
 
 - **Walker** (main thread) — filesystem traversal, entry dispatch (bb0 /

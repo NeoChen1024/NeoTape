@@ -2,7 +2,13 @@
 
 A seekable multi-volume length-framed payload transport container designed for LTO tape drives.
 
-NeoTape wraps a payload byte stream (typically a POSIX pax/tar archive) in a lightweight framing layer that provides per-frame structure, logical-slice grouping, per-frame integrity verification via BLAKE3, and multi-volume continuation. The on-tape format uses LTO filemarks at logical-slice boundaries, enabling native tape seek to coarse checkpoint units without requiring per-frame filemarks.
+NeoTape wraps a payload byte stream (typically a POSIX pax/tar archive) in a
+lightweight framing layer that provides per-frame structure, logical-slice
+grouping, per-frame integrity verification via BLAKE3, optional Ed25519 frame
+signatures backed by signify-compatible key files, and multi-volume
+continuation. The on-tape format uses LTO filemarks at logical-slice
+boundaries, enabling native tape seek to coarse checkpoint units without
+requiring per-frame filemarks.
 
 This is an early implementation-stage project. The current implementation
 includes a standalone pax writer (`bin/mt-pax`), a planner (`bin/neotape-plan`)
@@ -10,7 +16,9 @@ for slicing metadata, long-running data producers (`bin/neotape-archiver`,
 `bin/neotape-raw-store`), per-volume tape/spool clients (`bin/neotape-write`,
 `bin/neotape-read`), a payload extractor (`bin/neotape-extractor`), an
 inspection/compliance tool (`bin/neotape-inspect`), and an archive-identity
-scanner (`bin/neotape-scan`).
+scanner (`bin/neotape-scan`). Signed-frame verification is implemented in the
+writer, extractor, and inspect paths; the writer can also authenticate the
+source archiver over TCP or Unix-domain sockets before it touches media.
 
 ## Specification Status
 
@@ -62,12 +70,18 @@ block-size change within a volume as a format error.
 See [`docs/spec/`](docs/spec/) for the active format specification and [`docs/implementation/`](docs/implementation/) for
 implementation-specific notes (mt-pax architecture, build notes).
 
+Optional signify-compatible frame signing, signed-frame verification, and
+writer-side source authentication are implemented. See
+[`docs/spec/06-security.md`](docs/spec/06-security.md) and
+[`docs/spec/11-tcp-protocol.md`](docs/spec/11-tcp-protocol.md).
+
 ## Dependencies
 
 - **C++20** compiler with `<format>` support (GCC 13+ or Clang 16+)
 - **GNU Make**
 - **libarchive** (system package, linked via `-larchive`)
 - **BLAKE3** (bundled git submodule)
+- **signify** sources (bundled git submodule, built as `lib/libsignify.a`)
 
 ### Initialize submodules
 
@@ -78,7 +92,8 @@ git submodule update --init --recursive
 ## Build
 
 ```sh
-make
+make -j "$(nproc)"
+make test
 ```
 
 Produces `bin/mt-pax`, `bin/neotape-plan`, `bin/neotape-archiver`,
@@ -121,20 +136,28 @@ bin/neotape-archiver --listen <tcp://host:port|unix://path>
                      [--volume-block-size <bytes>] [--archive-name <name>]
                      [-C <dir>] [-P <percent>] [--io-thread <N>]
                      [--output-buffer-size <bytes>] [--plan <file>]
+                     [--retention-frame-count <N>]
+                     [--sign-secret-key <file.sec>]
+                     [--sign-passphrase-file <path>]
                      [-v|-vv] [-x] <path> [path...]
 ```
 
 `neotape-archiver` is a functional superset of `mt-pax`. In server mode it
 listens on a TCP or Unix-domain socket and serves NeoTape-framed records to
 `neotape-write` clients. Without `--listen` it writes a plain pax stream to
-`-f <out-file|->`, matching `mt-pax` output.
+`-f <out-file|->`, matching `mt-pax` output. When `--sign-secret-key` is set,
+every served frame is signed with the supplied signify secret key; encrypted
+`.sec` files are supported via `--sign-passphrase-file`.
 
 ### bin/neotape-write (per-volume writer client)
 
 ```sh
 bin/neotape-write --source <tcp://host:port|unix://path>
                   --target <tape:/dev/nst0|spool:./dir>
+                  [--verify-pubkey <file.pub>]...
                   [--erase | --append]
+                  [--output-buffer-size <bytes>]
+                  [--max-volume-bytes <bytes>] [--debug]
 ```
 
 `neotape-write` connects to a running `neotape-archiver` and requests frames one
@@ -142,13 +165,17 @@ at a time. It writes each record to a tape device or a filesystem spool director
 One writer process writes exactly one volume.
 
 By default the writer refuses to overwrite existing content. Use `--erase` to
-rewind to BOT and overwrite, or `--append` to space to EOD and continue.
+rewind to BOT and overwrite, or `--append` to space to EOD and continue. When
+one or more `--verify-pubkey` files are configured, the writer first
+authenticates the source archiver with a challenge-response signature and then
+verifies each signed frame before writing it.
 
 ### bin/neotape-raw-store (raw byte-stream producer)
 
 ```sh
 bin/neotape-raw-store --listen unix:///run/neotape/raw.sock \
                       --archive-name dataset \
+                      --sign-secret-key backup.sec \
                       --retention-frame-count 5 < input.raw
 ```
 
@@ -156,7 +183,8 @@ Reads raw bytes from stdin, wraps them as a single logical content slice with
 correct channel-local frame sequencing and `END` on the final content frame,
 emits a `tape_eof` slice boundary, then an
 `archive_end`.  The `--retention-frame-count` limits the send window for tape
-back-pressure.
+back-pressure. Like `neotape-archiver`, it can sign frames with
+`--sign-secret-key` and `--sign-passphrase-file`.
 
 ### bin/neotape-read (per-volume spool/tape reader)
 
@@ -172,23 +200,44 @@ to an extractor.  One reader process per volume.
 
 ```sh
 bin/neotape-extractor --listen unix:///run/neotape/extractor.sock \
-                      -o /restore/backup.pax
+                      -o /restore/backup.pax \
+                      --verify-pubkey backup.pub --require-signed
 ```
 
 Long-running service that receives frames from readers, validates archive
-integrity, and reconstructs the original payload stream to a file or stdout.
+integrity, optionally validates signed frames against one or more public keys,
+and reconstructs the original payload stream to a file or stdout. Use
+`--require-signed` to reject unsigned frames.
 
 ### bin/neotape-inspect (frame-level verification)
 
 ```sh
 bin/neotape-inspect --source spool:./vol1.spool
-bin/neotape-inspect --source tape:/dev/nst0 --debug
+bin/neotape-inspect --source tape:/dev/nst0 --verify-pubkey backup.pub \
+                    --require-signed
 ```
 
 Scans a spool directory or tape device and produces a per-frame header table
 with BLAKE3 hash verification, followed by an archive-level compliance report
 (frame integrity, sequence continuity, channel ordering, SIGNED/signature
-consistency, archive-end rules).
+consistency, archive-end rules). With `--verify-pubkey`, it also validates
+frame signatures; `--require-signed` upgrades unsigned frames to compliance
+failures.
+
+### Signing and verification
+
+NeoTape does not generate keypairs itself. Generate a signify keypair with
+OpenBSD `signify` or a compatible implementation, then point NeoTape at the
+resulting `.sec` and `.pub` files.
+
+- `neotape-archiver` and `neotape-raw-store` sign frames with
+  `--sign-secret-key`.
+- `neotape-write` needs only `--verify-pubkey`; it authenticates the source
+  server and verifies each signed frame before writing.
+- `neotape-extractor` and `neotape-inspect` validate signatures with
+  `--verify-pubkey`.
+- `--require-signed` on extractor or inspect rejects unsigned frames instead
+  of treating signatures as optional.
 
 ### bin/neotape-scan (archive identity scan)
 
@@ -211,9 +260,21 @@ bin/neotape-archiver --listen unix:///run/neotape/home.sock \
                      --archive-name home --volume-block-size 4M \
                      -C /data photos docs
 
+# Signed archiver using an existing signify secret key
+bin/neotape-archiver --listen unix:///run/neotape/home.sock \
+                     --archive-name home --volume-block-size 4M \
+                     --sign-secret-key /keys/home-backup.sec \
+                     --sign-passphrase-file /keys/home-backup.pass \
+                     -C /data photos docs
+
 # Write one volume to a tape device
 bin/neotape-write --source unix:///run/neotape/home.sock \
                   --target tape:/dev/nst0
+
+# Write one signed volume and verify/authenticate the source first
+bin/neotape-write --source unix:///run/neotape/home.sock \
+                  --target tape:/dev/nst0 \
+                  --verify-pubkey /keys/home-backup.pub
 
 # Write one volume to a filesystem spool
 bin/neotape-write --source unix:///run/neotape/home.sock \
@@ -229,6 +290,13 @@ bin/neotape-read --source spool:./vol1.spool \
 # Inspect a spool or tape for compliance
 bin/neotape-inspect --source spool:./vol1.spool
 bin/neotape-inspect --source tape:/dev/nst0
+
+# Require valid signatures while inspecting or extracting
+bin/neotape-inspect --source spool:./vol1.spool \
+                    --verify-pubkey /keys/home-backup.pub --require-signed
+bin/neotape-extractor --listen unix:///run/neotape/extractor.sock \
+                      -o ./restore/home.pax \
+                      --verify-pubkey /keys/home-backup.pub --require-signed
 
 # Scan tapefile starts for archive identities
 bin/neotape-scan --source spool:./vol1.spool
