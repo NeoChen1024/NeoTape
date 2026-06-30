@@ -42,6 +42,13 @@ Stores the NeoTape record size in KiB, not bytes. The decoded record size is `vo
 
 `frame_payload_size` is a uint32; its maximum value is implicitly bounded by `(volume_block_size_kib * 1024) - 512`.
 
+For normal slice-channel frames, any frame with `END = 0` MUST use the full
+available payload area, meaning
+`frame_payload_size = (volume_block_size_kib * 1024) - 512`. A payload smaller
+than the full per-record capacity is only allowed on the final frame of that
+channel within the slice (`END = 1`). This rule does not require
+`archive_end` to be full-sized.
+
 ### `archive_label`
 
 A UTF-8 label, not an archive identifier. It is encoded as a 65-byte NUL-terminated and NUL-padded field, with at most 64 usable bytes before the first NUL byte. `archive_uuid` remains the authoritative archive identity.

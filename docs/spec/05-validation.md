@@ -54,6 +54,8 @@ For every received frame record, the validator MUST check:
 - Record size matches decoded `volume_block_size_kib`
 - `volume_block_size_kib` is within supported bounds
 - `frame_payload_size` fits within the decoded record size
+- Any non-`archive_end` frame with `END = 0` uses the full payload capacity of
+  its record
 - `frame_hash`
 - Allowed `channel_type`
 - Allowed flag bits for the current `header_version`
@@ -64,6 +66,11 @@ For every received frame record, the validator MUST check:
 Specifically:
 
 - Unknown `channel_type` values MUST be rejected in normal mode.
+- For `ch_content`, `ch_metadata`, and `ch_fec`, a frame with `END = 0` MUST
+  satisfy `frame_payload_size = (volume_block_size_kib * 1024) - 512`.
+- For `ch_fec` under `rs_32_4`, every frame MUST satisfy
+  `frame_payload_size = (volume_block_size_kib * 1024) - 512`, regardless of
+  the `END` flag.
 - `ch_content`, `ch_metadata`, and `archive_end` MUST have `SIDEBAND = 0` and
   zero-filled `sideband_data`.
 - `ch_fec` MUST have `SIDEBAND = 1` and a valid descriptor per

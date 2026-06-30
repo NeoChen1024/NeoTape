@@ -12,7 +12,7 @@ Each Frame occupies exactly one NeoTape record (`volume_block_size_kib * 1024` b
   <------------------------ volume_block_size_kib * 1024 -------------------------->
 ```
 
-`frame_payload_size` MUST be less than or equal to `(volume_block_size_kib * 1024) - 512`. A Frame MUST NOT span multiple NeoTape records and MUST NOT span archive volumes. A partially written Frame is not part of the archive.
+`frame_payload_size` MUST be less than or equal to `(volume_block_size_kib * 1024) - 512`. For normal slice-channel frames, any frame that does not carry `END = 1` MUST fill the entire payload area of its record, so only the final frame of that channel within the slice may be short. A Frame MUST NOT span multiple NeoTape records and MUST NOT span archive volumes. A partially written Frame is not part of the archive.
 
 ## Slices and Channels
 

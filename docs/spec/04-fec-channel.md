@@ -82,6 +82,15 @@ For a shortened final group with `source_frame_count = s`, where `1 <= s <= 32`:
 - repair shard positions `32..35` are computed from all 32 data shard positions;
 - only the `s` real content shards and 4 repair shards are emitted on media.
 
+For `ch_fec` under `rs_32_4`, every FEC frame payload carries exactly one full
+repair shard. Therefore `frame_payload_size` MUST equal:
+
+```text
+volume_block_size_kib * 1024 - 512
+```
+
+This applies regardless of the `END` flag.
+
 ## Protected Source Material
 
 The protected source stream is the concatenation of the protected content
