@@ -11,23 +11,24 @@ All NeoTape records use a single unified 512-byte fixed header. The final 32 byt
 
 ## Fixed Fields
 
-| Field                            | datatype       | size (in bytes) | Requirement | Notes                                                                                                       |
-| -------------------------------- | -------------- | --------------- | ----------- | ----------------------------------------------------------------------------------------------------------- |
-| `magic`                        | `char[8]`    | 8               | MUST        | Fixed NeoTape identifier:`NeoTape\0`.                                                                     |
-| `header_version`               | `uint8`      | 1               | MUST        | Currently `1`; bump on layout-breaking changes.                                                           |
-| `channel_type`                 | `uint8_enum` | 1               | MUST        | Frame role. See [Channel Types](#channel-types).                                                             |
-| `volume_block_size_kib`        | `uint16`     | 2               | MUST        | Record size for this volume, encoded in KiB.                                                                |
-| `archive_uuid`                 | `nt_uuid`    | 37              | MUST        | NUL-terminated UUID string.                                                                                 |
-| `archive_label`                | `nt_name`    | 65              | SHOULD      | NUL-terminated/padded human-readable archive label.                                                         |
-| `volume_seq_num`               | `uint64`     | 8               | SHOULD      | Advisory volume sequence number; part of the volume label/name.                                             |
-| `global_frame_seq_num`         | `uint64`     | 8               | MUST        | Monotonically increasing across **all** frames, including `archive_end`.                              |
-| `slice_seq_num`                | `uint64`     | 8               | MUST        | `0` for the `archive_end` control frame.                                                                |
-| `channel_frame_seq_num`        | `uint64`     | 8               | MUST        | `0` for the `archive_end` control frame.                                                                |
-| `frame_payload_size`           | `uint32`     | 4               | MUST        | Meaningful payload bytes after the fixed header.                                                            |
-| `flags`                        | `uint64`     | 8               | MUST        | Frame flags. See [Flags](#flags).                                                                          |
-| `_reserved`                    | `byte[250]`  | 250             | MUST        | Zero-filled padding.                                                                                        |
-| `signature`                    | `byte[72]`   | 72              | MAY         | 8-byte key ID plus 64-byte Ed25519 signature over `NeoTape-frame\0 \|\| frame_hash` when `SIGNED` is set. |
-| `frame_hash`                   | `nt_hash`    | 32              | MUST        | BLAKE3 over the canonical image of the whole frame.                                                         |
+| Field                      | datatype       | size (in bytes) | Requirement | Notes                                                                                                      |
+| -------------------------- | -------------- | --------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
+| `magic`                  | `char[8]`    | 8               | MUST        | Fixed NeoTape identifier:`NeoTape\0`.                                                                    |
+| `header_version`         | `uint8`      | 1               | MUST        | Currently`1`; bump on layout-breaking changes.                                                           |
+| `channel_type`           | `uint8_enum` | 1               | MUST        | Frame role. See[Channel Types](#channel-types).                                                             |
+| `volume_block_size_kib`  | `uint16`     | 2               | MUST        | Record size for this volume, encoded in KiB.                                                               |
+| `archive_uuid`           | `nt_uuid`    | 37              | MUST        | NUL-terminated UUID string.                                                                                |
+| `archive_label`          | `nt_name`    | 65              | SHOULD      | NUL-terminated/padded human-readable archive label.                                                        |
+| `volume_seq_num`         | `uint64`     | 8               | SHOULD      | Advisory volume sequence number; part of the volume label/name.                                            |
+| `global_frame_seq_num`   | `uint64`     | 8               | MUST        | Monotonically increasing across**all** frames, including `archive_end`.                            |
+| `slice_seq_num`          | `uint64`     | 8               | MUST        | `0` for the `archive_end` control frame.                                                               |
+|  `channel_frame_seq_num` | `uint64`     | 8               | MUST        | `0` for the `archive_end` control frame.                                                               |
+| `frame_payload_size`     | `uint32`     | 4               | MUST        | Meaningful payload bytes after the fixed header.                                                           |
+| `flags`                  | `uint64`     | 8               | MUST        | Frame flags. See[Flags](#flags).                                                                            |
+| `_reserved`              | `byte[122]`  | 122             | MUST        | Zero-filled padding. Immediately followed by `sideband_data` at offset 280.                               |
+| `sideband_data`          | `byte[128]`  | 128             | MAY         | Optional sideband data. Interpretation is defined by `channel_type`. See [Sideband Data](#sideband-data). |
+| `signature`              | `byte[72]`   | 72              | MAY         | 8-byte key ID plus 64-byte Ed25519 signature over`NeoTape-frame\0 \|\| frame_hash` when `SIGNED` is set. |
+| `frame_hash`             | `nt_hash`    | 32              | MUST        | BLAKE3 over the canonical image of the whole frame.                                                        |
 
 Total: 512 bytes.
 
@@ -52,15 +53,22 @@ The `signature` and `frame_hash` fields are defined in [docs/spec/00-format-comm
 - `frame_hash` is a BLAKE3 digest over the canonical image of the entire frame.
 - `signature` is a 72-byte field used when the `SIGNED` flag is set. Bytes 0-7 hold a 64-bit key ID; bytes 8-71 hold a raw 64-byte Ed25519 signature over `NeoTape-frame\0 || frame_hash`. The context string includes its trailing NUL byte. This mirrors OpenBSD signify's Ed25519 signature payload without the leading two `Ed` bytes.
 
+### `sideband_data`
+
+- `sideband_data` is a 128-byte optional area whose meaning is defined by `channel_type`. The `SIDEBAND` flag signals that the area carries meaningful data; when `SIDEBAND` is clear, writers MUST write all 128 bytes as zero and readers MUST ignore the field's contents.
+- In `header_version=1`, the three defined channel types (`ch_content`, `ch_metadata`, `archive_end`) MUST NOT set `SIDEBAND` and MUST zero-fill `sideband_data`. Future `channel_type` values (3–254) may define their own sideband encoding, internal structure, and per-frame consistency rules.
+- `sideband_data` is included in `frame_hash` like every other fixed header field; the canonical image only zeroes `signature` and `frame_hash`. Consequently it is integrity-protected by `frame_hash` and, when `SIGNED` is set, by the Ed25519 signature.
+- Readers that do not understand the sideband encoding for a given `channel_type` MUST ignore `sideband_data` but MUST still include it in `frame_hash` verification.
+
 ## Channel Types
 
 The `channel_type` field identifies the frame's role:
 
-| Value | Name            | Meaning                                                      |
-| ----- | --------------- | ------------------------------------------------------------ |
-| 1     | `ch_content`  | Payload bytes belonging to the slice content stream.         |
-| 2     | `ch_metadata` | Advisory metadata bytes for the slice.                       |
-| 255   | `archive_end` | Clean end-of-archive marker.                                 |
+| Value | Name            | Meaning                                              |
+| ----- | --------------- | ---------------------------------------------------- |
+| 1     | `ch_content`  | Payload bytes belonging to the slice content stream. |
+| 2     | `ch_metadata` | Advisory metadata bytes for the slice.               |
+| 255   | `archive_end` | Clean end-of-archive marker.                         |
 
 Values 0, 3–254 are reserved for future channels. A reader that encounters an unknown `channel_type` MUST reject the archive in normal restore mode. A future salvage mode MAY skip unknown channels only when it can do so without breaking frame/slice sequence continuity.
 
@@ -72,8 +80,9 @@ Values 0, 3–254 are reserved for future channels. A reader that encounters an 
 | ---- | ------------- | ------------------------------------------------------------------------------------------------------ |
 | 0    | `END`       | Last frame of the current channel group.                                                               |
 | 1    | `SIGNED`    | `signature` contains an 8-byte key ID plus Ed25519 signature over `NeoTape-frame\0 \|\| frame_hash`. |
-| 2-62 | _reserved_  | Must be zero.                                                                                          |
-| 63   | `CLEAN_END` | Only valid for `archive_end`. Must be `1` on a valid end-of-archive frame.                         |
+| 2    | `SIDEBAND`  | `sideband_data` carries meaningful, channel-type-defined data. MUST be clear for `ch_content`, `ch_metadata`, and `archive_end` in `header_version=1`; when clear, `sideband_data` MUST be all zero. |
+| 3-62 | _reserved_  | Must be zero.                                                                                          |
+| 63   | `CLEAN_END` | Only valid for`archive_end`. Must be `1` on a valid end-of-archive frame.                          |
 
 The `archive_end` control frame sets `END = 1`, and `CLEAN_END = 1`.
 
@@ -142,5 +151,6 @@ Within a backend volume, all frames SHOULD carry the same `volume_seq_num`. `vol
 2. Decode `volume_block_size_kib`; validate record size when the backend exposes it.
 3. Validate magic, version, and `frame_hash`.
 4. Dispatch by `channel_type`: `ch_content` / `ch_metadata` — stream payload and track channel-group boundaries via `channel_frame_seq_num` and `END`; `archive_end` — verify `CLEAN_END` and finish.
+5. Ignore `sideband_data` unless the `SIDEBAND` flag is set and the `channel_type` defines an interpretation; always include `sideband_data` in `frame_hash` verification.
 
 After a filemark, validate archive continuity using `archive_uuid`, `global_frame_seq_num`, `slice_seq_num`, and `channel_frame_seq_num`. `volume_seq_num` is advisory for operator prompts and diagnostics only.

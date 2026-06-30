@@ -29,6 +29,12 @@ enum class ChannelType : uint8_t {
 
 inline constexpr uint64_t frame_flag_end = 1ULL << 0;
 inline constexpr uint64_t frame_flag_signed = 1ULL << 1;
+// Bit 2: sideband_data carries channel-type-defined data. Reserved in
+// header_version=1 for the three defined channel types (which must zero-fill
+// sideband_data); future channel_type values may define its use. Not included
+// in validate_header's allowed_flags, so it is rejected on all currently-
+// parseable frames.
+inline constexpr uint64_t frame_flag_sideband = 1ULL << 2;
 inline constexpr uint64_t frame_flag_clean_end = 1ULL << 63;
 
 constexpr bool has_frame_flag_end(uint64_t flags) {
@@ -36,6 +42,9 @@ constexpr bool has_frame_flag_end(uint64_t flags) {
 }
 constexpr bool has_frame_flag_signed(uint64_t flags) {
     return (flags & frame_flag_signed) != 0;
+}
+constexpr bool has_frame_flag_sideband(uint64_t flags) {
+    return (flags & frame_flag_sideband) != 0;
 }
 constexpr bool has_frame_flag_clean_end(uint64_t flags) {
     return (flags & frame_flag_clean_end) != 0;

@@ -15,6 +15,18 @@ Extend `channel_type` beyond `ch_content`, `ch_metadata`, and `archive_end`. Val
 
 New `channel_type` values are allocated by future specification versions. Arbitrary mixing is allowed since `channel_frame_seq_num` provides per-channel ordering.
 
+## Sideband Data Area
+
+The 128-byte `sideband_data` area in the fixed header (see [01-frame-header.md](01-frame-header.md)) is reserved for channel-type-specific extensions. The `SIDEBAND` flag marks a frame as carrying meaningful sideband data; the encoding, internal layout, and per-frame consistency rules are defined by the `channel_type` that uses it.
+
+In `header_version=1`, no defined `channel_type` sets `SIDEBAND`, and `sideband_data` MUST be all zero. Candidate future uses, each gated on a new `channel_type` allocation, include:
+
+- Per-frame Merkle/proof nodes for real-time verification.
+- FEC/parity parameters alongside a parity channel.
+- Partial-restore index pointers.
+
+A new `channel_type` that uses `sideband_data` MUST specify its internal structure (including any type/version tag if multiple sub-encodings are possible) and whether the data must be constant within a frame, slice, channel group, or archive.
+
 ## Partial Restore Index
 
 An index that maps file paths to their exact slice and frame positions, enabling targeted partial restore without scanning all slices.
