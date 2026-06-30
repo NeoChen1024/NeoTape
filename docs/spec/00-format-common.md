@@ -4,7 +4,7 @@ Status: normative.
 
 This document defines common rules and conventions shared across the unified
 NeoTape frame format. The fixed header layout and field semantics are defined in
-[docs/spec/01-frame-header.md](01-frame-header.md).
+[docs/spec/02-frame-header.md](02-frame-header.md).
 
 ## Datatype Reference
 
@@ -163,4 +163,4 @@ This is exactly 19 ASCII bytes followed by one NUL byte:
 YYYY-MM-DDTHH:MM:SS\0
 ```
 
-Writers MUST NOT use timezone suffixes, numeric offsets, fractional seconds, locale-specific text, RFC 3339 variants, ISO 8601 variants, or any other date format. The unified Frame Header defined in [docs/spec/01-frame-header.md](01-frame-header.md) does not contain timestamp fields.
+Writers MUST NOT use timezone suffixes, numeric offsets, fractional seconds, locale-specific text, RFC 3339 variants, ISO 8601 variants, or any other date format. The unified Frame Header defined in [docs/spec/02-frame-header.md](02-frame-header.md) does not contain timestamp fields.

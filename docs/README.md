@@ -19,23 +19,26 @@ docs/
 
   spec/                             Active format and protocol specification
     00-format-common.md             Common datatypes, canonical hashing, signatures
-    01-frame-header.md              Unified 512-byte header layout and flags
-    02-terminology.md               Shared terms and definitions
+    01-terminology.md               Shared terms and definitions
+    02-frame-header.md              Unified 512-byte header layout and flags
     03-frames-and-slices.md         Frame model, channels, and sequence numbering
-    04-volume-layout.md             Logical and physical volume layout
-    05-spool-dir.md                 Spool directory format
-    06-security.md                  Trust model, path safety, frame signing
-    07-future-extensions.md         Reserved extension space and ideas
-    08-plan-metadata.md             Plan metadata emitted by `neotape-plan`
-    09-appendix-cli.md              CLI reference and examples
-    10-appendix-layout-examples.md  Single-volume and multi-volume examples
-    11-tcp-protocol.md              TCP/UDS protocol and writer auth handshake
+    04-fec-channel.md               `ch_fec` sideband descriptor and repair model
+    05-validation.md                Shared conformance and validation rules
+    06-volume-layout.md             Logical and physical volume layout
+    07-spool-dir.md                 Spool directory format
+    08-tcp-protocol.md              TCP/UDS protocol and writer auth handshake
+    09-security.md                  Trust model, path safety, frame signing
+    10-plan-metadata.md             Plan metadata emitted by `neotape-plan`
+    11-appendix-layout-examples.md  Single-volume and multi-volume examples
+    12-future-extensions.md         Reserved extension space and ideas
 
   implementation/                   Implementation-specific notes
+    cli-tooling.md                  CLI reference and workflow examples
     lto-behavior-notes.md           Empirical LTO EOT/EOM observations
     mt-pax-architecture.md          mt-pax thread roles and data flow
     path-pitfalls.md                Path handling conventions and gotchas
     phase-3.5-mt-pax-writer.md      Historical mt-pax writer phase notes
+    recovery-bundle.md              BOT recovery bundle packaging strategy
 
   archive/                          Historical review and migration notes
     2026-06-17-project-review-findings.md
@@ -52,14 +55,21 @@ and the TCP/Unix-domain socket protocol.
 
 Security- and transport-related behavior is split intentionally:
 
-- `06-security.md` covers trust model, path safety, and frame signing.
-- `11-tcp-protocol.md` covers the writer/reader request-response protocol,
+- `04-fec-channel.md` defines the current `ch_fec` sideband descriptor and the
+  initial FEC profile `rs_32_4`.
+- `09-security.md` covers trust model, path safety, and frame signing.
+- `08-tcp-protocol.md` covers the writer/reader request-response protocol,
   including writer-side challenge-response authentication of the source server.
+- `05-validation.md` centralizes the conformance checks shared by readers,
+  extractors, spool readers, TCP receivers, and `neotape-inspect`.
 
 ### `implementation/`
 
 Use `docs/implementation/` for implementation-specific notes: empirical tape
 behavior, mt-pax architecture, and local engineering conventions.
+
+CLI usage and operator workflows live in `docs/implementation/cli-tooling.md`,
+not in `docs/spec/`.
 
 ### `archive/`
 
@@ -74,17 +84,3 @@ are useful context but are no longer the active spec.
 - Put superseded reviews or one-off migration notes in `archive/`.
 - Keep each file centered on one topic that is likely to change together.
 - Prefer cross-links over repeating the same rule in multiple files.
-
-## Current Focus
-
-As of June 2026, the active spec reflects these major current-format decisions:
-
-- NeoTape uses one unified 512-byte frame header for all records.
-- `frame_hash` is a canonical BLAKE3 digest over the whole frame with the
-  `signature` and `frame_hash` fields zeroed during hashing.
-- Optional signed frames use a binary signify-style Ed25519 signature over
-  `NeoTape-frame\0 || frame_hash`.
-- In the writing pipeline, a verifying writer may authenticate the archiver by
-  checking a signature over `NeoTape-auth\0 || nonce` before it accepts frames.
-- Authoritative signed-frame validation in the reading pipeline remains the
-  extractor's responsibility.

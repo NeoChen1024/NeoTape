@@ -20,12 +20,18 @@ A slice is a writer-declared content grouping, identified by `slice_seq_num`. A 
 
 ```
 Slice[k] =
-    (optional) ch_metadata.group[k] + ch_content.group[k]
+    [ ch_metadata.run ] + payload_area
 ```
 
-Where each group is zero or more frames in the same channel. At least one frame must be present across all channels.
+```text
+payload_area =
+    one or more ch_content runs
+    with optional ch_fec runs immediately following protected content runs
+```
 
-Each slice MAY contain at most one contiguous `ch_metadata` group and at most one contiguous `ch_content` group. Metadata, when present, precedes content. A slice MAY contain only metadata (a metadata-only slice).
+At least one frame must be present across all channels. Each slice MAY contain at most one contiguous `ch_metadata` run. Metadata, when present, precedes all non-metadata frames. A slice MAY contain only metadata (a metadata-only slice).
+
+After the optional leading metadata run, the writer emits one or more `ch_content` frames. It MAY then emit one or more `ch_fec` frames describing a protected contiguous range of the immediately preceding `ch_content` stream, and later resume `ch_content` again within the same slice. This relaxed grammar allows repeated local FEC runs such as `32C + 4F`, `32C + 4F`, `32C + 4F` within a single slice.
 
 A slice MAY span multiple archive volumes. Sequence continuity is maintained across volume boundaries: `global_frame_seq_num`, `slice_seq_num`, and `channel_frame_seq_num` do not reset at a volume boundary.
 
@@ -37,37 +43,46 @@ The `channel_type` field identifies the frame's channel:
 | ----- | --------------- | ------------------------------------------------------------ |
 | 1     | `ch_content`  | Payload bytes belonging to the slice content stream.         |
 | 2     | `ch_metadata` | Advisory metadata bytes for the slice.                       |
+| 3     | `ch_fec`      | FEC repair symbols for protected `ch_content` ranges.        |
 | 255   | `archive_end` | Clean end-of-archive marker.                                 |
 
-Values 0, 3–254 are reserved for future channels. A reader that encounters an unknown `channel_type` MUST reject the archive in normal restore mode.
+Values 0 and 4–254 are reserved for future channels. Validation behavior for
+unknown channels is defined in [docs/spec/05-validation.md](05-validation.md).
 
-A normal payload reader (e.g. `neotape restore`) MUST emit only `ch_content` frame payload bytes. It MUST NOT emit `ch_metadata` bytes to stdout.
+A normal payload reader (e.g. `neotape restore`) MUST emit only `ch_content` frame payload bytes. It MUST NOT emit `ch_metadata` or `ch_fec` bytes to stdout.
 
-`ch_metadata` frames are advisory in normal restore mode:
+`ch_metadata` frames are advisory in normal restore mode. The restore-mode
+exception for already-identified `ch_metadata` validation failures is defined
+in [docs/spec/05-validation.md](05-validation.md).
 
-- A payload reader or restore-mode server MUST NOT reject a slice or archive
-  solely because a frame already identified as `ch_metadata` is missing or
-  unusable, as long as record framing, archive identity, and sequence
-  continuity remain unambiguous.
-- If a `ch_metadata` frame fails `frame_hash` verification but its header and
-  surrounding sequence remain parseable enough to preserve archive identity
-  and ordering, the reader SHOULD log a warning and continue.
+`ch_fec` frames are also advisory in normal restore mode:
+
+- A normal payload reader MAY verify and skip `ch_fec` frames, but it MUST NOT
+  emit their payload bytes.
+- A repair-capable reader MAY buffer `ch_content` plus `ch_fec` for one FEC
+  group and reconstruct missing or damaged content before emission, subject to
+  the FEC verification rules in [docs/spec/05-validation.md](05-validation.md).
 
 ## Channel Group Boundaries
 
-- `channel_frame_seq_num = 0` — first frame of a channel group within the slice.
-- `END` — final frame of a channel group within the slice.
+- `channel_frame_seq_num = 0` — first frame of that channel within the slice.
+- `END` — final frame of that channel within the slice.
 
-These rules apply to the current `channel_type` group:
+These rules apply to the current `channel_type` stream within the slice:
 
 | `channel_frame_seq_num` | END | Meaning                                     |
 | ----------------------- | --- | ------------------------------------------- |
-| `0`                     | `0` | First frame of a multi-frame channel group. |
-| `0`                     | `1` | Single-frame channel group.                 |
+| `0`                     | `0` | First frame of a multi-frame channel stream. |
+| `0`                     | `1` | Single-frame channel stream.                 |
 | `>0`                    | `0` | Continuation frame.                         |
-| `>0`                    | `1` | Final frame of a multi-frame channel group. |
+| `>0`                    | `1` | Final frame of a multi-frame channel stream. |
 
 The `archive_end` frame sets `END = 1`, `CLEAN_END = 1`, and `channel_frame_seq_num = 0`.
+
+For the local `32C + 4F` layout, `END` does not mark the end of each FEC
+group. It marks the final `ch_fec` frame of the slice. Likewise, the final
+`ch_content` frame of the slice carries `END` for `ch_content`, even if
+earlier content runs were already followed by FEC frames.
 
 ## Per-Frame Integrity
 
@@ -77,20 +92,22 @@ Each frame is individually integrity-checked by `frame_hash`, a BLAKE3 digest ov
 
 - `global_frame_seq_num` — starts at 0 and increments by 1 for every frame in the archive, including `archive_end`. Does not reset at volume boundaries.
 - `slice_seq_num` — starts at 0 for the first slice, increments by 1 for each new slice. All frames in the same slice carry the same value, even across volumes. `archive_end` uses the canonical control-frame value `0`.
-- `channel_frame_seq_num` — scoped to `(slice_seq_num, channel_type)`. Starts at 0 for each channel group, increments only within that channel. Resets when a new channel group or new slice starts. `archive_end` uses the canonical control-frame value `0`.
+- `channel_frame_seq_num` — scoped to `(slice_seq_num, channel_type)`. Starts at 0 on the first frame of that channel in the slice, increments only within that channel, and does not reset merely because a different channel appears later in the same slice. `archive_end` uses the canonical control-frame value `0`.
 
 All three are `uint64`. The reader validates that sequence numbers are contiguous within their scope.
+The authoritative continuity rules are defined in
+[docs/spec/05-validation.md](05-validation.md).
 
 ## Metadata Channel Ordering
 
-Within each slice, metadata frames MUST precede content frames. Writers MUST NOT place `ch_metadata` after `ch_content` within the same slice. `channel_frame_seq_num` is scoped per-channel and does not continue across `ch_metadata` and `ch_content`.
+Within each slice, metadata frames MUST precede all non-metadata frames. Writers MUST NOT place `ch_metadata` after `ch_content` or `ch_fec` within the same slice. `ch_fec` frames MUST describe a protected contiguous range of prior `ch_content` from the same slice and MUST NOT appear before the first `ch_content` frame. `channel_frame_seq_num` is scoped per-channel and does not continue across different `channel_type` values.
 
 ## Slice Completion
 
 The writer decides when to close a slice. When it closes:
 
-1. The current frame becomes the final frame for its channel group and carries the `END` flag.
-2. The writer MAY follow with `ch_metadata` frames only if the current group was metadata (i.e., no `ch_content` frames were written yet).
+1. The current frame becomes the final frame for its channel and carries the `END` flag.
+2. The writer MUST NOT follow with `ch_metadata` frames once any `ch_content` or `ch_fec` frame has been written in that slice.
 3. After all frames are committed, the writer writes a filemark to close the slice tape file.
 
 ## Archive End Frame
