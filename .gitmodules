@@ -4,3 +4,6 @@
 [submodule "3rdparty/signify"]
 	path = 3rdparty/signify
 	url = https://github.com/aperezdc/signify.git
+[submodule "3rdparty/isa-l"]
+	path = 3rdparty/isa-l
+	url = https://github.com/intel/isa-l.git
