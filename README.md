@@ -27,6 +27,9 @@ source archiver over TCP or Unix-domain sockets before it touches media.
 ## Specification Status
 
 The active format specification lives under [`docs/spec/`](docs/spec/).
+The current FEC channel and profile specification lives in
+[`docs/spec/04-fec-channel.md`](docs/spec/04-fec-channel.md), with shared
+conformance rules in [`docs/spec/05-validation.md`](docs/spec/05-validation.md).
 
 ## Hierarchy
 
@@ -70,14 +73,15 @@ block-size change within a volume as a format error.
 | 6     | Frame inspect / compliance         | Done   |
 | 7     | Recovery & salvage                 | Spec   |
 | 8     | Optional BOT recovery bundle       | Spec   |
+| 9     | Optional FEC repair channel        | Spec   |
 
 See [`docs/spec/`](docs/spec/) for the active format specification and [`docs/implementation/`](docs/implementation/) for
 implementation-specific notes (mt-pax architecture, build notes).
 
 Optional signify-compatible frame signing, signed-frame verification, and
 writer-side source authentication are implemented. See
-[`docs/spec/06-security.md`](docs/spec/06-security.md) and
-[`docs/spec/11-tcp-protocol.md`](docs/spec/11-tcp-protocol.md).
+[`docs/spec/09-security.md`](docs/spec/09-security.md) and
+[`docs/spec/08-tcp-protocol.md`](docs/spec/08-tcp-protocol.md).
 
 ## Dependencies
 
@@ -98,12 +102,18 @@ git submodule update --init --recursive
 ```sh
 make -j "$(nproc)"
 make test
+make bot_bundle
 ```
 
 Produces `bin/mt-pax`, `bin/neotape-plan`, `bin/neotape-archiver`,
 `bin/neotape-raw-store`, `bin/neotape-write`, `bin/neotape-read`,
 `bin/neotape-extractor`, `bin/neotape-inspect`, `bin/neotape-scan`, and test
 binaries.
+
+`make bot_bundle` writes `output/bot.tar`, a recovery bundle containing the
+current repository working tree plus checked-out `3rdparty/` submodules, with
+compiled build artifacts excluded. See
+[`docs/implementation/recovery-bundle.md`](docs/implementation/recovery-bundle.md).
 
 ## Usage
 

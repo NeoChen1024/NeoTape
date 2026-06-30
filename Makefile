@@ -10,6 +10,8 @@ EXE	= bin/mt-pax bin/neotape-plan bin/test_pax_pipeline bin/test_tcp_protocol bi
 BINDIR	= bin
 LIBDIR	= lib
 BUILDDIR= build
+OUTPUTDIR= output
+BOT_BUNDLE = $(OUTPUTDIR)/bot.tar
 # All .o are built from src/*.cpp via the pattern rule below.
 # Header dependencies are listed where they matter.
 
@@ -20,7 +22,7 @@ CLANG_FORMAT ?= clang-format
 SRC_FILES = $(wildcard src/*.cpp include/neotape/*.hpp)
 CLANG_TIDY ?= clang-tidy
 
-.PHONY: all clean countline fix test test_pax_cli compile_commands
+.PHONY: all clean countline fix test test_pax_cli compile_commands bot_bundle
 
 compile_commands.json:
 	python3 scripts/gen_compile_commands.py
@@ -29,7 +31,7 @@ compile_commands: compile_commands.json
 
 all: ${EXE}
 
-$(BINDIR) $(LIBDIR) $(BUILDDIR) $(BUILDDIR)/blake3:
+$(BINDIR) $(LIBDIR) $(BUILDDIR) $(BUILDDIR)/blake3 $(OUTPUTDIR):
 	mkdir -p $@
 
 src/%.o : src/%.cpp
@@ -105,6 +107,19 @@ test: $(BINDIR)/test_pax_pipeline $(BINDIR)/test_tcp_protocol $(BINDIR)/test_for
 test_pax_cli: $(BINDIR)/mt-pax
 	sh tests/smoke_mt_pax_pipeline.sh
 
+bot_bundle: $(BOT_BUNDLE)
+
+$(BOT_BUNDLE): | $(OUTPUTDIR)
+	tar -cf $@ \
+		--exclude-vcs \
+		--exclude='./bin' \
+		--exclude='./build' \
+		--exclude='./output' \
+		--exclude='./compile_commands.json' \
+		--exclude='*.o' \
+		--exclude='*.a' \
+		.
+
 $(BINDIR)/% : src/%.c $(B3LIB) | $(BINDIR)
 	$(CC) $(CFLAGS) $< -o $@ $(LDLIBS)
 
@@ -115,4 +130,4 @@ fix:
 	$(CLANG_TIDY) --fix $(SRC_FILES) -- $(CXXFLAGS)
 	$(CLANG_FORMAT) -i $(SRC_FILES)
 clean:
-	-rm -f ${EXE} ${BINDIR}/*.o src/*.o tests/*.o $(B3LIB) $(B3OBJ) $(SIGNIFYLIB) $(SIGNIFYOBJ)
+	-rm -f ${EXE} ${BINDIR}/*.o src/*.o tests/*.o $(B3LIB) $(B3OBJ) $(SIGNIFYLIB) $(SIGNIFYOBJ) $(BOT_BUNDLE)
