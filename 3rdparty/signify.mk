@@ -1,6 +1,6 @@
 SIGNIFYDIR = 3rdparty/signify
 SIGNIFYLIB = $(LIBDIR)/libsignify.a
-SIGNIFYFLAGS = -I$(SIGNIFYDIR) -isystem $(SIGNIFYDIR)/libbsd/bsd \
+SIGNIFYFLAGS = -Iinclude/signify -isystem include/signify/libbsd/bsd \
 	       -include $(SIGNIFYDIR)/compat.h -DLIBBSD_OVERLAY \
 	       -DBUNDLED_BZERO -Dtypeof=__typeof__
 SIGNIFYSRC = \

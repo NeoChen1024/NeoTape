@@ -5,9 +5,9 @@
 extern "C" {
 #define b64_pton __b64_pton
 #define b64_ntop __b64_ntop
-#include "base64.h"
-#include "compat.h"
-#include "sha2.h"
+#include "signify/base64.h"
+#include "signify/compat.h"
+#include "signify/sha2.h"
 #undef b64_ntop
 #undef b64_pton
 }
