@@ -92,10 +92,20 @@ breaking frame/slice sequence continuity.
 | 0    | `END`       | Last frame of the current channel within the slice.                                                    |
 | 1    | `SIGNED`    | `signature` contains an 8-byte key ID plus Ed25519 signature over `NeoTape-frame\0 \|\| frame_hash`. |
 | 2    | `SIDEBAND`  | `sideband_data` carries meaningful, channel-type-defined data. MUST be set for `ch_fec` and clear for `ch_content`, `ch_metadata`, and `archive_end` in `header_version=1`; when clear, `sideband_data` MUST be all zero. |
-| 3-62 | _reserved_  | Must be zero.                                                                                          |
+| 3    | `FEC_PROTECTED` | Only valid on `ch_content`. Marks this frame as real protected source material for a following `ch_fec` group. |
+| 4-62 | _reserved_  | Must be zero.                                                                                          |
 | 63   | `CLEAN_END` | Only valid for`archive_end`. Must be `1` on a valid end-of-archive frame.                          |
 
 The `archive_end` control frame sets `END = 1`, and `CLEAN_END = 1`.
+
+`FEC_PROTECTED` semantics:
+
+- `FEC_PROTECTED` MAY be set only on `ch_content` frames.
+- `ch_metadata`, `ch_fec`, and `archive_end` MUST clear `FEC_PROTECTED`.
+- When set, the frame is real protected source material in a following
+  `ch_fec` group.
+- When clear, the frame is not protected by `ch_fec`, and no later `ch_fec`
+  frame may claim it as protected source material.
 
 ## Channel Semantics
 
@@ -106,6 +116,26 @@ The `archive_end` control frame sets `END = 1`, and `CLEAN_END = 1`.
 - A slice MAY contain only metadata. Such a slice has one or more `ch_metadata` frames and no `ch_content` frames.
 - Each slice MAY contain at most one contiguous `ch_metadata` run. `ch_content` and `ch_fec` need not be physically contiguous: after metadata, the writer MAY alternate repeated content runs and FEC runs within the same slice. The preferred layout for the defined FEC profile is repeated local `32C + 4F` runs.
 - `ch_fec` frames describe protected `ch_content` ranges within the same slice. They MUST NOT appear before the first `ch_content` frame of that slice.
+- A protected content run is a contiguous run of `ch_content` frames with
+  `FEC_PROTECTED = 1` that is described by one immediately following `ch_fec`
+  group.
+- A writer MUST immediately follow each protected content run with one matching
+  `ch_fec` group. No later `ch_content` frame may appear before that group's
+  `ch_fec` frames.
+- For each `ch_fec` group, `source_content_frame_start` MUST equal the
+  `channel_frame_seq_num` of the first frame in the protected run.
+- For each `ch_fec` group, `source_frame_count` MUST equal the number of real
+  `ch_content` frames in the protected run.
+- Every real `ch_content` frame in the protected range described by a `ch_fec`
+  group MUST have `FEC_PROTECTED = 1`.
+- Within one slice, a writer that starts emitting `FEC_PROTECTED = 1`
+  `ch_content` frames MUST continue using protected runs for all later
+  `ch_content` frames in that slice. It MUST NOT switch later content frames in
+  the same slice back to `FEC_PROTECTED = 0`.
+- Within one archive, if any `ch_content` frame uses `FEC_PROTECTED = 1`, a
+  conforming writer MUST use the same protected-run discipline for all later
+  `ch_content` frames in the archive, except that a slice may contain no
+  `ch_content` at all.
 - `channel_frame_seq_num` is scoped to `(slice_seq_num, channel_type)`. It starts at 0 on the first frame of that channel in the slice and increments only within that channel, even if frames of other channels appear in between. The sequence does not continue across different `channel_type` values.
 
 ### `archive_end`

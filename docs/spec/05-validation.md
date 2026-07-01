@@ -75,6 +75,7 @@ Specifically:
   zero-filled `sideband_data`.
 - `ch_fec` MUST have `SIDEBAND = 1` and a valid descriptor per
   [04-fec-channel.md](04-fec-channel.md).
+- `FEC_PROTECTED` MUST be rejected on any non-`ch_content` frame.
 - `archive_end` is the only frame type allowed to set `CLEAN_END`.
 
 ## Archive Identity Validation
@@ -116,6 +117,15 @@ Within each slice, the validator MUST enforce:
 - `ch_fec` MUST NOT appear before the first `ch_content` frame of that slice
 - `ch_fec` MUST describe a protected contiguous range of prior `ch_content`
   within the same slice
+- A `FEC_PROTECTED` run MUST be a contiguous run of `ch_content` frames
+- Each `FEC_PROTECTED` run MUST be immediately followed by one matching
+  `ch_fec` group for the active FEC profile
+- No later `ch_content` frame may appear before that matching `ch_fec` group
+- Once a slice starts using `FEC_PROTECTED = 1` on `ch_content`, later
+  `ch_content` frames in the same slice MUST NOT revert to `FEC_PROTECTED = 0`
+- Once an archive starts using `FEC_PROTECTED = 1` on `ch_content`, later
+  slices that contain `ch_content` MUST NOT revert to entirely unprotected
+  `ch_content`
 
 Under the local `32C + 4F` layout, `ch_content` and `ch_fec` MAY be physically
 interleaved as repeated runs within the slice. This does not reset
@@ -189,6 +199,19 @@ A repair-capable validator MUST additionally check:
 - Agreement among all FEC frames in one group on group parameters and
   `fec_group_blake3`
 - `repair_index` range for the active FEC profile
+- Reject `ch_fec` that describes any `ch_content` frame without
+  `FEC_PROTECTED = 1`
+- `source_content_frame_start` matches the `channel_frame_seq_num` of the first
+  frame in the immediately preceding protected run
+- `source_frame_count` matches the number of real `ch_content` frames in that
+  protected run
+- Reject duplicate `repair_index` values within one group
+- Reject missing or non-continuous `repair_index` values within one group, as
+  defined by the active FEC profile
+- Profile-specific group-size rules MUST be enforced. For `rs_32_4`, reject a
+  `FEC_PROTECTED` run longer than 32 real `ch_content` frames, and reject a
+  matching group unless it contains exactly four `ch_fec` frames with
+  `repair_index = 0, 1, 2, 3`
 
 A repaired FEC group MUST NOT be accepted unless:
 
