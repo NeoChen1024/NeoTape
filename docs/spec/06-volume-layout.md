@@ -108,7 +108,11 @@ Archive End frame
 filemark
 ```
 
-If EOT interrupts a slice tape file, the next volume continues the interrupted slice in a new tape file, starting with the next uncommitted frame. Only frames whose complete fixed header and payload bytes were fully committed before EOT are considered present.
+If EOT interrupts a slice tape file, the next volume continues the interrupted
+slice in a new tape file. If EOT interrupted a NeoTape record, that partial
+record is not committed and the next volume rewrites the same frame from byte
+zero. Otherwise the next volume starts with the next uncommitted frame. Only
+complete records successfully committed before EOT are considered present.
 
 A slice MAY span backend volumes. `global_frame_seq_num`, `slice_seq_num`, and `channel_frame_seq_num` continuity do not reset at a backend volume boundary.
 
@@ -135,14 +139,20 @@ Each archive instance is independent with its own `archive_uuid`. A reader locat
 
 ## Frame Model
 
-A slice consists of one or more frames across one, two, or three channels:
+A slice consists of one or more frames in either metadata-only or payload form:
 
 ```
-Slice[k] =
-    [ ch_metadata.Frame[0].payload + ... + ch_metadata.Frame[M-1].payload ] +
-    one or more ch_content payload runs +
-    optional ch_fec repair runs for preceding content ranges
+metadata-only Slice[k] =
+    one or more ch_metadata frames
+
+payload Slice[k] =
+    [ one leading ch_metadata run ] +
+    one or more ch_content frames +
+    optional ch_fec repair groups immediately following protected content runs
 ```
+
+The complete normative slice grammar is defined in
+[03-frames-and-slices.md](03-frames-and-slices.md).
 
 Each frame occupies exactly one NeoTape record. The frame header declares `frame_payload_size`. The reader reads exactly that many payload bytes; the remaining bytes in the record are zero padding.
 
@@ -157,7 +167,27 @@ The `archive_end` frame sets `END = 1`, and `CLEAN_END = 1`.
 
 When the writer encounters EOT (physical end of tape) or reaches the configured virtual tape capacity limit:
 
-1. **Frame not yet committed:** The frame is considered not created. The next volume writes the same frame fresh.
-2. **Frame committed, payload partially written:** The frame is incomplete. The next volume continues with the next uncommitted frame for the same slice.
-3. **END frame committed, slice-level filemark not yet written:** The slice is complete. The next volume proceeds to the next slice or Archive End frame.
-4. **Archive End frame not yet committed:** The archive is not cleanly complete. The next volume completes remaining slices, then writes the Archive End frame.
+1. **Frame write incomplete or not committed:** A frame is committed only when
+   its complete `volume_block_size_kib * 1024`-byte NeoTape record has been
+   successfully written. A partial record is not part of the archive. The next
+   volume MUST write the same logical frame again from byte zero. Its
+   `archive_uuid`, `global_frame_seq_num`, `slice_seq_num`,
+   `channel_frame_seq_num`, channel semantics, and payload content remain the
+   same. Volume-scoped or advisory fields such as `volume_seq_num` MUST describe
+   the new volume, and `frame_hash` and `signature` MUST be recomputed for the
+   resulting canonical frame image.
+2. **Frame committed:** The next volume continues with the next frame. A
+   committed frame MUST NOT be repeated merely because a following filemark
+   could not be written.
+3. **END frame committed, slice-level filemark not yet written:** The logical
+   slice frame stream is complete. The next volume proceeds to the next slice
+   or Archive End frame. The missing filemark is a media-layout anomaly.
+4. **Archive End frame not yet committed:** The archive is not cleanly complete.
+   The next volume writes the same Archive End frame.
+5. **Archive End frame committed, trailing filemark not yet written:** The valid
+   Archive End frame remains the authoritative logical completion marker. The
+   missing trailing filemark is a media-layout conformance failure but does not
+   make the already validated archive payload incomplete.
+
+In the TCP writing pipeline, the Writer MUST send `ack_frame` only after the
+complete record has been successfully committed to the target backend.

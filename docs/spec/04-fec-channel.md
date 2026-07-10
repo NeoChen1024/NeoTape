@@ -117,10 +117,17 @@ the same protected source shards.
 
 A full group uses `source_frame_count = 32`.
 
+For this profile:
+
+```text
+fec_shard_size = volume_block_size_kib * 1024 - 512
+```
+
 For a shortened final group with `source_frame_count = s`, where `1 <= s <= 32`:
 
-- data shard positions `0..s-1` are real `ch_content` payload shards;
-- data shard positions `s..31` are virtual all-zero shards;
+- data shard positions `0..s-1` are real `ch_content` payload shards, each
+  zero-padded at the end to `fec_shard_size` when its payload is shorter;
+- data shard positions `s..31` are synthetic virtual all-zero shards;
 - repair shard positions `32..35` are computed from all 32 data shard positions;
 - only the `s` real content shards and 4 repair shards are emitted on media.
 
@@ -141,7 +148,20 @@ payloads in `ch_content` order:
 ```text
 fec_source_stream =
     Cg0.payload || Cg1.payload || ... || CgN.payload
+
+source_stream_size =
+    sum(frame_payload_size of all real ch_content frames in the group)
 ```
+
+For `source_frame_count = s`, the descriptor MUST satisfy:
+
+```text
+(s - 1) * fec_shard_size <= source_stream_size <= s * fec_shard_size
+```
+
+Only the final real data shard may be shorter than `fec_shard_size`; its tail
+is zero-filled for FEC encoding. This zero fill is not part of the protected
+source stream.
 
 The group-level commitment is:
 
@@ -149,15 +169,16 @@ The group-level commitment is:
 fec_group_blake3 = BLAKE3(fec_source_stream[0:source_stream_size])
 ```
 
-Virtual zero padding used to fill FEC symbols is part of the encoder/decoder
-only. It is not emitted by readers and is not included in `source_stream_size`
-or in `fec_group_blake3`.
+Zero padding used to fill a short real shard and synthetic virtual-zero shards
+are part of the encoder/decoder only. They are not emitted by readers and are
+not included in `source_stream_size` or in `fec_group_blake3`.
 
 For a shortened final group with `source_frame_count = s`, where `1 <= s <= 32`,
 data shard positions `0..s-1` are the protected `ch_content` payloads, and
-data shard positions `s..31` are virtual all-zero shards used only by the
-encoder and decoder. The virtual shards are not emitted as `ch_content` frames
-and are not included in `source_stream_size` or `fec_group_blake3`.
+data shard positions `s..31` are synthetic virtual all-zero shards used only by
+the encoder and decoder. The virtual shards are not emitted as `ch_content`
+frames, do not participate in frame sequence numbering, and are not included
+in `source_stream_size` or `fec_group_blake3`.
 
 Repair shard positions are `32 + repair_index`, where `repair_index` is in
 `0..3`. All repair shards MUST be computed from the fixed 32 data shard
@@ -182,8 +203,11 @@ backend-neutral procedure, equivalent to the one commonly used with ISA-L, is:
   NeoTape frame validation;
 - preserve all valid real `ch_content` shards as authoritative and reconstruct
   only missing real `ch_content` shards;
-- collect surviving shard positions from `0..35` in shard-position order;
-- choose any deterministic set of 32 surviving positions whose generator rows
+- treat every synthetic virtual-zero position `s..31` as a known all-zero data
+  shard that MAY be included in the decode basis without frame validation;
+- collect known real, synthetic virtual-zero, and repair shard positions from
+  `0..35` in shard-position order;
+- choose any deterministic set of 32 known positions whose generator rows
   form an invertible `32x32` matrix over GF(2^8);
 - invert that matrix;
 - for each missing data shard position `d in 0..31`, use row `d` of the
@@ -195,7 +219,10 @@ data shard bytes as the matrix arithmetic above. Extra valid surviving shards
 that were not selected into the decode basis MAY be used for post-recovery
 consistency cross-checks, but are not required for decoding. Reconstructed
 repair shards do not need to be emitted; only missing real `ch_content` data
-shards are output candidates.
+shards are output candidates. After reconstruction, the implementation MUST
+concatenate the real data shards, truncate the result to `source_stream_size`,
+and verify `fec_group_blake3`. If that verification fails, the repaired group
+MUST be rejected and no partial reconstructed output may be emitted.
 
 Golden sample test vectors for this profile will be published under:
 

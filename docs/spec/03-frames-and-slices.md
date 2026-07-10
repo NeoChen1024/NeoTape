@@ -16,20 +16,25 @@ Each Frame occupies exactly one NeoTape record (`volume_block_size_kib * 1024` b
 
 ## Slices and Channels
 
-A slice is a writer-declared content grouping, identified by `slice_seq_num`. A slice consists of one or more frames partitioned into channels:
-
-```
-Slice[k] =
-    [ ch_metadata.run ] + payload_area
-```
+A slice is a writer-declared content grouping, identified by `slice_seq_num`.
+A slice consists of one or more frames in one of two forms:
 
 ```text
-payload_area =
-    one or more ch_content runs
-    with optional ch_fec runs immediately following protected content runs
+slice = metadata_only_slice | payload_slice
+
+metadata_only_slice =
+    one or more ch_metadata frames
+
+payload_slice =
+    [ one or more leading ch_metadata frames ]
+    + one or more ch_content frames
+    + optional ch_fec groups immediately following protected content runs
 ```
 
-At least one frame must be present across all channels. Each slice MAY contain at most one contiguous `ch_metadata` run. Metadata, when present, precedes all non-metadata frames. A slice MAY contain only metadata (a metadata-only slice).
+At least one frame must be present across all channels. Each slice MAY contain
+at most one contiguous `ch_metadata` run. Metadata, when present, precedes all
+non-metadata frames. A metadata-only slice MUST NOT contain `ch_content` or
+`ch_fec`; a payload slice MUST contain at least one `ch_content` frame.
 
 After the optional leading metadata run, the writer emits one or more `ch_content` frames. It MAY then emit one or more `ch_fec` frames describing a protected contiguous range of the immediately preceding `ch_content` stream, and later resume `ch_content` again within the same slice. This relaxed grammar allows repeated local FEC runs such as `32C + 4F`, `32C + 4F`, `32C + 4F` within a single slice.
 
@@ -106,9 +111,15 @@ Within each slice, metadata frames MUST precede all non-metadata frames. Writers
 
 The writer decides when to close a slice. When it closes:
 
-1. The current frame becomes the final frame for its channel and carries the `END` flag.
-2. The writer MUST NOT follow with `ch_metadata` frames once any `ch_content` or `ch_fec` frame has been written in that slice.
-3. After all frames are committed, the writer writes a filemark to close the slice tape file.
+1. The final frame of every channel present in the slice carries `END`. With
+   interleaved channels, a channel's final frame may occur before the final
+   physical frame of the slice.
+2. The writer MUST NOT emit another frame for a channel after that channel has
+   reached `END`.
+3. The writer MUST NOT follow with `ch_metadata` frames once any `ch_content`
+   or `ch_fec` frame has been written in that slice.
+4. After all frames are committed, the writer writes a filemark to close the
+   slice tape file.
 
 ## Archive End Frame
 

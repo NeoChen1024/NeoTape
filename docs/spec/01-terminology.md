@@ -34,7 +34,11 @@ NeoTape uses tape files for coarse seekable boundaries such as slice tape files 
 
 A writer-declared content grouping, identified by `slice_seq_num`.
 
-Each slice consists of zero or more leading `ch_metadata` frames followed by one or more non-metadata runs. Those later runs always carry `ch_content` and MAY also carry interleaved `ch_fec` repair frames for the preceding content range. At least one frame must be present. Metadata, when present, MUST precede all `ch_content` and `ch_fec` frames. A slice MAY contain only metadata and MAY span backend volumes.
+A slice is either a metadata-only slice containing one or more `ch_metadata`
+frames, or a payload slice containing optional leading `ch_metadata` followed
+by one or more `ch_content` frames and optional matching `ch_fec` groups.
+At least one frame must be present. Metadata, when present, MUST precede all
+`ch_content` and `ch_fec` frames. A slice MAY span backend volumes.
 
 ### Frame
 
@@ -91,6 +95,18 @@ Frame flag indicating the last frame of a channel within a slice.
 
 Frame flag indicating that `signature` contains a binary signify-style signature over the domain-separated message `NeoTape-frame\0 || frame_hash`.
 
+### SIDEBAND
+
+Frame flag indicating that `sideband_data` contains meaningful
+channel-type-specific data. In `header_version = 1`, it is required for
+`ch_fec` and prohibited for `ch_content`, `ch_metadata`, and `archive_end`.
+
+### FEC_PROTECTED
+
+Frame flag valid only on `ch_content`. It identifies the frame as real
+protected source material for an immediately following matching `ch_fec`
+group. Exact group-size and repair rules are defined by the active FEC profile.
+
 ### CLEAN_END
 
 Frame flag indicating a clean archive end. Only valid for `archive_end`
@@ -133,16 +149,20 @@ BLAKE3 hash computed over the canonical image of the entire frame (`volume_block
 
 ## Encoding Rules
 
-### Timestamp Format
+### Fixed Timestamp Format
 
-NeoTape timestamp fields (for example in plan metadata records or future
-metadata streams) use UTC, encoded as exactly 20 bytes:
+Fields explicitly defined as using the NeoTape fixed timestamp encoding use
+UTC, encoded as exactly 20 bytes:
 
 ```text
 YYYY-MM-DDTHH:MM:SS\0
 ```
 
-19 ASCII bytes matching `strftime("%Y-%m-%dT%H:%M:%S")` followed by one NUL byte. No timezone suffixes, fractional seconds, or locale-specific text. The unified Frame Header does not contain timestamp fields.
+19 ASCII bytes matching `strftime("%Y-%m-%dT%H:%M:%S")` followed by one NUL
+byte. No timezone suffixes, fractional seconds, or locale-specific text. This
+rule does not apply to fields explicitly defined with another representation,
+such as plan metadata `<mtime>`. The unified Frame Header does not contain
+timestamp fields.
 
 ### nt_uuid
 
@@ -201,8 +221,8 @@ Fields repeated across every frame:
 ### Channel and Flag Names
 
 `channel_type` selects the role of the current frame (`ch_content`,
-`ch_metadata`, `ch_fec`, or `archive_end`). `flags` carries per-frame state such
-as `END`, `SIGNED`, `SIDEBAND`, and `CLEAN_END`.
+`ch_metadata`, `ch_fec`, or `archive_end`). `flags` carries per-frame state:
+`END`, `SIGNED`, `SIDEBAND`, `FEC_PROTECTED`, and `CLEAN_END`.
 
 For the authoritative enum values and bit assignments, see
 [02-frame-header.md](02-frame-header.md).

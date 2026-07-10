@@ -147,9 +147,13 @@ Empty fixed-field values are encoded as follows:
 
 `frame_hash` calculations over fixed fields MUST include every fixed field byte, including empty values and reserved fields. `signature` and `frame_hash` are treated as zero for hash calculation.
 
-## Timestamp Format
+## Fixed Timestamp Format
 
-NeoTape timestamp fields (for example in plan metadata or spool manifests) MUST use UTC and MUST be encoded as a 20-byte NUL-terminated string.
+Fields explicitly defined as using the NeoTape fixed timestamp encoding MUST
+use UTC and MUST be encoded as a 20-byte NUL-terminated string. This rule does
+not apply to fields whose defining chapter specifies another representation,
+such as the decimal Unix timestamp `<mtime>` field in
+[10-plan-metadata.md](10-plan-metadata.md).
 
 The timestamp text before the NUL byte MUST match this exact `strftime` format:
 
@@ -163,4 +167,8 @@ This is exactly 19 ASCII bytes followed by one NUL byte:
 YYYY-MM-DDTHH:MM:SS\0
 ```
 
-Writers MUST NOT use timezone suffixes, numeric offsets, fractional seconds, locale-specific text, RFC 3339 variants, ISO 8601 variants, or any other date format. The unified Frame Header defined in [docs/spec/02-frame-header.md](02-frame-header.md) does not contain timestamp fields.
+For fields using this fixed encoding, writers MUST NOT use timezone suffixes,
+numeric offsets, fractional seconds, locale-specific text, RFC 3339 variants,
+ISO 8601 variants, or any other date format. The unified Frame Header defined
+in [docs/spec/02-frame-header.md](02-frame-header.md) does not contain timestamp
+fields.

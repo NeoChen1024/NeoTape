@@ -25,7 +25,7 @@ The catalog is an advisory index, not authoritative metadata. Readers MUST:
 
 BLAKE3 (`frame_hash`) is used for per-frame integrity verification, not authentication.
 
-The `signature` field (72 bytes) holds an 8-byte key ID plus a 64-byte Ed25519 signature over the domain-separated message `NeoTape-frame\0 || frame_hash`. The context string includes its trailing NUL byte. When the `SIGNED` flag is set, the signature provides authenticity and tamper resistance. When the flag is clear, the entire `signature` field MUST be zero.
+The `signature` field (72 bytes) holds an 8-byte key ID plus a 64-byte Ed25519 signature over the domain-separated message `NeoTape-frame\0 || frame_hash`. The context string includes its trailing NUL byte. When the `SIGNED` flag is set and the signature verifies against a trusted public key, it provides authenticity and tamper resistance. When the flag is clear, the entire `signature` field MUST be zero. The validation modes and their accept/reject rules are defined in [05-validation.md](05-validation.md).
 
 ## Executable Content
 
@@ -41,17 +41,26 @@ When restoring payload bytes through a downstream tool (e.g. bsdtar), path safet
 
 ## Transport Security
 
-The NeoTape TCP protocol ([`08-tcp-protocol.md`](08-tcp-protocol.md)) provides no
-authentication, encryption, replay defense, or peer identity verification.
-It is designed for localhost or trusted LAN deployments (2.5 Gbps minimum;
-typical target 10 Gbps or higher).
+The NeoTape TCP protocol ([`08-tcp-protocol.md`](08-tcp-protocol.md)) is
+plaintext and provides no confidentiality. Its base mode provides no peer
+authentication. The optional challenge-response mode provides one-way
+Archiver authentication to a Writer configured with a trusted public key, but
+does not provide client authentication.
 
 When signed frames are used ([`SIGNED` flag](02-frame-header.md) with
-[Ed25519 signature](00-format-common.md) over `NeoTape-frame\0 || frame_hash`), **integrity
-and authenticity are protected at the frame level** — a tampered frame
+[Ed25519 signature](00-format-common.md) over
+`NeoTape-frame\0 || frame_hash`) and verified against a trusted public key,
+integrity and authenticity are protected at the frame level. A tampered frame
 will fail verification regardless of transport.
 
-When a deployment requires confidentiality or peer authentication,
+Challenge-response uses a fresh nonce to prevent replay of an old
+`auth_response`. Frame sequence validation rejects duplication and reordering
+within the archive state being validated. Neither mechanism proves archive
+freshness or prevents replay of a complete, otherwise-valid old archive; a
+deployment requiring that property must independently enforce an expected
+`archive_uuid` or another freshness policy.
+
+When a deployment requires confidentiality or mutual peer authentication,
 the operator SHOULD tunnel the connection through an external secure
 channel such as SSH port forwarding (`ssh -L` / `ssh -R`), WireGuard,
 or a TLS proxy (e.g. stunnel).  The NeoTape wire protocol remains

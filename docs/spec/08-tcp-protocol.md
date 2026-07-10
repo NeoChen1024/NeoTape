@@ -13,8 +13,12 @@ both the writing pipeline (archiver ↔ writer) and the reading pipeline
 
 | Role | Responsibility | Long-lived? |
 |---|---|---|
-| **Server** | Owns archive state, validates frames, drives the protocol | Yes |
-| **Client** | Reads/writes raw NeoTape records from a physical medium | No (per-volume) |
+| **Server** | Owns archive-global state and drives the protocol | Yes |
+| **Client** | Reads or writes raw NeoTape records on a physical medium | No (per-volume) |
+
+The endpoint that receives a `frame_record` validates it before use. This is
+the Writer Client in the writing pipeline and the Extractor Server in the
+reading pipeline.
 
 ## Message types
 
@@ -55,17 +59,22 @@ Client→Server.  `error` is always bidirectional.
 
 ### Writing pipeline (Archiver = Server, Writer = Client)
 
-1. Writer connects → Writer sends `next_frame`
-2. Archiver responds with `frame_record` or `tape_eof` or `error`
-3. Writer thread writes record to media, then sends `ack_frame(seq)`
-4. Writer requests another `next_frame` (bounded by local output buffer)
-5. On `tape_eof` from Archiver: Writer writes a filemark and continues
+1. Writer connects. If configured with a trusted public key, it completes the
+   challenge-response exchange before opening, rewinding, or writing the target
+   medium.
+2. Writer sends `next_frame`.
+3. Archiver responds with `frame_record` or `tape_eof` or `error`.
+4. Writer validates the record, writes the complete record to media, then sends
+   `ack_frame(seq)` only after the record is committed
+5. Writer requests another `next_frame` (bounded by local output buffer)
+6. On `tape_eof` from Archiver: Writer writes a filemark and continues
    requesting frames (slice boundary).  The Archiver may send more frames
    from subsequent slices.
-6. On `archive_end` (`frame_record` with `ARCHIVE_END` channel): Writer
+7. On `archive_end` (`frame_record` with `archive_end` channel): Writer
    drains queued writes, sends final ACK, and exits zero.
-7. On physical EOT (tape drive reports write failure): Writer drains queue,
-   sends final ACK, and exits non-zero.
+8. On physical EOT (tape drive reports write failure): Writer sends ACKs only
+   for records that were completely committed. It does not acknowledge the
+   incomplete record and exits non-zero.
 
 ### Reading pipeline (Extractor = Server, Reader = Client)
 
@@ -84,58 +93,70 @@ error to stderr and exit non-zero.
 
 ## Sequence validation
 
-The Server MUST apply the shared validation rules in
-[docs/spec/05-validation.md](05-validation.md), including frame structure,
-archive identity, sequence continuity, channel ordering, and the restore-mode
-`ch_metadata` exception.
+In the writing pipeline, the Archiver maintains authoritative archive-generation
+state across Writer connections. The Writer independently validates each
+received record before committing it and validates sequence continuity
+observable within its current connection.
 
-On fatal validation failure the Server SHOULD send `error` with a
-human-readable message and close the connection.
+In the reading pipeline, the Extractor maintains authoritative validation state
+across Reader connections and validates the complete archive stream before
+emitting payload bytes. Both pipelines apply the relevant shared rules in
+[docs/spec/05-validation.md](05-validation.md).
+
+On fatal validation failure the endpoint that detected the failure SHOULD send
+`error` with a human-readable message and close the connection.
 
 ## Multi-volume
 
-The Server persists validation state across Client disconnects.  When a new
-Client connects, the first `frame_record` it sends MUST carry sequence
-numbers that continue exactly from the last validated frame.  Any gap,
-backward jump, or identity mismatch causes the Server to send `error` and
-close the connection.
+The Archiver persists archive-generation and acknowledgement state across
+Writer disconnects. The Extractor persists archive-validation state across
+Reader disconnects. In the reading pipeline, when a new Reader connects, its
+first `frame_record` MUST continue exactly from the last validated frame. Any
+gap, backward jump, or identity mismatch causes the Extractor to send `error`
+and close the connection.
 
-A volume is considered committed when the Server receives the first
-`ack_frame` from the Client — that is, after at least one frame has been
-successfully written to the physical medium and acknowledged.  If a Client
-disconnects before any `ack_frame` is received (e.g. the tape drive was not
-ready, or the Client crashed immediately), the volume is **not** committed
-and the Server reuses the same `volume_seq_num` for the next Client.
+A volume in the writing pipeline is considered committed when the Archiver
+receives the first `ack_frame` from the Writer — that is, after at least one
+frame has been successfully written to the physical medium and acknowledged.
+If a Writer disconnects before any `ack_frame` is received (e.g. the tape drive
+was not ready, or the Writer crashed immediately), the volume is **not**
+committed and the Archiver reuses the same `volume_seq_num` for the next Writer.
 This keeps `volume_seq_num` gapless across the archive.
 
 ## Security
 
-The TCP protocol itself provides no transport-level security.  It is designed
-for operation over localhost or a trusted LAN (at minimum 2.5 Gbps; typical
-deployment target 10 Gbps or faster).
+The protocol is plaintext and provides no confidentiality. The base mode also
+provides no peer authentication. The optional challenge-response mode below
+provides one-way Archiver authentication for the writing pipeline, but does not
+provide client authentication or encryption.
 
 ### Frame-level protection (SIGNED flag)
 
 When the archive producer uses signed frames ([`SIGNED` flag](02-frame-header.md)
-with [Ed25519 signature](00-format-common.md) over `NeoTape-frame\0 || frame_hash`), **integrity
-and authenticity are guaranteed at the frame level** regardless of transport.
-A tampered or forged frame will fail BLAKE3 hash verification and Ed25519
-signature validation during extraction or any other verifying receiver, even if the TCP connection is
-unencrypted and routed over an untrusted network.  Sequence number checks
-further prevent replay and reordering.
+with [Ed25519 signature](00-format-common.md) over
+`NeoTape-frame\0 || frame_hash`), a receiver configured with the corresponding
+trusted public key can verify integrity and authenticity at the frame level.
+A tampered or forged frame will fail verification even if the TCP connection is
+unencrypted. Sequence checks reject frame duplication and reordering within the
+archive state being validated; they do not prove archive freshness or prevent
+replay of an entire otherwise-valid old archive.
 
-In the writing pipeline, a Writer that is configured with a trusted public key
-SHOULD verify each signed `frame_record` before committing it to media, so a
-forged or misrouted TCP peer cannot cause bad frames to be written to tape or
-spool.  In the reading pipeline, the Reader client MAY remain a dumb forwarder;
-authoritative signed-frame validation remains the Extractor's responsibility.
+In the writing pipeline, a Writer configured with a trusted public key enters
+authenticated writing mode: it MUST complete challenge-response before opening,
+rewinding, or writing the target medium, and every received frame MUST be signed
+and verify successfully before being committed. In the reading pipeline, the
+Reader client MAY remain a dumb forwarder; authoritative signed-frame
+validation remains the Extractor's responsibility.
 
 When signed frames are in use, the remaining threats that an external
 tunnel addresses are:
 
 - **Confidentiality** — frame payloads are transmitted in plaintext.
-- **Peer authentication at connection time** — the signature only proves
-  the frame author, not the identity of the TCP peer.
+- **Client authentication** — challenge-response authenticates the Archiver to
+  the Writer, not the Writer to the Archiver.
+- **Archive freshness** — a valid signed archive can still be replayed in full
+  unless the receiver independently checks an expected `archive_uuid` or other
+  freshness policy.
 
 ### Without signed frames
 
@@ -143,12 +164,12 @@ The protocol does **not** provide:
 
 - Peer identity verification
 - Transport-layer encryption (TLS)
-- Replay defense
+- Connection-level replay defense
 - DoS resistance beyond the `max_message_payload_size` check
 
 ### Recommendation
 
-For deployments that require confidentiality or peer authentication, tunnel
+For deployments that require confidentiality or mutual peer authentication, tunnel
 the connection through an external secure channel (e.g. SSH port forwarding,
 WireGuard, or a TLS proxy).  The NeoTape wire protocol remains plaintext by
 design.
@@ -160,9 +181,10 @@ Writer = Client).  The goal is for the Writer to authenticate the Archiver
 before accepting frames, using the same trust root as frame-signature
 verification.
 
-If Ed25519 signing is already in use for frames (`SIGNED` flag), the same
-key material can authenticate the TCP peer at connection time with minimal
-added complexity.  The protocol adds two message types:
+When the Writer is configured with a trusted public key, it MUST use this mode
+before requesting the first frame or touching the target medium. The same key
+material used for signed frames authenticates the TCP peer. The protocol adds
+two message types:
 
 | ID | Name | Direction | Payload |
 |---|---|---|---|

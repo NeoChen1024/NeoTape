@@ -46,19 +46,23 @@ Examples:
 ```text
 Under spool-dir:
 recovery-bundle.tar
-neotape-000000.slice-000001.nts
-neotape-000001.slice-000002.nts
-neotape-000002.slice-000003.nts
+neotape-000000.slice-000000.nts
+neotape-000001.slice-000001.nts
+neotape-000002.slice-000002.nts
 neotape-000003.archive-end.nts
-neotape-000004.slice-000001.nts
-neotape-000005.slice-000002.nts
-neotape-000006.slice-000003.nts
+neotape-000004.slice-000000.nts
+neotape-000005.slice-000001.nts
+neotape-000006.slice-000002.nts
 neotape-000007.archive-end.nts
 ```
 
 There is no dedicated Volume Header tape file. Volume boundaries are physical/operator events and are detected by `volume_seq_num` changes or sequence continuity checks.
 
 Sequence numbers embedded in filenames are deliberately present so that a reader can enumerate candidate files by scanning names matching the expected pattern, then sort them numerically to determine the correct playback order. Zero-padding to 6 digits is a convention. Tools MUST parse the numeric value from each name and sort numerically.
+
+`file-num` is scoped to the spool root and continues increasing when a new
+archive is appended. `slice-seq` is scoped to one archive instance and restarts
+at 0 for each new `archive_uuid`, as illustrated above.
 
 ## Semantics
 

@@ -47,16 +47,17 @@ An entry record. Fields:
 | `<file_num>` | Index within the slice, not zero-padded, 0-based.                                                                      |
 | `<kind>`     | File type: `f` regular, `h` hardlink, `d` directory, `l` symlink, `c` char, `b` block, `p` fifo, `s` socket.        |
 | `<size>`     | Apparent file size in bytes (decimal). Hardlink entries (`<kind> = h`) MUST use `0`.                                 |
-| `<mtime>`    | Modification time as Unix timestamp (decimal seconds).                                                                 |
+| `<mtime>`    | Modification time as a signed decimal integer containing Unix epoch seconds; fractional seconds are not allowed.       |
 | `<uid>`      | Numeric owner user ID (decimal).`0` when unknown.                                                                    |
 | `<uname>`    | Owner user name as a string (empty when unknown).                                                                      |
 | `<gid>`      | Numeric group ID (decimal).`0` when unknown.                                                                         |
 | `<gname>`    | Group name as a string (empty when unknown).                                                                           |
 | `<filepath>` | Archive path (relative, may include the source-directory prefix, no leading `/`).                                    |
 
-All fields are mandatory — every entry record carries all 9 fields. Unknown
-or unavailable values use a reasonable zero sentinel (`0`, `""`, or timestamp `0`)
-rather than being omitted.
+All fields are mandatory — every entry record carries all 10 fields. Unknown
+or unavailable values use a reasonable zero sentinel (`0` or `""`) rather than
+being omitted. An unavailable `<mtime>` is encoded as `0`; this is intentionally
+indistinguishable from the valid Unix epoch timestamp.
 
 This record doubles as the `ch_metadata` catalog for each slice. A
 downstream reader can parse the same record format to list archive contents,

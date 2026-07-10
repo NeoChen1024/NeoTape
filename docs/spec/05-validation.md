@@ -78,6 +78,40 @@ Specifically:
 - `FEC_PROTECTED` MUST be rejected on any non-`ch_content` frame.
 - `archive_end` is the only frame type allowed to set `CLEAN_END`.
 
+## Signature Validation Modes
+
+`frame_hash` verification is mandatory in every mode and MUST be completed
+before signature verification. Signature verification does not replace frame
+integrity validation.
+
+### Integrity-only mode
+
+When no trusted public key is configured:
+
+- a frame with `SIGNED = 0` MUST have an all-zero `signature` field;
+- a frame with `SIGNED = 1` is interpreted as an 8-byte key ID followed by a
+  64-byte Ed25519 signature, but cannot be cryptographically authenticated;
+- the implementation MAY accept a structurally valid signed frame, but MUST
+  report it as signed but unverified and MUST NOT claim authenticity.
+
+### Signature-verification mode
+
+When one or more trusted public keys are configured:
+
+- every frame with `SIGNED = 1` MUST verify against the trusted key selected by
+  its key ID;
+- an unknown key ID, malformed signature, or failed Ed25519 verification MUST
+  be rejected;
+- a frame with `SIGNED = 0` MAY be accepted as unauthenticated unless
+  require-signed mode is active.
+
+### Require-signed mode
+
+Require-signed mode MUST NOT be enabled without at least one trusted public
+key. In this mode every NeoTape frame, including `ch_metadata`, `ch_content`,
+`ch_fec`, and `archive_end`, MUST set `SIGNED` and MUST verify against a
+configured trusted key. An unsigned frame MUST be rejected.
+
 ## Archive Identity Validation
 
 Within one logical archive instance, the validator MUST check:
@@ -92,17 +126,21 @@ unexpectedly within one backend volume.
 
 ## Sequence Continuity
 
-The validator MUST enforce:
+Within one logical archive instance, the validator MUST enforce:
 
 - `global_frame_seq_num` is monotonic and gapless across all frames, including
   `ch_fec` and `archive_end`
 - `slice_seq_num` remains constant within one slice and increments by one when
-  a new slice begins
+  a new normal slice begins
 - `channel_frame_seq_num` is contiguous within each
   `(slice_seq_num, channel_type)` stream
 
 Volume boundaries do not reset `global_frame_seq_num`, `slice_seq_num`, or
 `channel_frame_seq_num`.
+
+After a valid `archive_end` closes the current archive context, a different
+`archive_uuid` begins a new independent sequence context as defined under
+[`archive_end` Validation](#archive_end-validation).
 
 When resuming after EOT or a client reconnect, the first new frame MUST
 continue exactly from the last validated frame. Any gap, backward jump, or
@@ -144,6 +182,18 @@ It MUST check:
 - `channel_frame_seq_num > 0`, `END = 1` means the final frame of a multi-frame
   channel stream
 
+For every channel that appears in a slice, the validator MUST track whether
+that channel has reached `END`:
+
+- each present channel MUST have exactly one final frame carrying `END`;
+- no later frame with the same `(slice_seq_num, channel_type)` may appear after
+  that channel has reached `END`;
+- a physical transition to a different channel does not imply that the prior
+  channel has reached `END`;
+- before advancing to a new slice, accepting `archive_end`, or treating the
+  input stream as complete, every channel present in the current slice MUST
+  have reached `END`.
+
 For local FEC layout:
 
 - Intermediate FEC-group boundaries MUST NOT be inferred from `END`
@@ -159,6 +209,19 @@ A conforming validator MUST check that an `archive_end` frame has:
 - `CLEAN_END = 1`
 - `slice_seq_num = 0`
 - `channel_frame_seq_num = 0`
+
+Before accepting `archive_end`, the validator MUST confirm that every channel
+present in the preceding slice has reached `END`. Checking only the physically
+preceding frame is insufficient when channels are interleaved.
+
+Each cleanly completed logical archive instance MUST contain exactly one valid
+`archive_end`. Once it is accepted, that archive validation context is closed:
+
+- any later NeoTape frame belonging to the same archive instance MUST be
+  rejected;
+- a later frame MAY begin a new archive instance only with a different
+  `archive_uuid` and fresh archive-local sequence state starting at
+  `global_frame_seq_num = 0` and `slice_seq_num = 0`.
 
 A non-zero `frame_payload_size` is allowed for optional implementation-specific
 archive-end metadata, but it does not change the control-frame semantics above.
@@ -205,6 +268,9 @@ A repair-capable validator MUST additionally check:
   frame in the immediately preceding protected run
 - `source_frame_count` matches the number of real `ch_content` frames in that
   protected run
+- `source_stream_size` equals the sum of `frame_payload_size` over the real
+  protected `ch_content` frames and satisfies the profile bounds in
+  [04-fec-channel.md](04-fec-channel.md)
 - Reject duplicate `repair_index` values within one group
 - Reject missing or non-continuous `repair_index` values within one group, as
   defined by the active FEC profile
@@ -228,22 +294,30 @@ semantics:
 - Enumerate candidate NeoTape files by filename grammar
 - Sort by numeric `file-num`
 - Treat each regular file boundary as one tape-file boundary
-- Apply the same frame and continuity validation rules as tape mode
+- Apply the same frame and per-archive continuity validation rules as tape mode
 
 The optional `recovery-bundle.tar` is not part of the NeoTape stream and MUST
 be ignored for validation ordering.
 
 ## TCP Receiver Validation
 
-In the TCP reading or writing pipeline, the server-side validator MUST apply
-the same frame, identity, and continuity rules as any other conforming reader.
+In either TCP pipeline, the endpoint receiving a `frame_record` message MUST
+validate the record before committing it to media or emitting its payload. In
+the writing pipeline this endpoint is the Writer Client; in the reading
+pipeline it is the Extractor Server.
+
+The receiving endpoint MUST apply all frame-level rules and the identity and
+continuity rules observable from the state it owns. The Writer validates
+continuity within its current connection; the Archiver retains authoritative
+archive-generation and cross-connection state. The Extractor retains
+authoritative archive-validation state across Reader connections.
 
 For `frame_record` messages, it MUST additionally reject:
 
 - Payloads larger than the protocol maximum
 - Records whose byte length does not match decoded `volume_block_size_kib`
 - Connection resumes whose first frame does not continue from prior validated
-  state
+  state, when the receiving endpoint owns that prior state
 
 On fatal validation failure, a TCP endpoint SHOULD send `error` with a
 human-readable diagnostic and close the connection.
@@ -259,4 +333,5 @@ at least these categories:
 - Slice/channel ordering
 - `archive_end` compliance
 - Signature / flag / sideband consistency
+- Signature verification status when signed frames are present
 - FEC-descriptor and repair-group consistency when `ch_fec` is present
