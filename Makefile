@@ -2,7 +2,7 @@
 CC	= cc
 CXX	= c++
 .DEFAULT_GOAL := all
-INCS	= -Iinclude -Itests -Llib -I/usr/local/include -Lusr/local/lib
+INCS	= -Iinclude -Itests -I3rdparty/isa-l/include -Llib -I/usr/local/include -Lusr/local/lib
 DEPFLAGS = -MMD -MP
 CFLAGS	= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c17 -march=native -pedantic $(DEPFLAGS) $(INCS)
 CXXFLAGS= -O2 -g -Wall -Wextra -pipe -fPIE -fPIC -std=c++20 -march=native -pedantic $(DEPFLAGS) $(INCS)
@@ -20,6 +20,8 @@ include 3rdparty/signify.mk
 THIRDPARTY_LIBS = $(B3LIB) $(ISALLIB) $(SIGNIFYLIB)
 CORE_LIBS = $(B3LIB)
 SIGNED_LIBS = $(B3LIB) $(SIGNIFYLIB)
+FEC_LIBS = $(B3LIB) $(ISALLIB)
+SIGNED_FEC_LIBS = $(B3LIB) $(ISALLIB) $(SIGNIFYLIB)
 
 MAIN_BINS = \
 	$(BINDIR)/mt-pax \
@@ -30,14 +32,16 @@ MAIN_BINS = \
 	$(BINDIR)/neotape-extractor \
 	$(BINDIR)/neotape-raw-store \
 	$(BINDIR)/neotape-inspect \
-	$(BINDIR)/neotape-scan
+	$(BINDIR)/neotape-scan \
+	$(BINDIR)/neotape-dump
 
 TEST_BINS = \
 	$(BINDIR)/test_pax_pipeline \
 	$(BINDIR)/test_tcp_protocol \
 	$(BINDIR)/test_format \
 	$(BINDIR)/test_validate \
-	$(BINDIR)/test_signature
+	$(BINDIR)/test_signature \
+	$(BINDIR)/test_fec
 
 EXE = $(MAIN_BINS) $(TEST_BINS)
 
@@ -46,7 +50,8 @@ UNIT_TESTS = \
 	$(BINDIR)/test_tcp_protocol \
 	$(BINDIR)/test_format \
 	$(BINDIR)/test_validate \
-	$(BINDIR)/test_signature
+	$(BINDIR)/test_signature \
+	$(BINDIR)/test_fec
 
 SMOKE_TESTS = \
 	tests/smoke_mt_pax_pipeline.sh \
@@ -56,6 +61,8 @@ SMOKE_TESTS = \
 	tests/smoke_mt_pax_parity.sh \
 	tests/smoke_inspect.sh \
 	tests/smoke_scan.sh \
+	tests/smoke_fec_pipeline.sh \
+	tests/smoke_salvage.sh \
 	tests/smoke_tcp_extract.sh \
 	tests/smoke_signed_tcp_extract.sh \
 	tests/smoke_writer_auth_fail.sh \
@@ -94,36 +101,40 @@ endef
 
 MT_PAX_OBJS = src/mt-pax.o src/neotape_pax_writer.o src/neotape_common.o src/neotape_bounded_buffer.o
 NEOTAPE_PLAN_OBJS = src/neotape_plan_cmd.o src/neotape_format.o src/neotape_common.o
-NEOTAPE_ARCHIVER_OBJS = src/neotape_archiver_cmd.o src/neotape_tcp_server.o src/neotape_volume_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_frame_builder.o src/neotape_signature.o src/neotape_socket_util.o src/neotape_common.o src/neotape_pax_writer.o src/neotape_bounded_buffer.o
-NEOTAPE_RAW_STORE_OBJS = src/neotape_raw_store_cmd.o src/neotape_volume_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_frame_builder.o src/neotape_signature.o src/neotape_socket_util.o src/neotape_common.o
-NEOTAPE_WRITE_OBJS = src/neotape_write_cmd.o src/neotape_signature.o src/neotape_validate.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o src/neotape_socket_util.o
+NEOTAPE_ARCHIVER_OBJS = src/neotape_archiver_cmd.o src/neotape_tcp_server.o src/neotape_volume_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_fec.o src/neotape_frame_builder.o src/neotape_signature.o src/neotape_socket_util.o src/neotape_common.o src/neotape_pax_writer.o src/neotape_bounded_buffer.o
+NEOTAPE_RAW_STORE_OBJS = src/neotape_raw_store_cmd.o src/neotape_volume_server.o src/neotape_tcp_protocol.o src/neotape_format.o src/neotape_fec.o src/neotape_frame_builder.o src/neotape_signature.o src/neotape_socket_util.o src/neotape_common.o
+NEOTAPE_WRITE_OBJS = src/neotape_write_cmd.o src/neotape_signature.o src/neotape_validate.o src/neotape_fec.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o src/neotape_socket_util.o
 NEOTAPE_READ_OBJS = src/neotape_read_cmd.o src/neotape_tcp_protocol.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o src/neotape_socket_util.o
-NEOTAPE_EXTRACTOR_OBJS = src/neotape_extractor_cmd.o src/neotape_extractor.o src/neotape_validate.o src/neotape_signature.o src/neotape_format.o src/neotape_tcp_protocol.o src/neotape_common.o src/neotape_socket_util.o
-NEOTAPE_INSPECT_OBJS = src/neotape_inspect_cmd.o src/neotape_validate.o src/neotape_signature.o src/neotape_format.o src/neotape_tape.o src/neotape_common.o
+NEOTAPE_EXTRACTOR_OBJS = src/neotape_extractor_cmd.o src/neotape_extractor.o src/neotape_validate.o src/neotape_fec.o src/neotape_signature.o src/neotape_format.o src/neotape_tcp_protocol.o src/neotape_common.o src/neotape_socket_util.o
+NEOTAPE_INSPECT_OBJS = src/neotape_inspect_cmd.o src/neotape_validate.o src/neotape_fec.o src/neotape_signature.o src/neotape_format.o src/neotape_tape.o src/neotape_common.o
 NEOTAPE_SCAN_OBJS = src/neotape_scan_cmd.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o
+NEOTAPE_DUMP_OBJS = src/neotape_dump_cmd.o src/neotape_tape.o src/neotape_format.o src/neotape_common.o
 
 TEST_TCP_PROTOCOL_OBJS = src/neotape_tcp_protocol.o
 TEST_FORMAT_OBJS = src/neotape_format.o
-TEST_VALIDATE_OBJS = src/neotape_validate.o src/neotape_format.o
-TEST_SIGNATURE_OBJS = src/neotape_frame_builder.o src/neotape_signature.o src/neotape_format.o
+TEST_VALIDATE_OBJS = src/neotape_validate.o src/neotape_fec.o src/neotape_format.o
+TEST_SIGNATURE_OBJS = src/neotape_frame_builder.o src/neotape_fec.o src/neotape_signature.o src/neotape_format.o
+TEST_FEC_OBJS = src/neotape_fec.o src/neotape_frame_builder.o src/neotape_format.o src/neotape_signature.o
 
 $(eval $(call make_cxx_binary,$(BINDIR)/mt-pax,MT_PAX_OBJS,CORE_LIBS))
 $(eval $(call make_cxx_binary,$(BINDIR)/neotape-plan,NEOTAPE_PLAN_OBJS,CORE_LIBS))
-$(eval $(call make_cxx_binary,$(BINDIR)/neotape-archiver,NEOTAPE_ARCHIVER_OBJS,SIGNED_LIBS))
-$(eval $(call make_cxx_binary,$(BINDIR)/neotape-raw-store,NEOTAPE_RAW_STORE_OBJS,SIGNED_LIBS))
-$(eval $(call make_cxx_binary,$(BINDIR)/neotape-write,NEOTAPE_WRITE_OBJS,SIGNED_LIBS))
+$(eval $(call make_cxx_binary,$(BINDIR)/neotape-archiver,NEOTAPE_ARCHIVER_OBJS,SIGNED_FEC_LIBS))
+$(eval $(call make_cxx_binary,$(BINDIR)/neotape-raw-store,NEOTAPE_RAW_STORE_OBJS,SIGNED_FEC_LIBS))
+$(eval $(call make_cxx_binary,$(BINDIR)/neotape-write,NEOTAPE_WRITE_OBJS,SIGNED_FEC_LIBS))
 $(eval $(call make_cxx_binary,$(BINDIR)/neotape-read,NEOTAPE_READ_OBJS,CORE_LIBS))
-$(eval $(call make_cxx_binary,$(BINDIR)/neotape-extractor,NEOTAPE_EXTRACTOR_OBJS,SIGNED_LIBS))
-$(eval $(call make_cxx_binary,$(BINDIR)/neotape-inspect,NEOTAPE_INSPECT_OBJS,SIGNED_LIBS))
+$(eval $(call make_cxx_binary,$(BINDIR)/neotape-extractor,NEOTAPE_EXTRACTOR_OBJS,SIGNED_FEC_LIBS))
+$(eval $(call make_cxx_binary,$(BINDIR)/neotape-inspect,NEOTAPE_INSPECT_OBJS,SIGNED_FEC_LIBS))
 $(eval $(call make_cxx_binary,$(BINDIR)/neotape-scan,NEOTAPE_SCAN_OBJS,CORE_LIBS))
+$(eval $(call make_cxx_binary,$(BINDIR)/neotape-dump,NEOTAPE_DUMP_OBJS,CORE_LIBS))
 
 $(BINDIR)/test_pax_pipeline: tests/test_pax_pipeline.cpp include/neotape/closable_queue.hpp | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< -o $@
 
 $(eval $(call make_cpp_test,$(BINDIR)/test_tcp_protocol,tests/test_tcp_protocol.cpp,TEST_TCP_PROTOCOL_OBJS,CORE_LIBS,CORE_LIBS))
 $(eval $(call make_cpp_test,$(BINDIR)/test_format,tests/test_format.cpp,TEST_FORMAT_OBJS,CORE_LIBS,CORE_LIBS))
-$(eval $(call make_cpp_test,$(BINDIR)/test_validate,tests/test_validate.cpp,TEST_VALIDATE_OBJS,CORE_LIBS,CORE_LIBS))
-$(eval $(call make_cpp_test,$(BINDIR)/test_signature,tests/test_signature.cpp,TEST_SIGNATURE_OBJS,SIGNED_LIBS,SIGNED_LIBS))
+$(eval $(call make_cpp_test,$(BINDIR)/test_validate,tests/test_validate.cpp,TEST_VALIDATE_OBJS,FEC_LIBS,FEC_LIBS))
+$(eval $(call make_cpp_test,$(BINDIR)/test_signature,tests/test_signature.cpp,TEST_SIGNATURE_OBJS,SIGNED_FEC_LIBS,SIGNED_FEC_LIBS))
+$(eval $(call make_cpp_test,$(BINDIR)/test_fec,tests/test_fec.cpp,TEST_FEC_OBJS,SIGNED_FEC_LIBS,SIGNED_FEC_LIBS))
 
 test: test-unit test-smoke
 
@@ -135,6 +146,7 @@ test-unit: $(UNIT_TESTS)
 	$(BINDIR)/test_format
 	$(BINDIR)/test_validate
 	$(BINDIR)/test_signature
+	$(BINDIR)/test_fec
 
 test-smoke: $(MAIN_BINS) $(SMOKE_TESTS)
 	@for test_script in $(SMOKE_TESTS); do \

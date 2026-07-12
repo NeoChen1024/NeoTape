@@ -1,5 +1,6 @@
 #pragma once
 
+#include "neotape/fec.hpp"
 #include "neotape/format.hpp"
 #include "neotape/signature.hpp"
 
@@ -32,13 +33,10 @@ void patch_volume_seq_num(std::vector<std::byte> &record,
                           const SignifySecretKey *signer = nullptr);
 
 // Build a complete archive_end record.
-std::vector<std::byte> build_archive_end_record(uint32_t block_size,
-                                                 uint64_t volume_seq_num,
-                                                 const std::string &archive_uuid,
-                                                 const std::string &archive_name,
-                                                 uint64_t global_seq_num,
-                                                 const SignifySecretKey *signer =
-                                                     nullptr);
+std::vector<std::byte> build_archive_end_record(
+    uint32_t block_size, uint64_t volume_seq_num,
+    const std::string &archive_uuid, const std::string &archive_name,
+    uint64_t global_seq_num, const SignifySecretKey *signer = nullptr);
 
 // ── Frame retention buffer ───────────────────────────────────────────
 
@@ -63,7 +61,6 @@ class FrameRetentionBuffer {
     size_t max_frames_;
     std::deque<RetainedFrame> frames_;
 };
-
 
 // A fully built NeoTape content frame.
 struct BuiltFrame {
@@ -91,7 +88,7 @@ struct BuiltFrame {
 class ContentFrameBuilder {
   public:
     ContentFrameBuilder(uint32_t block_size, std::string archive_uuid,
-                        std::string archive_name);
+                        std::string archive_name, bool fec_enabled = false);
 
     [[nodiscard]] uint32_t payload_capacity() const;
 
@@ -102,9 +99,9 @@ class ContentFrameBuilder {
     // Append payload bytes.  Returns zero or more complete frames.
     std::vector<BuiltFrame> feed(std::span<const std::byte> bytes);
 
-    // Force any remaining pending bytes into a final frame.
-    // The returned frame carries the END flag.
-    std::optional<BuiltFrame> flush();
+    // Force remaining bytes into a final content frame. With FEC enabled this
+    // also emits the four repair frames for the final group.
+    std::vector<BuiltFrame> flush();
 
     // Access the next global seq num that will be assigned.
     [[nodiscard]] uint64_t next_global_seq_num() const {
@@ -119,6 +116,9 @@ class ContentFrameBuilder {
   private:
     BuiltFrame build_content_frame(std::span<const std::byte> payload,
                                    bool is_final);
+    BuiltFrame build_fec_frame(std::span<const std::byte> payload,
+                               const FecDescriptor &descriptor, bool is_final);
+    std::vector<BuiltFrame> finish_fec_group(bool is_final_group);
 
     uint32_t block_size_;
     std::string archive_uuid_;
@@ -126,7 +126,10 @@ class ContentFrameBuilder {
     uint64_t global_frame_seq_num_ = 0;
     uint64_t channel_frame_seq_num_ = 0;
     uint64_t current_slice_ = 0;
+    uint64_t fec_channel_frame_seq_num_ = 0;
+    bool fec_enabled_ = false;
     std::vector<std::byte> pending_;
+    std::vector<BuiltFrame> fec_content_group_;
 };
 
 } // namespace neotape

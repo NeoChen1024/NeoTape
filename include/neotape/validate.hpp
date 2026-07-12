@@ -1,10 +1,13 @@
 #pragma once
 
+#include "neotape/fec.hpp"
 #include "neotape/format.hpp"
 
+#include <array>
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace neotape {
 
@@ -46,6 +49,24 @@ struct FrameValidator {
     bool saw_archive_end = false;
     bool last_frame_had_end = false;
 
+    // Per-channel state is required because ch_content and ch_fec may be
+    // physically interleaved while retaining independent sequence streams.
+    std::array<uint64_t, 3> next_channel_seq{};
+    std::array<bool, 3> channel_seen{};
+    std::array<bool, 3> channel_ended{};
+    bool saw_non_metadata_in_slice = false;
+    bool archive_uses_fec = false;
+    bool stream_start_seeded = false;
+    bool validating_seed_frame = false;
+
+    uint64_t protected_run_start = 0;
+    uint16_t protected_run_count = 0;
+    bool protected_run_started_before_stream = false;
+    uint64_t protected_run_size = 0;
+    std::vector<uint8_t> protected_run_bytes;
+    std::optional<FecDescriptor> current_fec_group;
+    uint16_t next_repair_index = 0;
+
     // Seed connection-local validation when reading begins at a volume
     // boundary rather than archive-global frame zero. The supplied header is
     // still validated normally by the next validate() call.
@@ -74,6 +95,13 @@ struct FrameValidator {
     RestoreFrameValidation validate_restore_frame(const FrameHeader &header,
                                                   const uint8_t *raw_data,
                                                   std::size_t record_size);
+
+    // Salvage mode keeps frame integrity and unambiguous record framing
+    // mandatory, but deliberately does not enforce archive identity,
+    // sequencing, channel ordering, or clean-completion consistency.
+    RestoreFrameValidation
+    validate_salvage_frame(const FrameHeader &header, const uint8_t *raw_data,
+                           std::size_t record_size) const;
 
     // Reset to initial state (for inspecting a new archive).
     void reset();

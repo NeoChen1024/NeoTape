@@ -20,7 +20,8 @@ for slicing metadata, long-running data producers (`bin/neotape-archiver`,
 `bin/neotape-raw-store`), per-volume tape/spool clients (`bin/neotape-write`,
 `bin/neotape-read`), a payload extractor (`bin/neotape-extractor`), an
 inspection/compliance tool (`bin/neotape-inspect`), and an archive-identity
-scanner (`bin/neotape-scan`). Signed-frame verification is implemented in the
+scanner (`bin/neotape-scan`), plus a validation-free tape dumper
+(`bin/neotape-dump`). Signed-frame verification is implemented in the
 writer, extractor, and inspect paths; the writer can also authenticate the
 source archiver over TCP or Unix-domain sockets before it touches media.
 
@@ -71,9 +72,9 @@ block-size change within a volume as a format error.
 | 4     | NeoTape/PAX producer pair          | Done   |
 | 5     | Raw byte-stream store              | Done   |
 | 6     | Frame inspect / compliance         | Done   |
-| 7     | Recovery & salvage                 | Spec   |
+| 7     | Recovery & salvage                 | Done   |
 | 8     | Optional BOT recovery bundle       | Spec   |
-| 9     | Optional FEC repair channel        | Spec   |
+| 9     | Optional FEC repair channel        | Done   |
 
 See [`docs/spec/`](docs/spec/) for the active format specification and [`docs/implementation/`](docs/implementation/) for
 implementation-specific notes (mt-pax architecture, build notes).
@@ -89,6 +90,7 @@ writer-side source authentication are implemented. See
 - **GNU Make**
 - **libarchive** (system package, linked via `-larchive`)
 - **BLAKE3** (bundled git submodule)
+- **ISA-L** (bundled git submodule, used by `rs_32_4` FEC)
 - **signify** sources (bundled git submodule, built as `lib/libsignify.a`)
 
 ### Initialize submodules
@@ -225,6 +227,12 @@ and reconstructs the original payload stream to a file or stdout. Use
 unsigned or untrusted frames. Without a public key, signed frames remain usable
 but are reported as signed and unverified.
 
+`--salvage` enables explicit best-effort extraction. It retains record framing,
+header, hash, and signature-structure checks while relaxing archive-level
+identity, sequence, channel-order, and clean-completion consistency. Invalid
+frames are skipped with stderr diagnostics. FEC-protected groups are repaired
+with RS(32,4) when the group BLAKE3 commitment verifies.
+
 ### bin/neotape-inspect (frame-level verification)
 
 ```sh
@@ -269,6 +277,17 @@ each tapefile, deduplicates archive identities by `archive_uuid` and
 `archive_label`, and prints each newly discovered archive identity as soon as it
 is first seen. Use `-v` to list every tapefile's first frame instead, including
 whether that tapefile introduced a new archive identity.
+
+### bin/neotape-dump (validation-free tape dump)
+
+```sh
+bin/neotape-dump --source tape:/dev/nst0 --target spool:./raw-dump -v
+```
+
+Rewinds a tape and copies every physical record into numerically ordered spool
+files while preserving filemark boundaries. It deliberately performs no header
+parsing, hash verification, archive identity checks, or sequence consistency
+checks. The target directory must be empty.
 
 ### Examples
 

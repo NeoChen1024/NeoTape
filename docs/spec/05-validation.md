@@ -287,6 +287,35 @@ BLAKE3(reconstructed_source_stream[0:source_stream_size]) ==
     fec_group_blake3
 ```
 
+## Salvage Validation Mode
+
+Salvage mode is an explicit best-effort payload-recovery mode. It does not
+claim archive conformance or clean completion.
+
+Salvage mode MUST retain checks needed to identify an unambiguous valid frame:
+
+- complete record framing and decoded block-size agreement;
+- supported fixed-header layout and channel type;
+- `frame_payload_size` bounds;
+- `frame_hash` integrity;
+- `SIGNED` flag/signature-field structural consistency; and
+- a structurally valid FEC descriptor for any accepted `ch_fec` frame.
+
+After those checks succeed, salvage mode MAY relax archive identity continuity,
+global/slice/channel sequence continuity, channel ordering, channel `END`
+completeness, and clean `archive_end` requirements. A frame that fails a
+mandatory integrity check MUST NOT contribute payload bytes. The implementation
+MAY skip it and continue at the next independently framed record.
+
+When damaged `FEC_PROTECTED` content has a complete matching repair group, a
+repair-capable salvage reader SHOULD treat that shard as unavailable and
+attempt reconstruction. It MUST verify `fec_group_blake3` before emitting
+reconstructed bytes. If recovery is impossible, it MAY emit only surviving
+content shards in channel order.
+
+Salvage mode MUST prominently report that its output is not fully verified.
+Diagnostics belong on stderr and MUST NOT contaminate payload stdout.
+
 ## Spool Validation
 
 When reading from a spool directory, the validator MUST preserve tape-order

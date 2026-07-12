@@ -34,8 +34,8 @@ template <class Fn> void expect_throw(Fn fn, const string &msg) {
 }
 
 uint16_t le16(const neotape::HeaderBytes &b, std::size_t off) {
-    return static_cast<uint16_t>(b[off]) |
-           static_cast<uint16_t>(b[off + 1]) << 8;
+    return static_cast<uint16_t>(b[off]) | static_cast<uint16_t>(b[off + 1])
+                                               << 8;
 }
 
 uint32_t le32(const neotape::HeaderBytes &b, std::size_t off) {
@@ -92,23 +92,38 @@ void test_channel_type_values() {
     header.channel_type = neotape::ChannelType::CH_CONTENT;
     neotape::HeaderBytes bytes = neotape::serialize_frame_header(header);
     expect(bytes[9] == 1, "bad content channel value");
-    expect(neotape::parse_fixed_header(bytes.data(), bytes.size()).channel_type ==
-               neotape::ChannelType::CH_CONTENT,
-           "content channel should parse");
+    expect(
+        neotape::parse_fixed_header(bytes.data(), bytes.size()).channel_type ==
+            neotape::ChannelType::CH_CONTENT,
+        "content channel should parse");
 
     header.channel_type = neotape::ChannelType::CH_METADATA;
     bytes = neotape::serialize_frame_header(header);
     expect(bytes[9] == 2, "bad metadata channel value");
-    expect(neotape::parse_fixed_header(bytes.data(), bytes.size()).channel_type ==
-               neotape::ChannelType::CH_METADATA,
-           "metadata channel should parse");
+    expect(
+        neotape::parse_fixed_header(bytes.data(), bytes.size()).channel_type ==
+            neotape::ChannelType::CH_METADATA,
+        "metadata channel should parse");
+
+    header.channel_type = neotape::ChannelType::CH_FEC;
+    header.flags = neotape::frame_flag_sideband;
+    header.sideband_data[0] = 1;
+    bytes = neotape::serialize_frame_header(header);
+    expect(bytes[9] == 3, "bad FEC channel value");
+    expect(bytes[280] == 1, "bad sideband start offset");
+    neotape::FrameHeader const fec_parsed =
+        neotape::parse_fixed_header(bytes.data(), bytes.size());
+    expect(fec_parsed.channel_type == neotape::ChannelType::CH_FEC,
+           "FEC channel should parse");
+    expect(fec_parsed.sideband_data[0] == 1, "FEC sideband should round trip");
 
     header = make_archive_end_header();
     bytes = neotape::serialize_frame_header(header);
     expect(bytes[9] == 255, "bad archive-end channel value");
-    expect(neotape::parse_fixed_header(bytes.data(), bytes.size()).channel_type ==
-               neotape::ChannelType::ARCHIVE_END,
-           "archive-end channel should parse");
+    expect(
+        neotape::parse_fixed_header(bytes.data(), bytes.size()).channel_type ==
+            neotape::ChannelType::ARCHIVE_END,
+        "archive-end channel should parse");
 }
 
 void test_layout_round_trip() {
@@ -195,7 +210,8 @@ void test_validation() {
         },
         "reserved flag bit should be rejected");
 
-    auto content_clean_end = neotape::serialize_frame_header(make_content_header());
+    auto content_clean_end =
+        neotape::serialize_frame_header(make_content_header());
     content_clean_end[157] =
         static_cast<uint8_t>(content_clean_end[157] | 0x80u);
     expect_throw(
@@ -212,18 +228,21 @@ void test_validation() {
            "archive end should parse");
 
     bytes[157] = static_cast<uint8_t>(bytes[157] & 0x7fu);
-    expect_throw([&] { neotape::parse_fixed_header(bytes.data(), bytes.size()); },
-                 "archive end without CLEAN_END should be rejected");
+    expect_throw(
+        [&] { neotape::parse_fixed_header(bytes.data(), bytes.size()); },
+        "archive end without CLEAN_END should be rejected");
 
     bytes = neotape::serialize_frame_header(make_archive_end_header());
     bytes[150] = static_cast<uint8_t>(bytes[150] & ~0x01u);
-    expect_throw([&] { neotape::parse_fixed_header(bytes.data(), bytes.size()); },
-                 "archive end without END should be rejected");
+    expect_throw(
+        [&] { neotape::parse_fixed_header(bytes.data(), bytes.size()); },
+        "archive end without END should be rejected");
 
     bytes = neotape::serialize_frame_header(make_archive_end_header());
     bytes[130] = 1;
-    expect_throw([&] { neotape::parse_fixed_header(bytes.data(), bytes.size()); },
-                 "archive end with non-zero slice_seq_num should be rejected");
+    expect_throw(
+        [&] { neotape::parse_fixed_header(bytes.data(), bytes.size()); },
+        "archive end with non-zero slice_seq_num should be rejected");
 
     bytes = neotape::serialize_frame_header(make_archive_end_header());
     bytes[138] = 1;

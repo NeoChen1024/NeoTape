@@ -15,6 +15,7 @@ struct TcpArchiverOptions {
     std::string archive_name;
     uint64_t initial_volume_seq_num = 1;
     uint64_t retention_frame_count = 256;
+    bool fec_enabled = false;
     std::optional<SignifySecretKey> frame_signer;
 
     PaxWriterOptions pax;

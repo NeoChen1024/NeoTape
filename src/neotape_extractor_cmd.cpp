@@ -28,7 +28,7 @@ using std::string;
 void usage(const char *prog) {
     std::cerr << format("usage: {} --listen <tcp://host:port|unix://path>\n"
                         "       [-o <file>] [--verify-pubkey <file.pub>]...\n"
-                        "       [--require-signed] [-v] [-h]\n",
+                        "       [--require-signed] [--salvage] [-v] [-h]\n",
                         prog);
 }
 
@@ -37,6 +37,7 @@ struct Options {
     string output_path;
     bool verbose = false;
     bool require_signed = false;
+    bool salvage = false;
     std::vector<string> verify_pubkey_paths;
 };
 
@@ -47,6 +48,7 @@ Options parse_args(int argc, char **argv) {
         {"verbose", no_argument, nullptr, 'v'},
         {"verify-pubkey", required_argument, nullptr, 256},
         {"require-signed", no_argument, nullptr, 257},
+        {"salvage", no_argument, nullptr, 258},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
@@ -68,6 +70,9 @@ Options parse_args(int argc, char **argv) {
             break;
         case 257:
             opts.require_signed = true;
+            break;
+        case 258:
+            opts.salvage = true;
             break;
         case 'h':
             usage(argv[0]);
@@ -110,6 +115,7 @@ int main(int argc, char **argv) {
         ex_opts.output_path = opts.output_path;
         ex_opts.verbose = opts.verbose;
         ex_opts.require_signed = opts.require_signed;
+        ex_opts.salvage = opts.salvage;
         for (const string &path : opts.verify_pubkey_paths) {
             ex_opts.verify_keys.push_back(
                 neotape::load_signify_public_key(path));

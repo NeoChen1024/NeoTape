@@ -86,7 +86,7 @@ The `channel_type` field identifies the frame's role:
 
 Values 0 and 4–254 are reserved for future channels. Validation behavior for
 unknown channels is defined in [docs/spec/05-validation.md](05-validation.md).
-A future salvage mode MAY skip unknown channels only when it can do so without
+Salvage mode MAY skip unknown channels only when it can do so without
 breaking frame/slice sequence continuity.
 
 ## Flags

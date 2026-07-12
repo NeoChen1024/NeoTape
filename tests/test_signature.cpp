@@ -260,19 +260,20 @@ void test_patch_volume_seq_num_finalizes_deferred_record() {
         payload[i] = static_cast<std::byte>(i + 1);
     }
 
-    auto maybe_frame = builder.flush();
-    expect(!maybe_frame.has_value(),
+    auto flushed = builder.flush();
+    expect(flushed.empty(),
            "flush without pending data should return no frame");
 
     auto frames = builder.feed(payload);
     expect(frames.empty(), "small payload should stay pending");
 
-    maybe_frame = builder.flush();
-    expect(maybe_frame.has_value(), "flush should produce final frame");
+    flushed = builder.flush();
+    expect(flushed.size() == 1, "flush should produce final frame");
+    auto &final_frame = flushed.front();
 
     FrameHeader const deferred = neotape::parse_fixed_header(
-        reinterpret_cast<const uint8_t *>(maybe_frame->record.data()),
-        maybe_frame->record.size());
+        reinterpret_cast<const uint8_t *>(final_frame.record.data()),
+        final_frame.record.size());
     expect(deferred.volume_seq_num == 0,
            "deferred frame should keep placeholder volume seq");
     expect(std::all_of(deferred.frame_hash.begin(), deferred.frame_hash.end(),
@@ -281,17 +282,17 @@ void test_patch_volume_seq_num_finalizes_deferred_record() {
     expect(!neotape::has_frame_flag_signed(deferred.flags),
            "deferred frame should not be marked signed");
 
-    neotape::patch_volume_seq_num(maybe_frame->record, 7, &seckey);
+    neotape::patch_volume_seq_num(final_frame.record, 7, &seckey);
 
     FrameHeader const finalized = neotape::parse_fixed_header(
-        reinterpret_cast<const uint8_t *>(maybe_frame->record.data()),
-        maybe_frame->record.size());
+        reinterpret_cast<const uint8_t *>(final_frame.record.data()),
+        final_frame.record.size());
     expect(finalized.volume_seq_num == 7, "volume seq should be patched");
     expect(neotape::has_frame_flag_signed(finalized.flags),
            "finalized frame should be marked signed");
     expect(neotape::compute_frame_hash(
-               reinterpret_cast<const uint8_t *>(maybe_frame->record.data()),
-               maybe_frame->record.size()) == finalized.frame_hash,
+               reinterpret_cast<const uint8_t *>(final_frame.record.data()),
+               final_frame.record.size()) == finalized.frame_hash,
            "finalized frame hash should match record bytes");
     expect(neotape::verify_frame_hash_signature(finalized.signature,
                                                 finalized.frame_hash, pubkey),

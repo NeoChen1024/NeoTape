@@ -11,7 +11,10 @@ clients (`bin/neotape-write`, `bin/neotape-read`) connect to producers or
 consumers and write/read frames to/from tape or spool. An
 `bin/neotape-extractor` consumes frames from a reader and reconstructs the
 payload stream. An `bin/neotape-inspect` scans spool or tape for frame-level
-verification and archive compliance reporting. The tape-device backend
+verification and archive compliance reporting. `bin/neotape-dump` performs a
+validation-free tape-to-spool copy. Producers optionally emit local
+`rs_32_4` FEC groups, and extractor salvage mode repairs unavailable protected
+content shards. The tape-device backend
 (`namespace mt`) implements both tape and spool I/O behind a shared
 `mt::TapeDevice` interface. Optional Ed25519 frame signing uses external
 signify-compatible key files; NeoTape verifies but does not generate keys.
@@ -22,14 +25,16 @@ signify-compatible key files; NeoTape verifies but does not generate keys.
 make -j "$(nproc)"      # produces bin/mt-pax, bin/neotape-archiver,
                         # bin/neotape-raw-store, bin/neotape-write,
                         # bin/neotape-read, bin/neotape-extractor,
-                        # bin/neotape-inspect, bin/neotape-plan,
+                        # bin/neotape-inspect, bin/neotape-scan,
+                        # bin/neotape-dump, bin/neotape-plan,
                         # and test binaries
 make test
 make clean
 ```
 
 Dependencies: libarchive (system, `-larchive`), BLAKE3 (bundled submodule
-`3rdparty/BLAKE3` → `lib/libb3sum.a`), and bundled signify sources
+`3rdparty/BLAKE3` → `lib/libb3sum.a`), ISA-L (bundled submodule →
+`lib/libisal.a`), and bundled signify sources
 (`3rdparty/signify` → `lib/libsignify.a`).
 
 ## clangd / LSP
@@ -63,6 +68,8 @@ headers currently confuse clangd 22.
 - `src/neotape_extractor.cpp` — extractor state machine (frame accumulation, payload reassembly)
 - `src/neotape_inspect_cmd.cpp` — `bin/neotape-inspect` CLI entry point
 - `src/neotape_signature.cpp` — signify-compatible key loading, frame signing, auth nonce signing
+- `src/neotape_fec.cpp` — FEC descriptor codec and ISA-L `rs_32_4` encode/recovery
+- `src/neotape_dump_cmd.cpp` — validation-free tape-to-spool dumper
 - `src/neotape_validate.cpp` — shared archive-frame validation (root: `include/neotape/validate.hpp`)
 - `src/neotape_write_cmd.cpp` — `bin/neotape-write` CLI entry point
 - `src/neotape_tcp_server.cpp` — archiver server and frame packing
@@ -137,6 +144,7 @@ bin/neotape-archiver --listen <tcp://host:port|unix://path>
                      [-C <dir>] [-P <percent>] [--io-thread <N>]
                      [--output-buffer-size <bytes>] [--plan <file>]
                      [--retention-frame-count <N>]
+                     [--fec]
                      [--sign-secret-key <file.sec>]
                      [--sign-passphrase-file <path>] [--debug]
                      [-v|-vv] [-x] <path> [path...]
@@ -146,7 +154,7 @@ In server mode (`--listen`) the archiver is a long-running producer that serves
 NeoTape records over a single TCP/UDS connection. Without `--listen` it behaves
 like `mt-pax` and writes a plain pax stream to `-f`. `--sign-secret-key` is
 server-mode only and signs every served frame with a signify-compatible secret
-key file.
+key file. `--fec` protects content in local `32C + 4F` groups.
 
 ## neotape-raw-store CLI
 
@@ -156,6 +164,7 @@ bin/neotape-raw-store --listen <tcp://host:port|unix://path>
                        [--volume-block-size <bytes>]
                        [--archive-name <name>]
                        [--retention-frame-count <N>]
+                       [--fec]
                        [--sign-secret-key <file.sec>]
                        [--sign-passphrase-file <path>] [--debug]
 ```
@@ -201,7 +210,7 @@ or Unix-domain socket. One reader process handles exactly one volume.
 ```
 bin/neotape-extractor --listen <tcp://host:port|unix://path>
        [-o <file>] [--verify-pubkey <file.pub>]...
-       [--require-signed] [-v] [-h]
+       [--require-signed] [--salvage] [-v] [-h]
 ```
 
 Long-running payload consumer. Listens for incoming reader connections,
@@ -211,6 +220,22 @@ Signature validation is optional unless `--verify-pubkey` is configured;
 `--require-signed` requires at least one `--verify-pubkey` and rejects unsigned
 or untrusted frames. Without a public key, signed frames remain readable but
 are reported as signed and unverified.
+
+`--salvage` retains frame integrity checks but relaxes archive-level identity,
+sequence, ordering, and clean-end consistency. It skips invalid frames with an
+explicit unverified-output warning and attempts FEC recovery for protected
+groups before falling back to surviving shards.
+
+## neotape-dump CLI
+
+```
+bin/neotape-dump --source <tape:/dev/nst0>
+                  --target <spool:./dir> [-v] [-h]
+```
+
+Rewinds and copies physical tape records into spool files while preserving
+filemark boundaries. It intentionally performs no NeoTape consistency or
+integrity validation; the target directory must be empty.
 
 ## neotape-write CLI
 

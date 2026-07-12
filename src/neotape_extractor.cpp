@@ -1,16 +1,19 @@
 #include "neotape/common.hpp"
 #include "neotape/extractor.hpp"
+#include "neotape/fec.hpp"
 #include "neotape/format.hpp"
 #include "neotape/socket_util.hpp"
 #include "neotape/tcp_protocol.hpp"
 #include "neotape/validate.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <format>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <sys/socket.h>
@@ -38,7 +41,77 @@ struct ExtractorState {
     bool require_signed = false;
     vector<SignifyPublicKey> verify_keys;
     bool warned_signed_unverified = false;
+    bool salvage = false;
+    std::optional<uint64_t> output_slice_seq;
+    uint64_t processed_frames = 0;
+    std::vector<std::pair<uint64_t, std::optional<FecShard>>>
+        salvage_content_shards;
+    FecAvailableShards salvage_fec_shards;
 };
+
+void remember_salvage_content(ExtractorState &state, const FrameHeader &header,
+                              const uint8_t *data, bool available) {
+    std::optional<FecShard> shard;
+    if (available) {
+        std::size_t const shard_size =
+            decoded_block_size(header) - fixed_header_size;
+        shard = FecShard(shard_size, std::byte{0});
+        std::copy_n(
+            reinterpret_cast<const std::byte *>(data + fixed_header_size),
+            header.frame_payload_size, shard->begin());
+    }
+    state.salvage_content_shards.emplace_back(header.channel_frame_seq_num,
+                                              std::move(shard));
+}
+
+void emit_salvage_fec_group(ExtractorState &state,
+                            const FecDescriptor &descriptor,
+                            std::size_t shard_size) {
+    for (uint16_t index = 0; index < descriptor.source_frame_count; ++index) {
+        uint64_t const sequence = descriptor.source_content_frame_start + index;
+        auto const found = std::ranges::find_if(
+            state.salvage_content_shards,
+            [&](const auto &entry) { return entry.first == sequence; });
+        if (found != state.salvage_content_shards.end()) {
+            state.salvage_fec_shards[index] = found->second;
+        }
+    }
+
+    try {
+        std::vector<FecShard> const recovered = recover_rs_32_4(
+            state.salvage_fec_shards, descriptor.source_frame_count,
+            descriptor.source_stream_size, shard_size,
+            descriptor.fec_group_blake3);
+        uint64_t remaining = descriptor.source_stream_size;
+        for (const FecShard &shard : recovered) {
+            std::size_t const count = static_cast<std::size_t>(
+                std::min<uint64_t>(remaining, shard.size()));
+            const auto *bytes = reinterpret_cast<const uint8_t *>(shard.data());
+            state.slice_payload.insert(state.slice_payload.end(), bytes,
+                                       bytes + count);
+            remaining -= count;
+        }
+    } catch (const std::exception &error) {
+        std::cerr << format("extractor: salvage FEC recovery failed: {}; "
+                            "emitting only surviving source shards\n",
+                            error.what());
+        uint64_t remaining = descriptor.source_stream_size;
+        for (uint16_t index = 0; index < descriptor.source_frame_count;
+             ++index) {
+            std::size_t const count = static_cast<std::size_t>(
+                std::min<uint64_t>(remaining, shard_size));
+            if (state.salvage_fec_shards[index].has_value()) {
+                const auto *bytes = reinterpret_cast<const uint8_t *>(
+                    state.salvage_fec_shards[index]->data());
+                state.slice_payload.insert(state.slice_payload.end(), bytes,
+                                           bytes + count);
+            }
+            remaining -= count;
+        }
+    }
+    state.salvage_content_shards.clear();
+    state.salvage_fec_shards = {};
+}
 
 [[nodiscard]] bool flush_slice(ExtractorState &state, FILE *output) {
     if (state.slice_payload.empty()) {
@@ -73,25 +146,52 @@ struct ExtractorState {
                                  const vector<std::byte> &record,
                                  FILE *output) {
     const auto *data = reinterpret_cast<const uint8_t *>(record.data());
-    const FrameHeader header = parse_fixed_header(data, record.size());
+    FrameHeader header;
+    try {
+        header = parse_fixed_header(data, record.size());
+    } catch (const std::exception &error) {
+        std::cerr << format("extractor: {}{}\n",
+                            state.salvage ? "salvage cannot skip frame: " : "",
+                            error.what());
+        return false;
+    }
 
     uint64_t const prev_slice_seq = state.validator.current_slice_seq_num;
 
     RestoreFrameValidation const validation =
-        state.validator.validate_restore_frame(header, data, record.size());
+        state.salvage ? state.validator.validate_salvage_frame(header, data,
+                                                               record.size())
+                      : state.validator.validate_restore_frame(header, data,
+                                                               record.size());
     if (validation.status == RestoreFrameValidationStatus::warning) {
         std::cerr << format("extractor: warning: {}\n", validation.message);
     } else if (validation.status == RestoreFrameValidationStatus::fatal) {
-        std::cerr << format("extractor: {}\n", validation.message);
-        return false;
+        if (!state.salvage) {
+            std::cerr << format("extractor: {}\n", validation.message);
+            return false;
+        }
+        std::cerr << format("extractor: salvage skipped frame: {}\n",
+                            validation.message);
+        if (header.channel_type == ChannelType::CH_CONTENT &&
+            has_frame_flag_fec_protected(header.flags)) {
+            remember_salvage_content(state, header, data, false);
+        }
+        ++state.processed_frames;
+        return true;
     }
 
     FrameSignatureValidation const signature_validation =
         validate_frame_signature(header, state.verify_keys,
                                  state.require_signed);
     if (signature_validation.error.has_value()) {
-        std::cerr << format("extractor: {}\n", *signature_validation.error);
-        return false;
+        if (!state.salvage) {
+            std::cerr << format("extractor: {}\n", *signature_validation.error);
+            return false;
+        }
+        std::cerr << format("extractor: salvage skipped frame: {}\n",
+                            *signature_validation.error);
+        ++state.processed_frames;
+        return true;
     }
     if (signature_validation.status ==
             FrameSignatureStatus::signed_unverified &&
@@ -101,11 +201,29 @@ struct ExtractorState {
         state.warned_signed_unverified = true;
     }
 
+    ++state.processed_frames;
     if (header.channel_type == ChannelType::CH_METADATA) {
         return true;
     }
+    if (header.channel_type == ChannelType::CH_FEC) {
+        if (state.salvage) {
+            FecDescriptor const descriptor =
+                parse_fec_descriptor(header.sideband_data);
+            const std::byte *payload = record.data() + fixed_header_size;
+            state
+                .salvage_fec_shards[fec_data_shards + descriptor.repair_index] =
+                FecShard(payload, payload + header.frame_payload_size);
+            if (descriptor.repair_index + 1 == fec_repair_shards) {
+                emit_salvage_fec_group(state, descriptor,
+                                       decoded_block_size(header) -
+                                           fixed_header_size);
+            }
+        }
+        return true;
+    }
 
-    if (state.validator.saw_archive_end) {
+    if ((!state.salvage && state.validator.saw_archive_end) ||
+        (state.salvage && header.channel_type == ChannelType::ARCHIVE_END)) {
         if (!flush_slice(state, output)) {
             return false;
         }
@@ -114,7 +232,11 @@ struct ExtractorState {
     }
 
     // Slice boundary: flush the previous slice's accumulated payload.
-    if (header.slice_seq_num != prev_slice_seq) {
+    bool const slice_changed =
+        state.salvage ? state.output_slice_seq.has_value() &&
+                            header.slice_seq_num != *state.output_slice_seq
+                      : header.slice_seq_num != prev_slice_seq;
+    if (slice_changed) {
         if (!flush_slice(state, output)) {
             return false;
         }
@@ -123,10 +245,16 @@ struct ExtractorState {
     // --- accumulate content payload only ---
     if (header.channel_type == ChannelType::CH_CONTENT &&
         header.frame_payload_size > 0) {
+        if (state.salvage && has_frame_flag_fec_protected(header.flags)) {
+            remember_salvage_content(state, header, data, true);
+            state.output_slice_seq = header.slice_seq_num;
+            return true;
+        }
         const uint8_t *payload =
             data + static_cast<std::ptrdiff_t>(fixed_header_size);
         state.slice_payload.insert(state.slice_payload.end(), payload,
                                    payload + header.frame_payload_size);
+        state.output_slice_seq = header.slice_seq_num;
     }
 
     return true;
@@ -246,6 +374,11 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
     ExtractorState state;
     state.require_signed = opts.require_signed;
     state.verify_keys = opts.verify_keys;
+    state.salvage = opts.salvage;
+    if (state.salvage) {
+        std::cerr << "extractor: SALVAGE MODE: output is not fully verified; "
+                     "invalid frames will be skipped\n";
+    }
     uint64_t total_frames = 0;
 
     while (!state.saw_archive_end) {
@@ -260,7 +393,8 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
 
         bool const complete = serve_client(client, state, output);
         if (complete) {
-            total_frames = state.validator.expected_global_frame_seq == 0
+            total_frames = state.salvage ? state.processed_frames
+                           : state.validator.expected_global_frame_seq == 0
                                ? 0
                                : state.validator.expected_global_frame_seq - 1;
             std::cerr << "extractor: archive extraction complete\n";
@@ -270,7 +404,8 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
         // Connection dropped before completion.  Count the frames we
         // validated (the next expected seq minus 1), then wait for the
         // next reader to reconnect.
-        total_frames = state.validator.expected_global_frame_seq == 0
+        total_frames = state.salvage ? state.processed_frames
+                       : state.validator.expected_global_frame_seq == 0
                            ? 0
                            : state.validator.expected_global_frame_seq - 1;
         std::cerr << format("extractor: reader disconnected after {} frames, "

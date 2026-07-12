@@ -1,3 +1,4 @@
+#include "neotape/fec.hpp"
 #include "neotape/format.hpp"
 #include "neotape/validate.hpp"
 
@@ -74,6 +75,18 @@ FrameHeader make_metadata_header(uint64_t global_seq_num,
 FrameHeader make_archive_end_header(uint64_t global_seq_num) {
     return make_header(ChannelType::ARCHIVE_END, global_seq_num, 0, 0, 0,
                        neotape::frame_flag_end | neotape::frame_flag_clean_end);
+}
+
+FrameHeader make_fec_header(uint64_t global_seq_num,
+                            uint64_t channel_frame_seq_num,
+                            const neotape::FecDescriptor &descriptor,
+                            bool end) {
+    FrameHeader header = make_header(
+        ChannelType::CH_FEC, global_seq_num, 0, channel_frame_seq_num,
+        4096 - neotape::fixed_header_size,
+        neotape::frame_flag_sideband | (end ? neotape::frame_flag_end : 0));
+    header.sideband_data = neotape::serialize_fec_descriptor(descriptor);
+    return header;
 }
 
 vector<std::byte> build_record(FrameHeader header,
@@ -211,7 +224,7 @@ void test_validator_rejects_first_frame_with_nonzero_channel_frame_seq() {
         validator.validate(parse_header(record),
                            reinterpret_cast<const uint8_t *>(record.data()),
                            record.size()),
-        "channel_frame_seq_num 1 != 0",
+        "channel_frame_seq_num 1 != expected 0",
         "first frame with non-zero channel sequence should be rejected");
 }
 
@@ -238,14 +251,15 @@ void test_validator_rejects_new_slice_without_channel_frame_seq_reset() {
             parse_header(second_record),
             reinterpret_cast<const uint8_t *>(second_record.data()),
             second_record.size()),
-        "channel_frame_seq_num 1 != 0",
+        "channel_frame_seq_num 1 != expected 0",
         "new slice without channel sequence reset should be rejected");
 }
 
 void test_validator_rejects_archive_end_without_preceding_end() {
     FrameValidator validator;
 
-    vector<std::byte> const payload = {std::byte{'b'}};
+    vector<std::byte> const payload(4096 - neotape::fixed_header_size,
+                                    std::byte{'b'});
     auto content_record =
         build_record(make_content_header(0, 0, 0, payload.size(), 0), payload);
     expect(
@@ -262,7 +276,7 @@ void test_validator_rejects_archive_end_without_preceding_end() {
             parse_header(archive_end_record),
             reinterpret_cast<const uint8_t *>(archive_end_record.data()),
             archive_end_record.size()),
-        "archive_end without END flag",
+        "archive_end before all slice channels reached END",
         "archive_end must follow a terminated channel group");
 }
 
@@ -289,7 +303,7 @@ void test_validator_rejects_multiple_groups_in_same_slice() {
             parse_header(second_record),
             reinterpret_cast<const uint8_t *>(second_record.data()),
             second_record.size()),
-        "multiple CH_CONTENT groups",
+        "CH_CONTENT frame after channel END",
         "same-slice second content group should be rejected");
 }
 
@@ -323,6 +337,138 @@ void test_validator_seed_accepts_volume_local_start_and_rejects_gap() {
         "seeded validator should reject a connection-local sequence gap");
 }
 
+void test_validator_accepts_interleaved_fec_group() {
+    FrameValidator validator;
+    constexpr uint32_t capacity = 4096 - neotape::fixed_header_size;
+    vector<std::byte> first(capacity, std::byte{0x31});
+    vector<std::byte> second(17, std::byte{0x72});
+
+    vector<uint8_t> source_stream;
+    source_stream.insert(source_stream.end(), capacity, 0x31);
+    source_stream.insert(source_stream.end(), second.size(), 0x72);
+    neotape::FecDescriptor descriptor;
+    descriptor.source_content_frame_start = 0;
+    descriptor.source_frame_count = 2;
+    descriptor.source_stream_size = source_stream.size();
+    descriptor.fec_group_blake3 =
+        neotape::blake3_hash(source_stream.data(), source_stream.size());
+
+    vector<neotape::FecShard> sources = {first, second};
+    neotape::FecRepairShards const repair =
+        neotape::encode_rs_32_4(sources, capacity);
+
+    vector<vector<std::byte>> records;
+    records.push_back(
+        build_record(make_content_header(0, 0, 0, capacity,
+                                         neotape::frame_flag_fec_protected),
+                     first));
+    records.push_back(
+        build_record(make_content_header(1, 0, 1, second.size(),
+                                         neotape::frame_flag_fec_protected |
+                                             neotape::frame_flag_end),
+                     second));
+    for (uint16_t index = 0; index < neotape::fec_repair_shards; ++index) {
+        descriptor.repair_index = index;
+        records.push_back(build_record(
+            make_fec_header(2 + index, index, descriptor,
+                            index + 1 == neotape::fec_repair_shards),
+            repair[index]));
+    }
+    records.push_back(build_record(make_archive_end_header(6)));
+
+    for (std::size_t i = 0; i < records.size(); ++i) {
+        auto error = validator.validate(
+            parse_header(records[i]),
+            reinterpret_cast<const uint8_t *>(records[i].data()),
+            records[i].size());
+        if (error.has_value()) {
+            fail("valid interleaved FEC group rejected at record " +
+                 std::to_string(i) + ": " + *error);
+        }
+    }
+    expect(validator.saw_archive_end,
+           "FEC archive should finish with archive_end");
+}
+
+void test_salvage_relaxes_consistency_but_keeps_integrity() {
+    FrameValidator validator;
+    vector<std::byte> payload = {std::byte{'s'}, std::byte{'a'},
+                                 std::byte{'v'}};
+    FrameHeader header = make_content_header(99, 42, 17, payload.size(),
+                                             neotape::frame_flag_end);
+    header.archive_uuid = "00000000-0000-4000-8000-999999999999";
+    auto record = build_record(header, payload);
+
+    RestoreFrameValidation result = validator.validate_salvage_frame(
+        parse_header(record), reinterpret_cast<const uint8_t *>(record.data()),
+        record.size());
+    expect_restore_status(result, RestoreFrameValidationStatus::ok,
+                          "salvage should ignore archive/sequence consistency");
+
+    record[neotape::fixed_header_size] ^= std::byte{1};
+    result = validator.validate_salvage_frame(
+        parse_header(record), reinterpret_cast<const uint8_t *>(record.data()),
+        record.size());
+    expect_restore_status(result, RestoreFrameValidationStatus::fatal,
+                          "salvage must retain frame integrity checks");
+    expect_contains(result.message, "frame hash mismatch",
+                    "salvage integrity failure text");
+}
+
+void test_seeded_validator_accepts_fec_group_split_across_volumes() {
+    FrameValidator validator;
+    constexpr uint32_t capacity = 4096 - neotape::fixed_header_size;
+    vector<std::byte> payload(capacity, std::byte{0x4f});
+
+    auto first =
+        build_record(make_content_header(8, 0, 8, capacity,
+                                         neotape::frame_flag_fec_protected),
+                     payload);
+    FrameHeader const first_header = parse_header(first);
+    validator.seed_for_stream_start(first_header);
+    expect(!validator
+                .validate(first_header,
+                          reinterpret_cast<const uint8_t *>(first.data()),
+                          first.size())
+                .has_value(),
+           "seeded protected content should validate");
+
+    for (uint64_t sequence = 9; sequence < 32; ++sequence) {
+        uint64_t flags = neotape::frame_flag_fec_protected;
+        if (sequence == 31) {
+            flags |= neotape::frame_flag_end;
+        }
+        auto record = build_record(
+            make_content_header(sequence, 0, sequence, capacity, flags),
+            payload);
+        auto error = validator.validate(
+            parse_header(record),
+            reinterpret_cast<const uint8_t *>(record.data()), record.size());
+        if (error.has_value()) {
+            fail("seeded split FEC content rejected: " + *error);
+        }
+    }
+
+    neotape::FecDescriptor descriptor;
+    descriptor.source_content_frame_start = 0;
+    descriptor.source_frame_count = 32;
+    descriptor.source_stream_size = 32ULL * capacity;
+    vector<std::byte> repair(capacity, std::byte{0});
+    for (uint16_t index = 0; index < neotape::fec_repair_shards; ++index) {
+        descriptor.repair_index = index;
+        auto record = build_record(
+            make_fec_header(32 + index, index, descriptor,
+                            index + 1 == neotape::fec_repair_shards),
+            repair);
+        auto error = validator.validate(
+            parse_header(record),
+            reinterpret_cast<const uint8_t *>(record.data()), record.size());
+        if (error.has_value()) {
+            fail("seeded split FEC repair rejected: " + *error);
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -333,6 +479,9 @@ int main() {
     test_validator_rejects_archive_end_without_preceding_end();
     test_validator_rejects_multiple_groups_in_same_slice();
     test_validator_seed_accepts_volume_local_start_and_rejects_gap();
+    test_validator_accepts_interleaved_fec_group();
+    test_salvage_relaxes_consistency_but_keeps_integrity();
+    test_seeded_validator_accepts_fec_group_split_across_volumes();
     std::cout << "test_validate: ok\n";
     return 0;
 }

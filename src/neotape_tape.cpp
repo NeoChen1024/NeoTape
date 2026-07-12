@@ -101,6 +101,8 @@ std::string spool_suffix_for_header(const neotape::FrameHeader &header) {
     case neotape::ChannelType::CH_CONTENT:
     case neotape::ChannelType::CH_METADATA:
         return format("slice-{:06}", header.slice_seq_num);
+    case neotape::ChannelType::CH_FEC:
+        return format("slice-{:06}", header.slice_seq_num);
     case neotape::ChannelType::ARCHIVE_END:
         return "archive-end";
     }

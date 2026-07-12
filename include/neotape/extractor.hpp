@@ -13,6 +13,7 @@ struct ExtractorOptions {
     std::string output_path;    // empty = stdout
     bool verbose = false;
     bool require_signed = false;
+    bool salvage = false;
     std::vector<SignifyPublicKey> verify_keys;
 };
 

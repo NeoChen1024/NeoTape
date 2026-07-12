@@ -16,25 +16,24 @@ inline constexpr uint32_t max_block_size = 8 * 1024 * 1024;
 inline constexpr std::size_t nt_uuid_size = 37;
 inline constexpr std::size_t archive_label_size = 65;
 inline constexpr std::size_t signature_size = 72;
+inline constexpr std::size_t sideband_size = 128;
 
 using HeaderBytes = std::array<uint8_t, fixed_header_size>;
 using Hash = std::array<uint8_t, 32>;
 using SignatureBytes = std::array<uint8_t, signature_size>;
+using SidebandBytes = std::array<uint8_t, sideband_size>;
 
 enum class ChannelType : uint8_t {
     CH_CONTENT = 1,
     CH_METADATA = 2,
+    CH_FEC = 3,
     ARCHIVE_END = 255,
 };
 
 inline constexpr uint64_t frame_flag_end = 1ULL << 0;
 inline constexpr uint64_t frame_flag_signed = 1ULL << 1;
-// Bit 2: sideband_data carries channel-type-defined data. Reserved in
-// header_version=1 for the three defined channel types (which must zero-fill
-// sideband_data); future channel_type values may define its use. Not included
-// in validate_header's allowed_flags, so it is rejected on all currently-
-// parseable frames.
 inline constexpr uint64_t frame_flag_sideband = 1ULL << 2;
+inline constexpr uint64_t frame_flag_fec_protected = 1ULL << 3;
 inline constexpr uint64_t frame_flag_clean_end = 1ULL << 63;
 
 constexpr bool has_frame_flag_end(uint64_t flags) {
@@ -45,6 +44,9 @@ constexpr bool has_frame_flag_signed(uint64_t flags) {
 }
 constexpr bool has_frame_flag_sideband(uint64_t flags) {
     return (flags & frame_flag_sideband) != 0;
+}
+constexpr bool has_frame_flag_fec_protected(uint64_t flags) {
+    return (flags & frame_flag_fec_protected) != 0;
 }
 constexpr bool has_frame_flag_clean_end(uint64_t flags) {
     return (flags & frame_flag_clean_end) != 0;
@@ -61,6 +63,7 @@ struct FrameHeader {
     uint64_t channel_frame_seq_num{0};
     uint32_t frame_payload_size{0};
     uint64_t flags{0};
+    SidebandBytes sideband_data{};
     SignatureBytes signature{};
     Hash frame_hash{};
 };

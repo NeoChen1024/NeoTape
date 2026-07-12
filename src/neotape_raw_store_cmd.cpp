@@ -30,6 +30,7 @@ struct Options {
     uint32_t volume_block_size = 4 * 1024 * 1024;
     string archive_name = "raw";
     uint64_t retention_frame_count = 256;
+    bool fec_enabled = false;
     std::optional<string> sign_secret_key_file;
     std::optional<string> sign_passphrase_file;
     bool debug = false;
@@ -54,6 +55,7 @@ void usage(const char *prog) {
         "usage: {} --listen <tcp://host:port|unix://path>\n"
         "       [--input <file|->] [--volume-block-size <bytes>]\n"
         "       [--archive-name <name>] [--retention-frame-count <N>]\n"
+        "       [--fec]\n"
         "       [--sign-secret-key <file.sec>]\n"
         "       [--sign-passphrase-file <path>]\n"
         "       [--debug] [-h]\n",
@@ -70,6 +72,7 @@ Options parse_args(int argc, char **argv) {
         {"debug", no_argument, nullptr, 257},
         {"sign-secret-key", required_argument, nullptr, 258},
         {"sign-passphrase-file", required_argument, nullptr, 259},
+        {"fec", no_argument, nullptr, 260},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
@@ -110,6 +113,9 @@ Options parse_args(int argc, char **argv) {
             break;
         case 259:
             opts.sign_passphrase_file = optarg;
+            break;
+        case 260:
+            opts.fec_enabled = true;
             break;
         case 'h':
             usage(argv[0]);
@@ -158,7 +164,7 @@ void produce_raw_frames(FILE *input, const string &archive_uuid,
                         const Options &opts,
                         neotape::VolumeRecordQueue &queue) {
     neotape::ContentFrameBuilder builder(opts.volume_block_size, archive_uuid,
-                                         opts.archive_name);
+                                         opts.archive_name, opts.fec_enabled);
     std::vector<std::byte> buf(1024ULL * 1024ULL);
     for (;;) {
         size_t const n = std::fread(buf.data(), 1, buf.size(), input);
@@ -166,10 +172,9 @@ void produce_raw_frames(FILE *input, const string &archive_uuid,
             auto frames =
                 builder.feed(std::span<const std::byte>(buf.data(), n));
             for (auto &frame : frames) {
-                if (!queue.push(
-                        neotape::VolumeRecord{std::move(frame.record),
-                                              frame.global_seq_num, false,
-                                              false})) {
+                if (!queue.push(neotape::VolumeRecord{std::move(frame.record),
+                                                      frame.global_seq_num,
+                                                      false, false})) {
                     throw std::runtime_error("frame consumer disconnected");
                 }
             }
@@ -183,19 +188,18 @@ void produce_raw_frames(FILE *input, const string &archive_uuid,
         }
     }
 
-    if (auto final_frame = builder.flush(); final_frame.has_value()) {
-        if (!queue.push(
-                neotape::VolumeRecord{std::move(final_frame->record),
-                                      final_frame->global_seq_num, false,
-                                      false})) {
+    for (auto &final_frame : builder.flush()) {
+        if (!queue.push(neotape::VolumeRecord{std::move(final_frame.record),
+                                              final_frame.global_seq_num, false,
+                                              false})) {
             throw std::runtime_error("frame consumer disconnected");
         }
     }
     if (!queue.push(neotape::VolumeRecord{{}, 0, true, false})) {
         throw std::runtime_error("frame consumer disconnected");
     }
-    if (!queue.push(neotape::VolumeRecord{{}, builder.next_global_seq_num(),
-                                          false, true})) {
+    if (!queue.push(neotape::VolumeRecord{
+            {}, builder.next_global_seq_num(), false, true})) {
         throw std::runtime_error("frame consumer disconnected");
     }
 }

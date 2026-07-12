@@ -23,6 +23,7 @@ struct Options {
     uint32_t volume_block_size = 4 * 1024 * 1024;
     string archive_name = "archive";
     uint64_t retention_frame_count = 256;
+    bool fec_enabled = false;
     neotape::PaxWriterOptions pax;
     bool explicit_output = false;
     std::optional<string> sign_secret_key_file;
@@ -42,7 +43,8 @@ void usage(const char *prog) {
         "       [--volume-block-size <bytes>] [--archive-name <name>]\n"
         "       [-C <dir>] [-P <percent>] [--io-thread <N>]\n"
         "       [--output-buffer-size <bytes>] [--plan <file>]\n"
-        "       [--retention-frame-count <N>] [--sign-secret-key <file.sec>]\n"
+        "       [--retention-frame-count <N>] [--fec]\n"
+        "       [--sign-secret-key <file.sec>]\n"
         "       [--sign-passphrase-file <path>] [-v|-vv] [-x] [--debug]\n"
         "       <path> [path...]\n"
         "usage (local mode):\n"
@@ -68,6 +70,7 @@ Options parse_args(int argc, char **argv) {
         {"debug", no_argument, nullptr, 260},
         {"sign-secret-key", required_argument, nullptr, 261},
         {"sign-passphrase-file", required_argument, nullptr, 262},
+        {"fec", no_argument, nullptr, 263},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
@@ -153,6 +156,9 @@ Options parse_args(int argc, char **argv) {
         case 262:
             opts.sign_passphrase_file = optarg;
             break;
+        case 263:
+            opts.fec_enabled = true;
+            break;
         case 'h':
             usage(argv[0]);
             std::exit(0);
@@ -174,6 +180,9 @@ Options parse_args(int argc, char **argv) {
     }
     if (opts.sign_secret_key_file.has_value() && opts.listen_address.empty()) {
         fail("--sign-secret-key is only valid with --listen");
+    }
+    if (opts.fec_enabled && opts.listen_address.empty()) {
+        fail("--fec is only valid with --listen");
     }
     bool const has_plan = opts.pax.plan_path.has_value();
     bool const has_sources = !opts.pax.sources.empty();
@@ -206,6 +215,7 @@ int main(int argc, char **argv) {
             server_opts.volume_block_size = opts.volume_block_size;
             server_opts.archive_name = opts.archive_name;
             server_opts.retention_frame_count = opts.retention_frame_count;
+            server_opts.fec_enabled = opts.fec_enabled;
             server_opts.pax = opts.pax;
             if (opts.sign_secret_key_file.has_value()) {
                 server_opts.frame_signer = neotape::load_signify_secret_key(
