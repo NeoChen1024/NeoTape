@@ -46,6 +46,11 @@ struct FrameValidator {
     bool saw_archive_end = false;
     bool last_frame_had_end = false;
 
+    // Seed connection-local validation when reading begins at a volume
+    // boundary rather than archive-global frame zero. The supplied header is
+    // still validated normally by the next validate() call.
+    void seed_for_stream_start(const FrameHeader &header);
+
     // Validate one frame.  Returns error description or std::nullopt.
     //
     // header    — result of parse_fixed_header(raw_data, record_size)
@@ -66,9 +71,9 @@ struct FrameValidator {
     // Metadata frames are still checked for archive identity and sequencing,
     // but a metadata-only frame_hash mismatch is downgraded to a warning so a
     // payload reader can continue reconstructing ch_content.
-    RestoreFrameValidation
-    validate_restore_frame(const FrameHeader &header, const uint8_t *raw_data,
-                           std::size_t record_size);
+    RestoreFrameValidation validate_restore_frame(const FrameHeader &header,
+                                                  const uint8_t *raw_data,
+                                                  std::size_t record_size);
 
     // Reset to initial state (for inspecting a new archive).
     void reset();

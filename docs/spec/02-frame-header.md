@@ -58,7 +58,13 @@ A UTF-8 label, not an archive identifier. It is encoded as a 65-byte NUL-termina
 The `signature` and `frame_hash` fields are defined in [docs/spec/00-format-common.md](00-format-common.md):
 
 - `frame_hash` is a BLAKE3 digest over the canonical image of the entire frame.
-- `signature` is a 72-byte field used when the `SIGNED` flag is set. Bytes 0-7 hold a 64-bit key ID; bytes 8-71 hold a raw 64-byte Ed25519 signature over `NeoTape-frame\0 || frame_hash`. The context string includes its trailing NUL byte. This mirrors OpenBSD signify's Ed25519 signature payload without the leading two `Ed` bytes.
+- `signature` is a 72-byte field used when the `SIGNED` flag is set. Bytes 0-7
+  hold an opaque 8-byte key ID copied byte-for-byte from the
+  signify-compatible key file; it is not an integer and has no byte order.
+  Bytes 8-71 hold a raw 64-byte Ed25519 signature over
+  `NeoTape-frame\0 || frame_hash`. The context string includes its trailing NUL
+  byte. This mirrors OpenBSD signify's Ed25519 signature payload without the
+  leading two `Ed` bytes.
 
 ### `sideband_data`
 

@@ -181,7 +181,9 @@ cover per-frame integrity (magic, version, block size, hash, flags, signature
 consistency, reserved bytes) and archive continuity (`global_frame_seq_num`,
 slice/channel sequence, channel ordering, archive-end rules). With
 `--verify-pubkey`, it also validates frame signatures; `--require-signed`
-upgrades unsigned frames to compliance failures.
+requires at least one trusted `--verify-pubkey` and upgrades unsigned or
+untrusted frames to compliance failures. Without a public key, signed frames
+are reported as signed and unverified.
 
 ## neotape-read CLI
 
@@ -206,7 +208,9 @@ Long-running payload consumer. Listens for incoming reader connections,
 receives NeoTape frames, validates them via the shared `FrameValidator`, and
 reconstructs the original payload byte stream. Writes to a file or stdout.
 Signature validation is optional unless `--verify-pubkey` is configured;
-`--require-signed` rejects unsigned frames.
+`--require-signed` requires at least one `--verify-pubkey` and rejects unsigned
+or untrusted frames. Without a public key, signed frames remain readable but
+are reported as signed and unverified.
 
 ## neotape-write CLI
 

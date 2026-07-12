@@ -11,8 +11,9 @@ using std::string;
 
 namespace {
 
-RestoreFrameValidation make_restore_validation(
-    RestoreFrameValidationStatus status, std::string message = {}) {
+RestoreFrameValidation
+make_restore_validation(RestoreFrameValidationStatus status,
+                        std::string message = {}) {
     return RestoreFrameValidation{status, std::move(message)};
 }
 
@@ -21,6 +22,20 @@ RestoreFrameValidation make_restore_validation(
 // -----------------------------------------------------------------------
 // FrameValidator — archive-level state machine
 // -----------------------------------------------------------------------
+
+void FrameValidator::seed_for_stream_start(const FrameHeader &header) {
+    reset();
+    expected_global_frame_seq = header.global_frame_seq_num;
+    current_slice_seq_num = header.slice_seq_num;
+    expected_channel_frame_seq_num = header.channel_frame_seq_num;
+    last_channel_type = header.channel_type;
+    current_phase =
+        header.channel_type == ChannelType::CH_CONTENT    ? Phase::content
+        : header.channel_type == ChannelType::CH_METADATA ? Phase::metadata
+                                                          : Phase::none;
+    saw_any_frame = true;
+    last_frame_had_end = header.channel_type == ChannelType::ARCHIVE_END;
+}
 
 std::optional<string> FrameValidator::validate(const FrameHeader &header,
                                                const uint8_t *raw_data,
@@ -143,8 +158,8 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
 
     if (header.slice_seq_num != current_slice_seq_num) {
         if (header.slice_seq_num != current_slice_seq_num + 1) {
-            return format("slice_seq_num {} jumped from {}", header.slice_seq_num,
-                          current_slice_seq_num);
+            return format("slice_seq_num {} jumped from {}",
+                          header.slice_seq_num, current_slice_seq_num);
         }
         // Previous slice must have ended cleanly.
         if (had_previous_frame && !last_frame_had_end) {
@@ -168,9 +183,8 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
     }
 
     // --- END flag and channel-group boundaries ---
-    bool const channel_changed =
-        had_previous_frame && !slice_changed &&
-        header.channel_type != last_channel_type;
+    bool const channel_changed = had_previous_frame && !slice_changed &&
+                                 header.channel_type != last_channel_type;
 
     if (had_previous_frame && !slice_changed &&
         header.channel_type == last_channel_type && last_frame_had_end) {

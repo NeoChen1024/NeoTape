@@ -145,7 +145,13 @@ BLAKE3 hash computed over the canonical image of the entire frame (`volume_block
 
 ### signature
 
-72-byte field in the fixed header used when the `SIGNED` flag is set. Bytes 0-7 hold a 64-bit key ID; bytes 8-71 hold a raw 64-byte Ed25519 signature over the domain-separated message `NeoTape-frame\0 || frame_hash`. The context string includes its trailing NUL byte. This mirrors OpenBSD signify's Ed25519 signature payload without the leading two `Ed` bytes. When `SIGNED` is clear, the entire field must be zero.
+72-byte field in the fixed header used when the `SIGNED` flag is set. Bytes 0-7
+hold an opaque 8-byte key ID copied byte-for-byte from the signify-compatible
+key file; it is not an integer and has no byte order. Bytes 8-71 hold a raw
+64-byte Ed25519 signature over the domain-separated message
+`NeoTape-frame\0 || frame_hash`. The context string includes its trailing NUL
+byte. This mirrors OpenBSD signify's Ed25519 signature payload without the
+leading two `Ed` bytes. When `SIGNED` is clear, the entire field must be zero.
 
 ## Encoding Rules
 

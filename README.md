@@ -221,7 +221,9 @@ bin/neotape-extractor --listen unix:///run/neotape/extractor.sock \
 Long-running service that receives frames from readers, validates archive
 integrity, optionally validates signed frames against one or more public keys,
 and reconstructs the original payload stream to a file or stdout. Use
-`--require-signed` to reject unsigned frames.
+`--require-signed` together with at least one `--verify-pubkey` to reject
+unsigned or untrusted frames. Without a public key, signed frames remain usable
+but are reported as signed and unverified.
 
 ### bin/neotape-inspect (frame-level verification)
 
@@ -236,7 +238,8 @@ with BLAKE3 hash verification, followed by an archive-level compliance report
 (frame integrity, sequence continuity, channel ordering, SIGNED/signature
 consistency, archive-end rules). With `--verify-pubkey`, it also validates
 frame signatures; `--require-signed` upgrades unsigned frames to compliance
-failures.
+failures and requires at least one `--verify-pubkey`. Without a public key,
+signed frames are reported as unverified rather than as signature errors.
 
 ### Signing and verification
 
@@ -250,8 +253,9 @@ resulting `.sec` and `.pub` files.
   server and verifies each signed frame before writing.
 - `neotape-extractor` and `neotape-inspect` validate signatures with
   `--verify-pubkey`.
-- `--require-signed` on extractor or inspect rejects unsigned frames instead
-  of treating signatures as optional.
+- `--require-signed` on extractor or inspect requires at least one
+  `--verify-pubkey` and rejects unsigned or untrusted frames instead of treating
+  signatures as optional.
 
 ### bin/neotape-scan (archive identity scan)
 

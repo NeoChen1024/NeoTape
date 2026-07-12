@@ -90,7 +90,8 @@ When no trusted public key is configured:
 
 - a frame with `SIGNED = 0` MUST have an all-zero `signature` field;
 - a frame with `SIGNED = 1` is interpreted as an 8-byte key ID followed by a
-  64-byte Ed25519 signature, but cannot be cryptographically authenticated;
+  64-byte Ed25519 signature and MUST NOT have an all-zero `signature` field,
+  but cannot be cryptographically authenticated without a trusted public key;
 - the implementation MAY accept a structurally valid signed frame, but MUST
   report it as signed but unverified and MUST NOT claim authenticity.
 

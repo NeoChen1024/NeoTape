@@ -24,9 +24,9 @@ namespace {
 using neotape::create_listener;
 using neotape::FdGuard;
 using neotape::send_error;
+using neotape::uint64_to_le_bytes;
 using neotape::tcp::Message;
 using neotape::tcp::MessageType;
-using neotape::uint64_to_le_bytes;
 using std::format;
 using std::string;
 using std::vector;
@@ -37,6 +37,7 @@ struct ExtractorState {
     vector<uint8_t> slice_payload;
     bool require_signed = false;
     vector<SignifyPublicKey> verify_keys;
+    bool warned_signed_unverified = false;
 };
 
 [[nodiscard]] bool flush_slice(ExtractorState &state, FILE *output) {
@@ -85,11 +86,19 @@ struct ExtractorState {
         return false;
     }
 
-    if (auto sig_error = validate_frame_signature(
-            header, state.verify_keys, state.require_signed);
-        sig_error.has_value()) {
-        std::cerr << format("extractor: {}\n", *sig_error);
+    FrameSignatureValidation const signature_validation =
+        validate_frame_signature(header, state.verify_keys,
+                                 state.require_signed);
+    if (signature_validation.error.has_value()) {
+        std::cerr << format("extractor: {}\n", *signature_validation.error);
         return false;
+    }
+    if (signature_validation.status ==
+            FrameSignatureStatus::signed_unverified &&
+        !state.warned_signed_unverified) {
+        std::cerr << "extractor: warning: signed frames are not authenticated "
+                     "because no public key is configured\n";
+        state.warned_signed_unverified = true;
     }
 
     if (header.channel_type == ChannelType::CH_METADATA) {

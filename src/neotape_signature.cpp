@@ -19,8 +19,8 @@ extern "C" {
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <format>
+#include <fstream>
 #include <iterator>
 #include <optional>
 #include <stdexcept>
@@ -105,8 +105,8 @@ ArmoredBlob parse_armored_blob(const string &path) {
     }
 
     ArmoredBlob blob;
-    blob.comment = text.substr(comment_header.size(),
-                               first_nl - comment_header.size());
+    blob.comment =
+        text.substr(comment_header.size(), first_nl - comment_header.size());
     blob.base64 = text.substr(second_line_start, second_nl - second_line_start);
     if (blob.base64.size() > 2048) {
         fail_parse(path, "base64 payload too large");
@@ -133,12 +133,10 @@ array<uint8_t, N> decode_armored_payload(const string &path, string *comment) {
 uint32_t read_be32(const uint8_t *data) {
     return static_cast<uint32_t>(data[0]) << 24 |
            static_cast<uint32_t>(data[1]) << 16 |
-           static_cast<uint32_t>(data[2]) << 8 |
-           static_cast<uint32_t>(data[3]);
+           static_cast<uint32_t>(data[2]) << 8 | static_cast<uint32_t>(data[3]);
 }
 
-bool raw_key_id_equals(std::span<const uint8_t> lhs,
-                       const KeyIdBytes &rhs) {
+bool raw_key_id_equals(std::span<const uint8_t> lhs, const KeyIdBytes &rhs) {
     return lhs.size() == rhs.size() &&
            std::equal(lhs.begin(), lhs.end(), rhs.begin());
 }
@@ -187,18 +185,16 @@ bool verify_detached_message_signature(const DetachedSignatureBytes &signature,
               signed_message.begin() +
                   static_cast<std::ptrdiff_t>(signature.size()));
 
-    bool const ok = crypto_sign_ed25519_open(dummy.data(), &dummylen,
-                                             signed_message.data(),
-                                             signed_message.size(),
-                                             key.public_key.data()) == 0;
+    bool const ok = crypto_sign_ed25519_open(
+                        dummy.data(), &dummylen, signed_message.data(),
+                        signed_message.size(), key.public_key.data()) == 0;
     zeroize(signed_message.data(), signed_message.size());
     zeroize(dummy.data(), dummy.size());
     return ok;
 }
 
 void verify_algorithms(const string &path, string_view expected,
-                       std::span<const uint8_t> actual,
-                       string_view label) {
+                       std::span<const uint8_t> actual, string_view label) {
     if (actual.size() != expected.size() ||
         !std::equal(actual.begin(), actual.end(), expected.begin(),
                     expected.end())) {
@@ -233,8 +229,8 @@ string read_signify_passphrase_file(const string &path) {
 
 string prompt_signify_passphrase(const string &path) {
     char prompt[1024];
-    int const n = std::snprintf(prompt, sizeof(prompt), "passphrase for %s: ",
-                                path.c_str());
+    int const n = std::snprintf(prompt, sizeof(prompt),
+                                "passphrase for %s: ", path.c_str());
     if (n < 0 || static_cast<size_t>(n) >= sizeof(prompt)) {
         throw std::runtime_error("passphrase prompt too long");
     }
@@ -242,8 +238,8 @@ string prompt_signify_passphrase(const string &path) {
     char pass[1024];
     if (readpassphrase(prompt, pass, sizeof(pass),
                        RPP_ECHO_OFF | RPP_REQUIRE_TTY) == nullptr) {
-        throw std::runtime_error(format("read passphrase for {}: {}", path,
-                                        std::strerror(errno)));
+        throw std::runtime_error(
+            format("read passphrase for {}: {}", path, std::strerror(errno)));
     }
     if (pass[0] == '\0') {
         zeroize(pass, sizeof(pass));
@@ -270,7 +266,8 @@ SignifyPublicKey load_signify_public_key(const string &path) {
 
     SignifyPublicKey key;
     std::copy_n(blob.begin() + 2, key.key_id.size(), key.key_id.begin());
-    std::copy_n(blob.begin() + 10, key.public_key.size(), key.public_key.begin());
+    std::copy_n(blob.begin() + 10, key.public_key.size(),
+                key.public_key.begin());
     key.comment = std::move(comment);
     key.source_path = path;
     return key;
@@ -349,7 +346,8 @@ SignatureBytes sign_frame_hash(const SignifySecretKey &key, const Hash &hash) {
     SignatureBytes signature{};
     std::copy(key.key_id.begin(), key.key_id.end(), signature.begin());
     std::copy_n(detached.begin(), detached.size(),
-                signature.begin() + static_cast<std::ptrdiff_t>(key.key_id.size()));
+                signature.begin() +
+                    static_cast<std::ptrdiff_t>(key.key_id.size()));
     zeroize(message.data(), message.size());
     return signature;
 }
@@ -374,7 +372,8 @@ bool verify_frame_hash_signature(const SignatureBytes &signature,
 DetachedSignatureBytes sign_auth_nonce(const SignifySecretKey &key,
                                        const AuthNonceBytes &nonce) {
     vector<uint8_t> message = auth_signature_message(nonce);
-    DetachedSignatureBytes const signature = sign_detached_message(key, message);
+    DetachedSignatureBytes const signature =
+        sign_detached_message(key, message);
     zeroize(message.data(), message.size());
     return signature;
 }
@@ -388,39 +387,61 @@ bool verify_auth_nonce_signature(const DetachedSignatureBytes &signature,
     return ok;
 }
 
-std::optional<std::string>
+FrameSignatureValidation
 validate_frame_signature(const FrameHeader &header,
                          const std::vector<SignifyPublicKey> &keys,
                          bool require_signed) {
+    bool const signature_present = std::ranges::any_of(
+        header.signature, [](uint8_t byte) { return byte != 0; });
     if (!has_frame_flag_signed(header.flags)) {
-        if (require_signed) {
-            return format("unsigned frame at global_seq={}",
-                          header.global_frame_seq_num);
+        if (signature_present) {
+            return {FrameSignatureStatus::invalid,
+                    format("non-zero signature bytes without SIGNED flag at "
+                           "global_seq={}",
+                           header.global_frame_seq_num)};
         }
-        return std::nullopt;
+        if (require_signed) {
+            return {FrameSignatureStatus::invalid,
+                    format("unsigned frame at global_seq={}",
+                           header.global_frame_seq_num)};
+        }
+        return {FrameSignatureStatus::unsigned_frame, std::nullopt};
+    }
+    if (!signature_present) {
+        return {FrameSignatureStatus::invalid,
+                format("SIGNED flag set but signature bytes are all zero at "
+                       "global_seq={}",
+                       header.global_frame_seq_num)};
     }
 
     KeyIdBytes const key_id = signature_key_id(header.signature);
     if (keys.empty()) {
-        return format("signed frame at global_seq={} but no public keys are "
-                      "configured (key_id={})",
-                      header.global_frame_seq_num, key_id_hex_impl(key_id));
+        if (require_signed) {
+            return {FrameSignatureStatus::invalid,
+                    format("require-signed validation has no configured public "
+                           "key for signed frame at global_seq={} (key_id={})",
+                           header.global_frame_seq_num,
+                           key_id_hex_impl(key_id))};
+        }
+        return {FrameSignatureStatus::signed_unverified, std::nullopt};
     }
 
-    auto const it = std::find_if(keys.begin(), keys.end(),
-                                 [&](const SignifyPublicKey &key) {
-                                     return key.key_id == key_id;
-                                 });
+    auto const it = std::find_if(
+        keys.begin(), keys.end(),
+        [&](const SignifyPublicKey &key) { return key.key_id == key_id; });
     if (it == keys.end()) {
-        return format("no public key for key_id={} at global_seq={}",
-                      key_id_hex_impl(key_id), header.global_frame_seq_num);
+        return {FrameSignatureStatus::invalid,
+                format("no public key for key_id={} at global_seq={}",
+                       key_id_hex_impl(key_id), header.global_frame_seq_num)};
     }
-    if (!verify_frame_hash_signature(header.signature, header.frame_hash, *it)) {
-        return format("signature verification failed for key_id={} at "
-                      "global_seq={}",
-                      key_id_hex_impl(key_id), header.global_frame_seq_num);
+    if (!verify_frame_hash_signature(header.signature, header.frame_hash,
+                                     *it)) {
+        return {FrameSignatureStatus::invalid,
+                format("signature verification failed for key_id={} at "
+                       "global_seq={}",
+                       key_id_hex_impl(key_id), header.global_frame_seq_num)};
     }
-    return std::nullopt;
+    return {FrameSignatureStatus::verified, std::nullopt};
 }
 
 } // namespace neotape

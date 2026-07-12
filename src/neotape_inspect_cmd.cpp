@@ -122,6 +122,9 @@ Options parse_args(int argc, char **argv) {
     if (opts.source.kind == SourceLocator::none) {
         usage_error("--source is required");
     }
+    if (opts.require_signed && opts.verify_pubkey_paths.empty()) {
+        usage_error("--require-signed requires at least one --verify-pubkey");
+    }
     return opts;
 }
 
@@ -341,12 +344,12 @@ class TapeFrameReader final : public FrameReader {
                 if (errno == EIO) {
                     // Filemark on tape.
                     dev_->space_fwd_filemark(1);
-                    return ReadResult{{},
-                                      file_num,
-                                      true,
-                                      false,
-                                      format("filemark after file #{}",
-                                             file_num)};
+                    return ReadResult{
+                        {},
+                        file_num,
+                        true,
+                        false,
+                        format("filemark after file #{}", file_num)};
                 }
                 throw std::runtime_error(format(
                     "read {}: {}", dev_->device_path(), std::strerror(errno)));
@@ -364,12 +367,9 @@ class TapeFrameReader final : public FrameReader {
                                   format("filemark after file #{}", file_num)};
             }
 
-            return ReadResult{vector<std::byte>(buffer_.data(),
-                                                buffer_.data() + n),
-                              file_num,
-                              false,
-                              false,
-                              dev_->device_path()};
+            return ReadResult{
+                vector<std::byte>(buffer_.data(), buffer_.data() + n), file_num,
+                false, false, dev_->device_path()};
         }
     }
 
@@ -430,7 +430,10 @@ struct Stats {
     uint64_t archive_end_frames = 0;
     uint64_t filemarks = 0;
     uint64_t errors = 0;
+    uint64_t unsigned_frames = 0;
     uint64_t signed_frames = 0;
+    uint64_t signed_unverified = 0;
+    uint64_t signatures_verified = 0;
     uint64_t signature_errors = 0;
     uint64_t total_payload_bytes = 0;
 };
@@ -438,22 +441,6 @@ struct Stats {
 void print_separator() {
     std::cout << "------+------+--------+----------+-----------+----------+"
                  "---------+-------+-------\n";
-}
-
-void seed_validator_for_volume_start(FrameValidator &validator,
-                                     const FrameHeader &header) {
-    validator.expected_global_frame_seq = header.global_frame_seq_num;
-    validator.current_slice_seq_num = header.slice_seq_num;
-    validator.expected_channel_frame_seq_num = header.channel_frame_seq_num;
-    validator.last_channel_type = header.channel_type;
-    validator.current_phase = header.channel_type == ChannelType::CH_CONTENT
-                                  ? FrameValidator::Phase::content
-                              : header.channel_type == ChannelType::CH_METADATA
-                                  ? FrameValidator::Phase::metadata
-                                  : FrameValidator::Phase::none;
-    validator.saw_any_frame = true;
-    validator.last_frame_had_end =
-        header.channel_type == ChannelType::ARCHIVE_END;
 }
 
 int do_inspect(const Options &opts) {
@@ -477,8 +464,7 @@ int do_inspect(const Options &opts) {
     std::cout << format("  {:>3s} | {:>4s} | {:>6s} | {:>8s} | {:>9s} | "
                         "{:>8s} | {:>7s} | {:>5s} | {:>5s}\n",
                         "#", "File", "GblSeq", "SliceSeq", "Channel",
-                        "ChFrmSeq",
-                        "Payload", "Flags", "Hash");
+                        "ChFrmSeq", "Payload", "Flags", "Hash");
     std::cout << "------+------+--------+----------+-----------+----------+"
                  "---------+-------+-------\n";
 
@@ -523,7 +509,7 @@ int do_inspect(const Options &opts) {
         if (frame_number == 1) {
             // A spool or tape scan may begin at any volume boundary, not
             // necessarily at archive-global frame 0 or channel-frame 0.
-            seed_validator_for_volume_start(validator, header);
+            validator.seed_for_stream_start(header);
         }
         auto err = validator.validate(header, data, rr.record.size());
         if (err.has_value()) {
@@ -557,13 +543,23 @@ int do_inspect(const Options &opts) {
         }
         if (has_frame_flag_signed(header.flags)) {
             ++stats.signed_frames;
+        } else {
+            ++stats.unsigned_frames;
         }
-        if (auto sig_error = neotape::validate_frame_signature(
-                header, opts.verify_keys, opts.require_signed);
-            sig_error.has_value()) {
+        neotape::FrameSignatureValidation const signature_validation =
+            neotape::validate_frame_signature(header, opts.verify_keys,
+                                              opts.require_signed);
+        if (signature_validation.error.has_value()) {
             ++stats.errors;
             ++stats.signature_errors;
-            issues.push_back(format("Frame #{}: {}", frame_number, *sig_error));
+            issues.push_back(format("Frame #{}: {}", frame_number,
+                                    *signature_validation.error));
+        } else if (signature_validation.status ==
+                   neotape::FrameSignatureStatus::signed_unverified) {
+            ++stats.signed_unverified;
+        } else if (signature_validation.status ==
+                   neotape::FrameSignatureStatus::verified) {
+            ++stats.signatures_verified;
         }
 
         std::cout << format(
@@ -571,9 +567,9 @@ int do_inspect(const Options &opts) {
             "{:>7d} | {:>5s} | {:>5s}\n",
             frame_number, static_cast<int>(rr.file_num),
             header.global_frame_seq_num, header.slice_seq_num,
-            channel_abbrev(header.channel_type),
-            header.channel_frame_seq_num, header.frame_payload_size,
-            flags_str(header.flags), hash_status(header.frame_hash, computed));
+            channel_abbrev(header.channel_type), header.channel_frame_seq_num,
+            header.frame_payload_size, flags_str(header.flags),
+            hash_status(header.frame_hash, computed));
     }
 
     print_separator();
@@ -585,7 +581,10 @@ int do_inspect(const Options &opts) {
     std::cout << format("  Metadata frames:  {}\n", stats.metadata_frames);
     std::cout << format("  Archive_end:      {}\n", stats.archive_end_frames);
     std::cout << format("  Filemarks:        {}\n", stats.filemarks);
+    std::cout << format("  Unsigned frames:  {}\n", stats.unsigned_frames);
     std::cout << format("  Signed frames:    {}\n", stats.signed_frames);
+    std::cout << format("  Signed unverified: {}\n", stats.signed_unverified);
+    std::cout << format("  Signatures valid: {}\n", stats.signatures_verified);
     std::cout << format("  Signature errors: {}\n", stats.signature_errors);
 
     if (validator.saw_any_frame && !validator.archive_uuid.empty()) {

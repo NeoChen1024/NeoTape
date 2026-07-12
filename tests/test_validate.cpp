@@ -40,8 +40,7 @@ void expect_contains(string_view haystack, string_view needle,
 }
 
 FrameHeader make_header(ChannelType type, uint64_t global_seq_num,
-                        uint64_t slice_seq_num,
-                        uint64_t channel_frame_seq_num,
+                        uint64_t slice_seq_num, uint64_t channel_frame_seq_num,
                         uint32_t payload_size, uint64_t flags) {
     FrameHeader header;
     header.channel_type = type;
@@ -74,8 +73,7 @@ FrameHeader make_metadata_header(uint64_t global_seq_num,
 
 FrameHeader make_archive_end_header(uint64_t global_seq_num) {
     return make_header(ChannelType::ARCHIVE_END, global_seq_num, 0, 0, 0,
-                       neotape::frame_flag_end |
-                           neotape::frame_flag_clean_end);
+                       neotape::frame_flag_end | neotape::frame_flag_clean_end);
 }
 
 vector<std::byte> build_record(FrameHeader header,
@@ -123,12 +121,12 @@ void expect_restore_status(const RestoreFrameValidation &result,
 void test_restore_mode_metadata_hash_warning() {
     FrameValidator validator;
 
-    vector<std::byte> const metadata_payload = {
-        std::byte{'m'}, std::byte{'e'}, std::byte{'t'}, std::byte{'a'}};
-    auto metadata_record = build_record(
-        make_metadata_header(0, 0, 0, metadata_payload.size(),
-                             neotape::frame_flag_end),
-        metadata_payload);
+    vector<std::byte> const metadata_payload = {std::byte{'m'}, std::byte{'e'},
+                                                std::byte{'t'}, std::byte{'a'}};
+    auto metadata_record =
+        build_record(make_metadata_header(0, 0, 0, metadata_payload.size(),
+                                          neotape::frame_flag_end),
+                     metadata_payload);
     metadata_record[neotape::fixed_header_size] ^= std::byte{0x01};
 
     FrameHeader const metadata_header = parse_header(metadata_record);
@@ -137,7 +135,8 @@ void test_restore_mode_metadata_hash_warning() {
             metadata_header,
             reinterpret_cast<const uint8_t *>(metadata_record.data()),
             metadata_record.size());
-    expect_restore_status(metadata_result, RestoreFrameValidationStatus::warning,
+    expect_restore_status(metadata_result,
+                          RestoreFrameValidationStatus::warning,
                           "metadata hash mismatch should be warning-only");
     expect_contains(metadata_result.message, "metadata frame hash mismatch",
                     "metadata warning text");
@@ -145,10 +144,10 @@ void test_restore_mode_metadata_hash_warning() {
            "metadata warning should still advance global sequence state");
 
     vector<std::byte> const content_payload = {std::byte{'o'}, std::byte{'k'}};
-    auto content_record = build_record(
-        make_content_header(1, 0, 0, content_payload.size(),
-                            neotape::frame_flag_end),
-        content_payload);
+    auto content_record =
+        build_record(make_content_header(1, 0, 0, content_payload.size(),
+                                         neotape::frame_flag_end),
+                     content_payload);
     FrameHeader const content_header = parse_header(content_record);
     RestoreFrameValidation const content_result =
         validator.validate_restore_frame(
@@ -175,10 +174,10 @@ void test_restore_mode_metadata_structural_failure_is_fatal() {
     FrameValidator validator;
 
     vector<std::byte> const metadata_payload = {std::byte{'m'}};
-    auto first_record = build_record(
-        make_metadata_header(0, 0, 0, metadata_payload.size(),
-                             neotape::frame_flag_end),
-        metadata_payload);
+    auto first_record =
+        build_record(make_metadata_header(0, 0, 0, metadata_payload.size(),
+                                          neotape::frame_flag_end),
+                     metadata_payload);
     auto first_result = validator.validate_restore_frame(
         parse_header(first_record),
         reinterpret_cast<const uint8_t *>(first_record.data()),
@@ -223,20 +222,22 @@ void test_validator_rejects_new_slice_without_channel_frame_seq_reset() {
     auto first_record = build_record(
         make_content_header(0, 0, 0, payload.size(), neotape::frame_flag_end),
         payload);
-    expect(!validator
-                .validate(parse_header(first_record),
-                          reinterpret_cast<const uint8_t *>(first_record.data()),
-                          first_record.size())
-                .has_value(),
-           "first slice should validate");
+    expect(
+        !validator
+             .validate(parse_header(first_record),
+                       reinterpret_cast<const uint8_t *>(first_record.data()),
+                       first_record.size())
+             .has_value(),
+        "first slice should validate");
 
     auto second_record = build_record(
         make_content_header(1, 1, 1, payload.size(), neotape::frame_flag_end),
         payload);
     expect_validation_error(
-        validator.validate(parse_header(second_record),
-                           reinterpret_cast<const uint8_t *>(second_record.data()),
-                           second_record.size()),
+        validator.validate(
+            parse_header(second_record),
+            reinterpret_cast<const uint8_t *>(second_record.data()),
+            second_record.size()),
         "channel_frame_seq_num 1 != 0",
         "new slice without channel sequence reset should be rejected");
 }
@@ -245,21 +246,22 @@ void test_validator_rejects_archive_end_without_preceding_end() {
     FrameValidator validator;
 
     vector<std::byte> const payload = {std::byte{'b'}};
-    auto content_record = build_record(
-        make_content_header(0, 0, 0, payload.size(), 0), payload);
-    expect(!validator
-                .validate(parse_header(content_record),
-                          reinterpret_cast<const uint8_t *>(content_record.data()),
-                          content_record.size())
-                .has_value(),
-           "unterminated content group should validate until archive_end");
+    auto content_record =
+        build_record(make_content_header(0, 0, 0, payload.size(), 0), payload);
+    expect(
+        !validator
+             .validate(parse_header(content_record),
+                       reinterpret_cast<const uint8_t *>(content_record.data()),
+                       content_record.size())
+             .has_value(),
+        "unterminated content group should validate until archive_end");
 
     auto archive_end_record = build_record(make_archive_end_header(1));
     expect_validation_error(
-        validator.validate(parse_header(archive_end_record),
-                           reinterpret_cast<const uint8_t *>(
-                               archive_end_record.data()),
-                           archive_end_record.size()),
+        validator.validate(
+            parse_header(archive_end_record),
+            reinterpret_cast<const uint8_t *>(archive_end_record.data()),
+            archive_end_record.size()),
         "archive_end without END flag",
         "archive_end must follow a terminated channel group");
 }
@@ -271,22 +273,54 @@ void test_validator_rejects_multiple_groups_in_same_slice() {
     auto first_record = build_record(
         make_content_header(0, 0, 0, payload.size(), neotape::frame_flag_end),
         payload);
-    expect(!validator
-                .validate(parse_header(first_record),
-                          reinterpret_cast<const uint8_t *>(first_record.data()),
-                          first_record.size())
-                .has_value(),
-           "first content group should validate");
+    expect(
+        !validator
+             .validate(parse_header(first_record),
+                       reinterpret_cast<const uint8_t *>(first_record.data()),
+                       first_record.size())
+             .has_value(),
+        "first content group should validate");
 
     auto second_record = build_record(
         make_content_header(1, 0, 0, payload.size(), neotape::frame_flag_end),
         payload);
     expect_validation_error(
-        validator.validate(parse_header(second_record),
-                           reinterpret_cast<const uint8_t *>(second_record.data()),
-                           second_record.size()),
+        validator.validate(
+            parse_header(second_record),
+            reinterpret_cast<const uint8_t *>(second_record.data()),
+            second_record.size()),
         "multiple CH_CONTENT groups",
         "same-slice second content group should be rejected");
+}
+
+void test_validator_seed_accepts_volume_local_start_and_rejects_gap() {
+    FrameValidator validator;
+
+    uint32_t const payload_capacity = 4096 - neotape::fixed_header_size;
+    vector<std::byte> const full_payload(payload_capacity, std::byte{'s'});
+    auto first_record = build_record(
+        make_content_header(42, 3, 7, payload_capacity, 0), full_payload);
+    FrameHeader const first_header = parse_header(first_record);
+    validator.seed_for_stream_start(first_header);
+    expect(
+        !validator
+             .validate(first_header,
+                       reinterpret_cast<const uint8_t *>(first_record.data()),
+                       first_record.size())
+             .has_value(),
+        "seeded validator should accept a non-zero volume-local start");
+
+    vector<std::byte> const final_payload = {std::byte{'x'}};
+    auto gap_record =
+        build_record(make_content_header(44, 3, 8, final_payload.size(),
+                                         neotape::frame_flag_end),
+                     final_payload);
+    expect_validation_error(
+        validator.validate(parse_header(gap_record),
+                           reinterpret_cast<const uint8_t *>(gap_record.data()),
+                           gap_record.size()),
+        "global_frame_seq_num 44 != expected 43",
+        "seeded validator should reject a connection-local sequence gap");
 }
 
 } // namespace
@@ -298,6 +332,7 @@ int main() {
     test_validator_rejects_new_slice_without_channel_frame_seq_reset();
     test_validator_rejects_archive_end_without_preceding_end();
     test_validator_rejects_multiple_groups_in_same_slice();
+    test_validator_seed_accepts_volume_local_start_and_rejects_gap();
     std::cout << "test_validate: ok\n";
     return 0;
 }

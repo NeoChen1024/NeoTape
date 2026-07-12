@@ -32,10 +32,25 @@ struct SignifySecretKey {
     std::string source_path;
 };
 
+enum class FrameSignatureStatus {
+    unsigned_frame,
+    signed_unverified,
+    verified,
+    invalid,
+};
+
+// `error` is populated exactly when status is invalid. A
+// signed_unverified result is successful integrity-only validation and does
+// not claim authenticity.
+struct FrameSignatureValidation {
+    FrameSignatureStatus status = FrameSignatureStatus::unsigned_frame;
+    std::optional<std::string> error;
+};
+
 SignifyPublicKey load_signify_public_key(const std::string &path);
-SignifySecretKey load_signify_secret_key(
-    const std::string &path,
-    std::optional<std::string> passphrase = std::nullopt);
+SignifySecretKey
+load_signify_secret_key(const std::string &path,
+                        std::optional<std::string> passphrase = std::nullopt);
 std::string read_signify_passphrase_file(const std::string &path);
 std::string prompt_signify_passphrase(const std::string &path);
 AuthNonceBytes random_auth_nonce();
@@ -44,14 +59,13 @@ KeyIdBytes signature_key_id(const SignatureBytes &signature);
 std::string key_id_hex(std::span<const uint8_t> key_id);
 SignatureBytes sign_frame_hash(const SignifySecretKey &key, const Hash &hash);
 bool verify_frame_hash_signature(const SignatureBytes &signature,
-                                 const Hash &hash,
-                                 const SignifyPublicKey &key);
+                                 const Hash &hash, const SignifyPublicKey &key);
 DetachedSignatureBytes sign_auth_nonce(const SignifySecretKey &key,
                                        const AuthNonceBytes &nonce);
 bool verify_auth_nonce_signature(const DetachedSignatureBytes &signature,
                                  const AuthNonceBytes &nonce,
                                  const SignifyPublicKey &key);
-std::optional<std::string>
+FrameSignatureValidation
 validate_frame_signature(const FrameHeader &header,
                          const std::vector<SignifyPublicKey> &keys,
                          bool require_signed = false);

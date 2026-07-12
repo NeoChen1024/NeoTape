@@ -180,16 +180,47 @@ void test_validate_frame_signature() {
     header.flags = neotape::frame_flag_signed;
     header.signature = neotape::sign_frame_hash(seckey, hash);
 
-    expect(!neotape::validate_frame_signature(header, {pubkey}).has_value(),
-           "signed frame should validate");
-    expect(neotape::validate_frame_signature(header, {}).has_value(),
-           "signed frame without key should fail");
+    auto validation = neotape::validate_frame_signature(header, {pubkey});
+    expect(!validation.error.has_value(), "signed frame should validate");
+    expect(validation.status == neotape::FrameSignatureStatus::verified,
+           "signed frame should report verified status");
+
+    validation = neotape::validate_frame_signature(header, {});
+    expect(!validation.error.has_value(),
+           "signed frame without key should remain usable");
+    expect(validation.status ==
+               neotape::FrameSignatureStatus::signed_unverified,
+           "signed frame without key should report unverified status");
+
+    validation = neotape::validate_frame_signature(header, {}, true);
+    expect(validation.error.has_value(),
+           "require-signed validation without keys should fail");
+    expect(validation.status == neotape::FrameSignatureStatus::invalid,
+           "invalid require-signed configuration should report invalid status");
+
+    header.signature.fill(0);
+    validation = neotape::validate_frame_signature(header, {});
+    expect(validation.error.has_value(),
+           "SIGNED frame with an all-zero signature should fail");
+    expect(validation.status == neotape::FrameSignatureStatus::invalid,
+           "all-zero signed frame should report invalid status");
 
     header.flags = 0;
     header.signature.fill(0);
-    expect(!neotape::validate_frame_signature(header, {pubkey}).has_value(),
+    validation = neotape::validate_frame_signature(header, {pubkey});
+    expect(!validation.error.has_value(),
            "unsigned frame should validate when signatures are optional");
-    expect(neotape::validate_frame_signature(header, {pubkey}, true).has_value(),
+    expect(validation.status == neotape::FrameSignatureStatus::unsigned_frame,
+           "unsigned frame should report unsigned status");
+
+    header.signature[0] = 1;
+    validation = neotape::validate_frame_signature(header, {pubkey});
+    expect(validation.error.has_value(),
+           "unsigned frame with signature bytes should fail");
+    header.signature.fill(0);
+
+    validation = neotape::validate_frame_signature(header, {pubkey}, true);
+    expect(validation.error.has_value(),
            "unsigned frame should fail when signatures are required");
 }
 

@@ -25,7 +25,15 @@ The catalog is an advisory index, not authoritative metadata. Readers MUST:
 
 BLAKE3 (`frame_hash`) is used for per-frame integrity verification, not authentication.
 
-The `signature` field (72 bytes) holds an 8-byte key ID plus a 64-byte Ed25519 signature over the domain-separated message `NeoTape-frame\0 || frame_hash`. The context string includes its trailing NUL byte. When the `SIGNED` flag is set and the signature verifies against a trusted public key, it provides authenticity and tamper resistance. When the flag is clear, the entire `signature` field MUST be zero. The validation modes and their accept/reject rules are defined in [05-validation.md](05-validation.md).
+The `signature` field (72 bytes) holds an opaque 8-byte key ID copied
+byte-for-byte from the signify-compatible key file, followed by a 64-byte
+Ed25519 signature over the domain-separated message
+`NeoTape-frame\0 || frame_hash`. The key ID is not an integer and has no byte
+order. The context string includes its trailing NUL byte. When the `SIGNED`
+flag is set and the signature verifies against a trusted public key, it
+provides authenticity and tamper resistance. When the flag is clear, the
+entire `signature` field MUST be zero. The validation modes and their
+accept/reject rules are defined in [05-validation.md](05-validation.md).
 
 ## Executable Content
 

@@ -5,6 +5,7 @@
 #include "neotape/tape.hpp"
 #include "neotape/tape_ioctl.hpp"
 #include "neotape/tcp_protocol.hpp"
+#include "neotape/validate.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -197,8 +198,9 @@ auth_challenge_payload(const neotape::AuthNonceBytes &nonce) {
 neotape::DetachedSignatureBytes
 decode_auth_response_payload(const vector<std::byte> &payload) {
     if (payload.size() != neotape::DetachedSignatureBytes{}.size()) {
-        throw std::runtime_error(format("auth_response payload must be {} bytes",
-                                        neotape::DetachedSignatureBytes{}.size()));
+        throw std::runtime_error(
+            format("auth_response payload must be {} bytes",
+                   neotape::DetachedSignatureBytes{}.size()));
     }
 
     neotape::DetachedSignatureBytes signature{};
@@ -245,30 +247,32 @@ void authenticate_source_server(int fd,
         throw std::runtime_error(
             decode_error_payload(response->payload, "archiver auth failure"));
     default:
-        throw std::runtime_error(format(
-            "expected auth_response, got {}",
-            neotape::tcp::message_type_name(response->type)));
+        throw std::runtime_error(
+            format("expected auth_response, got {}",
+                   neotape::tcp::message_type_name(response->type)));
     }
 }
 
-void verify_frame_record(const vector<std::byte> &record,
-                         const neotape::FrameHeader &header,
-                         const vector<neotape::SignifyPublicKey> &keys) {
-    if (keys.empty()) {
-        return;
+neotape::FrameSignatureStatus verify_frame_record(
+    const vector<std::byte> &record, const neotape::FrameHeader &header,
+    const vector<neotape::SignifyPublicKey> &keys,
+    neotape::FrameValidator &validator, bool &validator_seeded) {
+    const auto *data = reinterpret_cast<const uint8_t *>(record.data());
+    if (!validator_seeded) {
+        validator.seed_for_stream_start(header);
+        validator_seeded = true;
+    }
+    if (auto validation_error = validator.validate(header, data, record.size());
+        validation_error.has_value()) {
+        throw std::runtime_error(*validation_error);
     }
 
-    neotape::Hash const computed = neotape::compute_frame_hash(
-        reinterpret_cast<const uint8_t *>(record.data()), record.size());
-    if (computed != header.frame_hash) {
-        throw std::runtime_error(
-            format("frame hash mismatch at global_seq={}",
-                   header.global_frame_seq_num));
+    neotape::FrameSignatureValidation const signature_validation =
+        neotape::validate_frame_signature(header, keys, !keys.empty());
+    if (signature_validation.error.has_value()) {
+        throw std::runtime_error(*signature_validation.error);
     }
-    if (auto sig_error = neotape::validate_frame_signature(header, keys, true);
-        sig_error.has_value()) {
-        throw std::runtime_error(*sig_error);
-    }
+    return signature_validation.status;
 }
 
 struct PendingFrame {
@@ -563,6 +567,9 @@ int main(int argc, char **argv) {
         using neotape::tcp::MessageType;
 
         std::optional<uint32_t> volume_block_size;
+        neotape::FrameValidator frame_validator;
+        bool validator_seeded = false;
+        bool warned_signed_unverified = false;
 
         // Output abstraction: a tape or spool device.  There is no raw file
         // mode; spool is the filesystem surrogate for tape.
@@ -699,7 +706,18 @@ int main(int argc, char **argv) {
                                *volume_block_size, msg->payload.size()));
                 }
                 try {
-                    verify_frame_record(msg->payload, header, verify_keys);
+                    neotape::FrameSignatureStatus const signature_status =
+                        verify_frame_record(msg->payload, header, verify_keys,
+                                            frame_validator, validator_seeded);
+                    if (signature_status ==
+                            neotape::FrameSignatureStatus::signed_unverified &&
+                        !warned_signed_unverified) {
+                        std::cerr
+                            << "writer: warning: signed frames are being "
+                               "written without authentication because no "
+                               "public key is configured\n";
+                        warned_signed_unverified = true;
+                    }
                 } catch (const std::exception &e) {
                     joined_fail(e.what());
                 }

@@ -20,6 +20,11 @@ using std::string;
     std::exit(1);
 }
 
+[[noreturn]] void usage_error(const string &msg) {
+    std::cerr << format("neotape-extractor: {}\n", msg);
+    std::exit(2);
+}
+
 void usage(const char *prog) {
     std::cerr << format("usage: {} --listen <tcp://host:port|unix://path>\n"
                         "       [-o <file>] [--verify-pubkey <file.pub>]...\n"
@@ -81,6 +86,9 @@ Options parse_args(int argc, char **argv) {
             "neotape-extractor: unexpected positional arguments\n");
         std::exit(2);
     }
+    if (opts.require_signed && opts.verify_pubkey_paths.empty()) {
+        usage_error("--require-signed requires at least one --verify-pubkey");
+    }
 
     return opts;
 }
@@ -103,7 +111,8 @@ int main(int argc, char **argv) {
         ex_opts.verbose = opts.verbose;
         ex_opts.require_signed = opts.require_signed;
         for (const string &path : opts.verify_pubkey_paths) {
-            ex_opts.verify_keys.push_back(neotape::load_signify_public_key(path));
+            ex_opts.verify_keys.push_back(
+                neotape::load_signify_public_key(path));
         }
 
         uint64_t const frames = neotape::run_tcp_extractor(ex_opts);
