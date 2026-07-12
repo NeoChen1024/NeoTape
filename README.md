@@ -233,6 +233,12 @@ identity, sequence, channel-order, and clean-completion consistency. Invalid
 frames are skipped with stderr diagnostics. FEC-protected groups are repaired
 with RS(32,4) when the group BLAKE3 commitment verifies.
 
+FEC correction is also automatic in normal extraction. The extractor detects
+`FEC_PROTECTED`/`ch_fec`, buffers the group, and repairs unavailable content or
+repair shards before emitting it; no extractor-side `--fec` flag is required.
+See
+[`docs/implementation/fec-restore-behavior.md`](docs/implementation/fec-restore-behavior.md).
+
 ### bin/neotape-inspect (frame-level verification)
 
 ```sh

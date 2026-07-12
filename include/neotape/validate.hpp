@@ -63,6 +63,7 @@ struct FrameValidator {
     uint16_t protected_run_count = 0;
     bool protected_run_started_before_stream = false;
     uint64_t protected_run_size = 0;
+    bool protected_run_has_unavailable = false;
     std::vector<uint8_t> protected_run_bytes;
     std::optional<FecDescriptor> current_fec_group;
     uint16_t next_repair_index = 0;
@@ -77,8 +78,9 @@ struct FrameValidator {
     // header    — result of parse_fixed_header(raw_data, record_size)
     // raw_data  — pointer to the full record bytes (for hash check)
     // record_size — number of bytes in the record
-    // skip_hash — when true, skip the frame_hash verification (use for
-    //             advisory metadata frames where hash failure is non-fatal)
+    // skip_hash — when true, skip frame_hash verification while retaining
+    //             structural/state validation. Used for advisory metadata and
+    //             FEC candidates already classified as unavailable shards.
     //
     // After validate() returns with saw_archive_end == true, the
     // caller MUST stop sending frames.

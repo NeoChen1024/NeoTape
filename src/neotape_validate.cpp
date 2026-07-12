@@ -263,15 +263,20 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
                     seeded_frame && header.channel_frame_seq_num != 0;
                 protected_run_bytes.clear();
                 protected_run_size = 0;
+                protected_run_has_unavailable = false;
             }
             if (protected_run_count == fec_data_shards) {
                 return "FEC_PROTECTED run exceeds 32 content frames";
             }
             ++protected_run_count;
             protected_run_size += header.frame_payload_size;
-            protected_run_bytes.insert(
-                protected_run_bytes.end(), raw_data + fixed_header_size,
-                raw_data + fixed_header_size + header.frame_payload_size);
+            if (skip_hash) {
+                protected_run_has_unavailable = true;
+            } else {
+                protected_run_bytes.insert(
+                    protected_run_bytes.end(), raw_data + fixed_header_size,
+                    raw_data + fixed_header_size + header.frame_payload_size);
+            }
         } else {
             if (protected_run_count != 0) {
                 return "unprotected content before matching FEC group";
@@ -315,10 +320,13 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
                     return "FEC descriptor does not match protected content "
                            "run";
                 }
-                Hash const group_hash = blake3_hash(protected_run_bytes.data(),
-                                                    protected_run_bytes.size());
-                if (descriptor.fec_group_blake3 != group_hash) {
-                    return "FEC group hash does not match protected content";
+                if (!protected_run_has_unavailable) {
+                    Hash const group_hash = blake3_hash(
+                        protected_run_bytes.data(), protected_run_bytes.size());
+                    if (descriptor.fec_group_blake3 != group_hash) {
+                        return "FEC group hash does not match protected "
+                               "content";
+                    }
                 }
             }
             current_fec_group = descriptor;
@@ -338,6 +346,7 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
             protected_run_count = 0;
             protected_run_started_before_stream = false;
             protected_run_size = 0;
+            protected_run_has_unavailable = false;
             protected_run_bytes.clear();
         }
     }
@@ -438,6 +447,7 @@ void FrameValidator::reset() {
     protected_run_count = 0;
     protected_run_started_before_stream = false;
     protected_run_size = 0;
+    protected_run_has_unavailable = false;
     protected_run_bytes.clear();
     current_fec_group.reset();
     next_repair_index = 0;

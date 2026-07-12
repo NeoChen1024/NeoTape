@@ -44,13 +44,14 @@ struct ExtractorState {
     bool salvage = false;
     std::optional<uint64_t> output_slice_seq;
     uint64_t processed_frames = 0;
+    bool fatal_error = false;
     std::vector<std::pair<uint64_t, std::optional<FecShard>>>
-        salvage_content_shards;
-    FecAvailableShards salvage_fec_shards;
+        pending_content_shards;
+    FecAvailableShards fec_shards;
 };
 
-void remember_salvage_content(ExtractorState &state, const FrameHeader &header,
-                              const uint8_t *data, bool available) {
+void remember_fec_content(ExtractorState &state, const FrameHeader &header,
+                          const uint8_t *data, bool available) {
     std::optional<FecShard> shard;
     if (available) {
         std::size_t const shard_size =
@@ -60,28 +61,28 @@ void remember_salvage_content(ExtractorState &state, const FrameHeader &header,
             reinterpret_cast<const std::byte *>(data + fixed_header_size),
             header.frame_payload_size, shard->begin());
     }
-    state.salvage_content_shards.emplace_back(header.channel_frame_seq_num,
+    state.pending_content_shards.emplace_back(header.channel_frame_seq_num,
                                               std::move(shard));
 }
 
-void emit_salvage_fec_group(ExtractorState &state,
-                            const FecDescriptor &descriptor,
-                            std::size_t shard_size) {
+[[nodiscard]] bool emit_fec_group(ExtractorState &state,
+                                  const FecDescriptor &descriptor,
+                                  std::size_t shard_size) {
     for (uint16_t index = 0; index < descriptor.source_frame_count; ++index) {
         uint64_t const sequence = descriptor.source_content_frame_start + index;
         auto const found = std::ranges::find_if(
-            state.salvage_content_shards,
+            state.pending_content_shards,
             [&](const auto &entry) { return entry.first == sequence; });
-        if (found != state.salvage_content_shards.end()) {
-            state.salvage_fec_shards[index] = found->second;
+        if (found != state.pending_content_shards.end()) {
+            state.fec_shards[index] = found->second;
         }
     }
 
     try {
-        std::vector<FecShard> const recovered = recover_rs_32_4(
-            state.salvage_fec_shards, descriptor.source_frame_count,
-            descriptor.source_stream_size, shard_size,
-            descriptor.fec_group_blake3);
+        std::vector<FecShard> const recovered =
+            recover_rs_32_4(state.fec_shards, descriptor.source_frame_count,
+                            descriptor.source_stream_size, shard_size,
+                            descriptor.fec_group_blake3);
         uint64_t remaining = descriptor.source_stream_size;
         for (const FecShard &shard : recovered) {
             std::size_t const count = static_cast<std::size_t>(
@@ -91,7 +92,23 @@ void emit_salvage_fec_group(ExtractorState &state,
                                        bytes + count);
             remaining -= count;
         }
+        std::size_t const unavailable = std::ranges::count_if(
+            state.fec_shards.begin(),
+            state.fec_shards.begin() + descriptor.source_frame_count,
+            [](const auto &shard) { return !shard.has_value(); });
+        if (unavailable != 0) {
+            std::cerr << format("extractor: FEC repaired {} unavailable "
+                                "content shard(s)\n",
+                                unavailable);
+        }
     } catch (const std::exception &error) {
+        if (!state.salvage) {
+            std::cerr << format("extractor: FEC recovery failed: {}\n",
+                                error.what());
+            state.pending_content_shards.clear();
+            state.fec_shards = {};
+            return false;
+        }
         std::cerr << format("extractor: salvage FEC recovery failed: {}; "
                             "emitting only surviving source shards\n",
                             error.what());
@@ -100,17 +117,18 @@ void emit_salvage_fec_group(ExtractorState &state,
              ++index) {
             std::size_t const count = static_cast<std::size_t>(
                 std::min<uint64_t>(remaining, shard_size));
-            if (state.salvage_fec_shards[index].has_value()) {
+            if (state.fec_shards[index].has_value()) {
                 const auto *bytes = reinterpret_cast<const uint8_t *>(
-                    state.salvage_fec_shards[index]->data());
+                    state.fec_shards[index]->data());
                 state.slice_payload.insert(state.slice_payload.end(), bytes,
                                            bytes + count);
             }
             remaining -= count;
         }
     }
-    state.salvage_content_shards.clear();
-    state.salvage_fec_shards = {};
+    state.pending_content_shards.clear();
+    state.fec_shards = {};
+    return true;
 }
 
 [[nodiscard]] bool flush_slice(ExtractorState &state, FILE *output) {
@@ -158,11 +176,35 @@ void emit_salvage_fec_group(ExtractorState &state,
 
     uint64_t const prev_slice_seq = state.validator.current_slice_seq_num;
 
-    RestoreFrameValidation const validation =
-        state.salvage ? state.validator.validate_salvage_frame(header, data,
-                                                               record.size())
-                      : state.validator.validate_restore_frame(header, data,
-                                                               record.size());
+    bool const protected_content =
+        header.channel_type == ChannelType::CH_CONTENT &&
+        has_frame_flag_fec_protected(header.flags);
+    bool const fec_repair = header.channel_type == ChannelType::CH_FEC;
+    bool const recoverable_unavailable =
+        !state.salvage && (protected_content || fec_repair) &&
+        !verify_frame_hash(data, record.size(), header.frame_hash);
+
+    RestoreFrameValidation validation;
+    if (recoverable_unavailable) {
+        if (auto error =
+                state.validator.validate(header, data, record.size(), true);
+            error.has_value()) {
+            validation = {RestoreFrameValidationStatus::fatal,
+                          std::move(*error)};
+        } else {
+            validation = {
+                RestoreFrameValidationStatus::warning,
+                format("{} unavailable at global_seq={}; waiting for FEC "
+                       "group completion",
+                       protected_content ? "protected content" : "FEC repair",
+                       header.global_frame_seq_num)};
+        }
+    } else {
+        validation = state.salvage ? state.validator.validate_salvage_frame(
+                                         header, data, record.size())
+                                   : state.validator.validate_restore_frame(
+                                         header, data, record.size());
+    }
     if (validation.status == RestoreFrameValidationStatus::warning) {
         std::cerr << format("extractor: warning: {}\n", validation.message);
     } else if (validation.status == RestoreFrameValidationStatus::fatal) {
@@ -174,7 +216,7 @@ void emit_salvage_fec_group(ExtractorState &state,
                             validation.message);
         if (header.channel_type == ChannelType::CH_CONTENT &&
             has_frame_flag_fec_protected(header.flags)) {
-            remember_salvage_content(state, header, data, false);
+            remember_fec_content(state, header, data, false);
         }
         ++state.processed_frames;
         return true;
@@ -201,22 +243,29 @@ void emit_salvage_fec_group(ExtractorState &state,
         state.warned_signed_unverified = true;
     }
 
+    if (recoverable_unavailable && protected_content) {
+        remember_fec_content(state, header, data, false);
+        ++state.processed_frames;
+        return true;
+    }
+
     ++state.processed_frames;
     if (header.channel_type == ChannelType::CH_METADATA) {
         return true;
     }
     if (header.channel_type == ChannelType::CH_FEC) {
-        if (state.salvage) {
-            FecDescriptor const descriptor =
-                parse_fec_descriptor(header.sideband_data);
-            const std::byte *payload = record.data() + fixed_header_size;
-            state
-                .salvage_fec_shards[fec_data_shards + descriptor.repair_index] =
+        FecDescriptor const descriptor =
+            parse_fec_descriptor(header.sideband_data);
+        const std::byte *payload = record.data() + fixed_header_size;
+        if (!recoverable_unavailable) {
+            state.fec_shards[fec_data_shards + descriptor.repair_index] =
                 FecShard(payload, payload + header.frame_payload_size);
-            if (descriptor.repair_index + 1 == fec_repair_shards) {
-                emit_salvage_fec_group(state, descriptor,
-                                       decoded_block_size(header) -
-                                           fixed_header_size);
+        }
+        if (descriptor.repair_index + 1 == fec_repair_shards) {
+            if (!emit_fec_group(state, descriptor,
+                                decoded_block_size(header) -
+                                    fixed_header_size)) {
+                return false;
             }
         }
         return true;
@@ -245,8 +294,8 @@ void emit_salvage_fec_group(ExtractorState &state,
     // --- accumulate content payload only ---
     if (header.channel_type == ChannelType::CH_CONTENT &&
         header.frame_payload_size > 0) {
-        if (state.salvage && has_frame_flag_fec_protected(header.flags)) {
-            remember_salvage_content(state, header, data, true);
+        if (has_frame_flag_fec_protected(header.flags)) {
+            remember_fec_content(state, header, data, true);
             state.output_slice_seq = header.slice_seq_num;
             return true;
         }
@@ -280,6 +329,7 @@ void emit_salvage_fec_group(ExtractorState &state,
             case MessageType::frame_record: {
                 NEOTAPE_DEBUG("extractor: received frame_record\n");
                 if (!process_frame(state, resp->payload, output)) {
+                    state.fatal_error = true;
                     send_error(client, "frame validation failed");
                     return false;
                 }
@@ -392,6 +442,9 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
         FdGuard const client_guard(client);
 
         bool const complete = serve_client(client, state, output);
+        if (state.fatal_error) {
+            throw std::runtime_error("unrecoverable frame validation failure");
+        }
         if (complete) {
             total_frames = state.salvage ? state.processed_frames
                            : state.validator.expected_global_frame_seq == 0

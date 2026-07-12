@@ -226,6 +226,12 @@ sequence, ordering, and clean-end consistency. It skips invalid frames with an
 explicit unverified-output warning and attempts FEC recovery for protected
 groups before falling back to surviving shards.
 
+FEC decoding is automatic in normal extraction and does not require
+`--salvage` or an extractor-side `--fec`. Protected content is buffered until
+the matching repair group is accepted. Normal mode fails if recovery or the
+group commitment fails; salvage alone permits surviving-shard fallback. See
+`docs/implementation/fec-restore-behavior.md`.
+
 ## neotape-dump CLI
 
 ```

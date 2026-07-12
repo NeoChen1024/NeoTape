@@ -34,6 +34,7 @@ docs/
 
   implementation/                   Implementation-specific notes
     cli-tooling.md                  CLI reference and workflow examples
+    fec-restore-behavior.md         FEC producer, normal restore, and salvage policy
     lto-behavior-notes.md           Empirical LTO EOT/EOM observations
     mt-pax-architecture.md          mt-pax thread roles and data flow
     path-pitfalls.md                Path handling conventions and gotchas

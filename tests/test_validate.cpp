@@ -388,6 +388,20 @@ void test_validator_accepts_interleaved_fec_group() {
     }
     expect(validator.saw_archive_end,
            "FEC archive should finish with archive_end");
+
+    FrameValidator unavailable_validator;
+    records[1][neotape::fixed_header_size] ^= std::byte{1};
+    for (std::size_t i = 0; i < records.size(); ++i) {
+        auto error = unavailable_validator.validate(
+            parse_header(records[i]),
+            reinterpret_cast<const uint8_t *>(records[i].data()),
+            records[i].size(), i == 1);
+        if (error.has_value()) {
+            fail("FEC group with unavailable protected shard rejected at "
+                 "record " +
+                 std::to_string(i) + ": " + *error);
+        }
+    }
 }
 
 void test_salvage_relaxes_consistency_but_keeps_integrity() {

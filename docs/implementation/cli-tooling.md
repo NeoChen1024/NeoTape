@@ -91,6 +91,13 @@ bin/neotape-read --source tape:/dev/nst0 --connect tcp://tapehost:9000
 bin/neotape-read --source spool:./in --connect tcp://tapehost:9000
 ```
 
+FEC correction is automatic during normal extraction whenever the stream
+contains `FEC_PROTECTED` content and matching `ch_fec` groups; no extractor
+flag is required. `--salvage` changes consistency and unrepairable-group
+fallback policy, not whether decoding runs. See
+[fec-restore-behavior.md](fec-restore-behavior.md) for the state flow and error
+policy.
+
 ## Reader (TCP client)
 
 ```sh
