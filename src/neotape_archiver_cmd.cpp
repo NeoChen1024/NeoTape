@@ -25,7 +25,6 @@ struct Options {
     uint64_t retention_frame_count = 256;
     bool fec_enabled = false;
     neotape::PaxWriterOptions pax;
-    bool explicit_output = false;
     std::optional<string> sign_secret_key_file;
     std::optional<string> sign_passphrase_file;
     bool debug = false;
@@ -38,20 +37,17 @@ struct Options {
 
 void usage(const char *prog) {
     std::cerr << format(
-        "usage (server mode):\n"
-        "  {} --listen <tcp://host:port|unix://path>\n"
-        "       [--volume-block-size <bytes>] [--archive-name <name>]\n"
-        "       [-C <dir>] [-P <percent>] [--io-thread <N>]\n"
-        "       [--output-buffer-size <bytes>] [--plan <file>]\n"
-        "       [--retention-frame-count <N>] [--fec]\n"
-        "       [--sign-secret-key <file.sec>]\n"
-        "       [--sign-passphrase-file <path>] [-v|-vv] [-x] [--debug]\n"
+        "usage:\n"
+        "  {} -l|--listen <tcp://host:port|unix://path>\n"
+        "       [-b|--volume-block-size <SIZE>] [-n|--archive-name <name>]\n"
+        "       [-C <dir>] [-P <percent>] [-j|--io-thread <N>]\n"
+        "       [-B|--output-buffer-size <SIZE>] [-p|--plan <file>]\n"
+        "       [-r|--retention-frame-count <N>] [-F|--fec]\n"
+        "       [-k|--sign-secret-key <file.sec>]\n"
+        "       [-K|--sign-passphrase-file <path>] [-v|-vv] [-x] [-d|--debug]\n"
         "       <path> [path...]\n"
-        "usage (local mode):\n"
-        "  {} -f <out-file|-> [-C <dir>] [-P <percent>] [--io-thread <N>]\n"
-        "       [--output-buffer-size <bytes>] [--plan <file>] [-v|-vv] [-x]\n"
-        "       <path> [path...]\n",
-        prog, prog);
+        "SIZE accepts K, M, G, or T binary suffixes (for example 4M or 16G).\n",
+        prog);
 }
 
 Options parse_args(int argc, char **argv) {
@@ -61,23 +57,23 @@ Options parse_args(int argc, char **argv) {
         {"archive-name", required_argument, nullptr, 'n'},
         {"directory", required_argument, nullptr, 'C'},
         {"buffer-percent", required_argument, nullptr, 'P'},
-        {"io-thread", required_argument, nullptr, 257},
-        {"output-buffer-size", required_argument, nullptr, 256},
-        {"plan", required_argument, nullptr, 258},
-        {"retention-frame-count", required_argument, nullptr, 259},
+        {"io-thread", required_argument, nullptr, 'j'},
+        {"output-buffer-size", required_argument, nullptr, 'B'},
+        {"plan", required_argument, nullptr, 'p'},
+        {"retention-frame-count", required_argument, nullptr, 'r'},
         {"verbose", no_argument, nullptr, 'v'},
         {"one-file-system", no_argument, nullptr, 'x'},
-        {"debug", no_argument, nullptr, 260},
-        {"sign-secret-key", required_argument, nullptr, 261},
-        {"sign-passphrase-file", required_argument, nullptr, 262},
-        {"fec", no_argument, nullptr, 263},
+        {"debug", no_argument, nullptr, 'd'},
+        {"sign-secret-key", required_argument, nullptr, 'k'},
+        {"sign-passphrase-file", required_argument, nullptr, 'K'},
+        {"fec", no_argument, nullptr, 'F'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "l:b:n:f:C:P:vxh", long_opts,
-                            nullptr)) != -1) {
+    while ((c = getopt_long(argc, argv, "l:b:n:C:P:j:B:p:r:dk:K:Fvxh",
+                            long_opts, nullptr)) != -1) {
         switch (c) {
         case 'l':
             opts.listen_address = optarg;
@@ -88,10 +84,6 @@ Options parse_args(int argc, char **argv) {
             break;
         case 'n':
             opts.archive_name = optarg;
-            break;
-        case 'f':
-            opts.pax.output_name = optarg;
-            opts.explicit_output = true;
             break;
         case 'C':
             opts.pax.chdir_dir = optarg;
@@ -113,7 +105,7 @@ Options parse_args(int argc, char **argv) {
         case 'x':
             opts.pax.one_file_system = true;
             break;
-        case 256:
+        case 'B':
             try {
                 opts.pax.output_buf_size = static_cast<size_t>(
                     neotape::parse_size(optarg, "output buffer size"));
@@ -122,7 +114,7 @@ Options parse_args(int argc, char **argv) {
                 std::exit(2);
             }
             break;
-        case 257: {
+        case 'j': {
             char *end = nullptr;
             unsigned long const n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0') {
@@ -133,10 +125,10 @@ Options parse_args(int argc, char **argv) {
             opts.pax.io_thread = static_cast<unsigned>(n);
             break;
         }
-        case 258:
+        case 'p':
             opts.pax.plan_path = optarg;
             break;
-        case 259: {
+        case 'r': {
             char *end = nullptr;
             unsigned long const n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0' || n == 0 || n > 1000000) {
@@ -147,16 +139,16 @@ Options parse_args(int argc, char **argv) {
             opts.retention_frame_count = static_cast<uint64_t>(n);
             break;
         }
-        case 260:
+        case 'd':
             opts.debug = true;
             break;
-        case 261:
+        case 'k':
             opts.sign_secret_key_file = optarg;
             break;
-        case 262:
+        case 'K':
             opts.sign_passphrase_file = optarg;
             break;
-        case 263:
+        case 'F':
             opts.fec_enabled = true;
             break;
         case 'h':
@@ -171,18 +163,12 @@ Options parse_args(int argc, char **argv) {
         opts.pax.sources.emplace_back(argv[optind++]);
     }
 
-    if (!opts.listen_address.empty() && opts.explicit_output) {
-        fail("-f cannot be used with --listen");
+    if (opts.listen_address.empty()) {
+        fail("--listen is required");
     }
     if (opts.sign_passphrase_file.has_value() &&
         !opts.sign_secret_key_file.has_value()) {
         fail("--sign-passphrase-file requires --sign-secret-key");
-    }
-    if (opts.sign_secret_key_file.has_value() && opts.listen_address.empty()) {
-        fail("--sign-secret-key is only valid with --listen");
-    }
-    if (opts.fec_enabled && opts.listen_address.empty()) {
-        fail("--fec is only valid with --listen");
     }
     bool const has_plan = opts.pax.plan_path.has_value();
     bool const has_sources = !opts.pax.sources.empty();
@@ -209,36 +195,25 @@ int main(int argc, char **argv) {
             fail("failed to ignore SIGPIPE");
         }
 
-        if (!opts.listen_address.empty()) {
-            neotape::TcpArchiverOptions server_opts;
-            server_opts.listen_address = opts.listen_address;
-            server_opts.volume_block_size = opts.volume_block_size;
-            server_opts.archive_name = opts.archive_name;
-            server_opts.retention_frame_count = opts.retention_frame_count;
-            server_opts.fec_enabled = opts.fec_enabled;
-            server_opts.pax = opts.pax;
-            if (opts.sign_secret_key_file.has_value()) {
-                server_opts.frame_signer = neotape::load_signify_secret_key(
-                    *opts.sign_secret_key_file,
-                    opts.sign_passphrase_file.has_value()
-                        ? std::optional<string>(
-                              neotape::read_signify_passphrase_file(
-                                  *opts.sign_passphrase_file))
-                        : std::nullopt);
-            }
-
-            uint64_t served = neotape::run_tcp_archiver(server_opts);
-            std::cerr << format("archiver served {} frames\n", served);
-            return 0;
+        neotape::TcpArchiverOptions server_opts;
+        server_opts.listen_address = opts.listen_address;
+        server_opts.volume_block_size = opts.volume_block_size;
+        server_opts.archive_name = opts.archive_name;
+        server_opts.retention_frame_count = opts.retention_frame_count;
+        server_opts.fec_enabled = opts.fec_enabled;
+        server_opts.pax = opts.pax;
+        if (opts.sign_secret_key_file.has_value()) {
+            server_opts.frame_signer = neotape::load_signify_secret_key(
+                *opts.sign_secret_key_file,
+                opts.sign_passphrase_file.has_value()
+                    ? std::optional<string>(
+                          neotape::read_signify_passphrase_file(
+                              *opts.sign_passphrase_file))
+                    : std::nullopt);
         }
 
-        neotape::PaxLocalOutputOptions out_opts;
-        out_opts.output_path = opts.pax.output_name;
-        neotape::PaxLocalOutputResult result =
-            neotape::write_pax_to_local_output(opts.pax, out_opts);
-
-        std::cerr << format("{}  {}\n", result.write_result.blake3_hex,
-                            result.output_target);
+        uint64_t served = neotape::run_tcp_archiver(server_opts);
+        std::cerr << format("archiver served {} frames\n", served);
         return 0;
     } catch (const std::exception &e) {
         fail(e.what());

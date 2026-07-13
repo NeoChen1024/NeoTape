@@ -82,8 +82,8 @@ struct ArchiveEntry {
 }
 
 void usage(const char *prog) {
-    std::cerr << format("usage: {} --source <spool:./dir|tape:/dev/nst0>\n"
-                        "       [-v] [-h]\n",
+    std::cerr << format("usage: {} -s|--source <spool:./dir|tape:/dev/nst0>\n"
+                        "       [-v|--verbose] [-h|--help]\n",
                         prog);
 }
 
@@ -240,7 +240,6 @@ vector<string> scan_tape_source(const string &path, Handler &&handle) {
         ssize_t const n = ::read(dev.fd(), buffer.data(), buffer.size());
         if (n < 0) {
             if (errno == EIO) {
-                dev.space_fwd_filemark(1);
                 ++tapefile_num;
                 continue;
             }
@@ -252,7 +251,6 @@ vector<string> scan_tape_source(const string &path, Handler &&handle) {
             if (dev.status().eod()) {
                 break;
             }
-            dev.space_fwd_filemark(1);
             ++tapefile_num;
             continue;
         }
@@ -263,7 +261,10 @@ vector<string> scan_tape_source(const string &path, Handler &&handle) {
                            handle);
 
         try {
-            dev.space_fwd_filemark(1);
+            // MTFSF lands on the first record of the next tape file. MTFSFM
+            // lands before the filemark and would make the following read
+            // count that same boundary a second time.
+            dev.space_fwd(1);
             ++tapefile_num;
         } catch (const mt::Error &) {
             if (dev.status().eod()) {

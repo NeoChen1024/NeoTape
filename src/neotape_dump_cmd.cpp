@@ -39,8 +39,9 @@ struct Options {
 
 void usage(const char *prog) {
     std::cerr << format(
-        "usage: {} --source <tape:/dev/nst0> --target <spool:./dir>\n"
-        "       [-v] [-h]\n",
+        "usage: {} -s|--source <tape:/dev/nst0> "
+        "-t|--target <spool:./dir>\n"
+        "       [-v|--verbose] [-h|--help]\n",
         prog);
 }
 
@@ -136,6 +137,7 @@ int do_dump(const Options &opts) {
 
     std::vector<std::byte> buffer(neotape::max_block_size);
     uint64_t file_num = 0;
+    uint64_t tape_files = 0;
     uint64_t records = 0;
     uint64_t bytes = 0;
     fs::path current_path = dump_path(opts.target, file_num);
@@ -164,11 +166,13 @@ int do_dump(const Options &opts) {
         if (tape.status().eod()) {
             if (fs::file_size(current_path) == 0) {
                 fs::remove(current_path);
+            } else {
+                ++tape_files;
             }
             break;
         }
 
-        tape.space_fwd_filemark(1);
+        ++tape_files;
         if (opts.verbose) {
             std::cerr << format("neotape-dump: wrote {}\n",
                                 current_path.string());
@@ -182,7 +186,7 @@ int do_dump(const Options &opts) {
     }
 
     std::cout << format("Dumped {} records ({} bytes) into {} tape files\n",
-                        records, bytes, file_num + (records != 0 ? 1 : 0));
+                        records, bytes, tape_files);
     return 0;
 }
 

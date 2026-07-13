@@ -17,10 +17,10 @@ if ! grep -F '/0/1/h/0/' "$tmp/plan.txt" >/dev/null; then
     exit 1
 fi
 
-bin/neotape-archiver -f "$tmp/planned.pax" --plan "$tmp/plan" --io-thread 4
+bin/mt-pax --plan "$tmp/plan" --slice-output-prefix "$tmp/planned-" --io-thread 4
 
 mkdir "$tmp/out"
-bsdtar -xpf "$tmp/planned.pax" -C "$tmp/out"
+bsdtar -xpf "$tmp/planned-000000.pax" -C "$tmp/out"
 
 if ! cmp -s "$tmp/src/a.txt" "$tmp/out/a.txt"; then
     echo "smoke_plan_hardlink: extracted a.txt content mismatch"

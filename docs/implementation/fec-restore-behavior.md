@@ -22,8 +22,8 @@ and best-effort fallback policy; it is not the switch that enables RS decoding.
 
 ## Normal Restore State Flow
 
-Unprotected content is validated and appended to the current slice directly.
-For an FEC-protected run, emission waits for the matching repair group:
+Unprotected content is validated and streamed to the output directly. For an
+FEC-protected run, emission waits only for the matching local repair group:
 
 1. Content that passes integrity and signature policy becomes an available
    real data shard.
@@ -38,8 +38,13 @@ For an FEC-protected run, emission waits for the matching repair group:
    `rs_32_4` decoder.
 5. Recovered real data is concatenated, truncated to `source_stream_size`, and
    accepted only if `fec_group_blake3` matches.
-6. Only after that commitment succeeds are the content bytes appended to the
-   slice output.
+6. Only after that commitment succeeds are the content bytes streamed to the
+   output.
+
+The extractor never buffers a complete slice. Its retained payload is bounded
+by one incomplete FEC group, including groups split across volume boundaries.
+Completed groups are emitted immediately, so slice size does not determine RAM
+usage.
 
 Valid surviving content is authoritative. Only unavailable real content
 positions are reconstructed, and corrupt frame bytes are never supplied as
@@ -82,3 +87,6 @@ repair shard unavailable. It also verifies that five unavailable positions are
 fatal and cause the normal extractor to exit rather than emit partial group
 output or wait for another reader. `tests/smoke_salvage.sh` covers non-FEC
 best-effort skipping and unverified-output diagnostics.
+`tests/smoke_extractor_bounded_memory.sh` restores a 320 MiB single-slice FEC
+stream under a 256 MiB address-space limit and compares the streamed output
+byte-for-byte, preventing reintroduction of slice-sized buffering.

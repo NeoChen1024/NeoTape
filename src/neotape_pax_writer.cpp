@@ -2,6 +2,7 @@
 #include "neotape/closable_queue.hpp"
 #include "neotape/common.hpp"
 #include "neotape/pax_writer.hpp"
+#include "neotape/result_store.hpp"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -14,7 +15,6 @@
 #include <cerrno>
 #include <chrono>
 #include <clocale>
-#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -25,7 +25,6 @@
 #include <fstream>
 #include <getopt.h>
 #include <iostream>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -68,7 +67,6 @@ struct ArchiveStats {
 };
 
 struct Result {
-    uint64_t seq;
     std::vector<std::byte> bytes; // empty is a valid skipped/warned entry
 };
 
@@ -128,48 +126,6 @@ struct PipelineOrderItem {
     bool count_input = true;
     vector<std::byte> bytes;
     EntryHandle entry;
-};
-
-struct ResultStore {
-    std::mutex mtx;
-    std::condition_variable cv;
-    std::map<uint64_t, Result> results;
-    size_t max_size = 0;
-    bool closed = false;
-
-    explicit ResultStore(size_t capacity = 0) : max_size(capacity) {}
-
-    bool put(Result result) {
-        std::unique_lock lock(mtx);
-        cv.wait(lock, [&] {
-            return closed || max_size == 0 || results.size() < max_size;
-        });
-        if (closed) {
-            return false;
-        }
-        results.emplace(result.seq, std::move(result));
-        cv.notify_all();
-        return true;
-    }
-
-    std::optional<Result> take(uint64_t seq) {
-        std::unique_lock lock(mtx);
-        cv.wait(lock, [&] { return closed || results.contains(seq); });
-        auto it = results.find(seq);
-        if (it == results.end()) {
-            return std::nullopt;
-        }
-        Result result = std::move(it->second);
-        results.erase(it);
-        cv.notify_all();
-        return result;
-    }
-
-    void close() {
-        std::scoped_lock const lock(mtx);
-        closed = true;
-        cv.notify_all();
-    }
 };
 
 struct PlannedEntry {
@@ -817,7 +773,7 @@ struct PipelineCancel {
 
 void pipeline_worker_main(ClosableQueue<PipelineWorkItem> &work_queue,
                           ClosableQueue<PipelineOrderItem> &order_queue,
-                          ResultStore &results, BoundedBuffer &bb1,
+                          ResultStore<Result> &results, BoundedBuffer &bb1,
                           PipelineCancel &cancel) {
     for (;;) {
         auto item = work_queue.pop();
@@ -827,16 +783,14 @@ void pipeline_worker_main(ClosableQueue<PipelineWorkItem> &work_queue,
         try {
             int const fd = open_entry_file(item->entry.get());
             if (fd < 0) {
-                Result result{item->seq, {}};
-                if (!results.put(std::move(result))) {
+                if (!results.put(item->seq, Result{{}})) {
                     return;
                 }
                 continue;
             }
             vector<std::byte> bytes = serialize_entry(item->entry.get(), fd);
             close(fd);
-            Result result{item->seq, std::move(bytes)};
-            if (!results.put(std::move(result))) {
+            if (!results.put(item->seq, Result{std::move(bytes)})) {
                 return;
             }
         } catch (...) {
@@ -868,7 +822,7 @@ bool emit_bytes_to_bb1(BBSink &sink, vector<std::byte> bytes,
 
 void pipeline_serializer_main(ClosableQueue<PipelineWorkItem> &work_queue,
                               ClosableQueue<PipelineOrderItem> &order_queue,
-                              ResultStore &results, BBSink &bb1_sink,
+                              ResultStore<Result> &results, BBSink &bb1_sink,
                               PipelineCancel &cancel) {
     for (;;) {
         auto item = order_queue.pop();
@@ -1103,7 +1057,7 @@ class PaxPipeline {
     BoundedBuffer bb1_;
     ClosableQueue<PipelineOrderItem> order_queue_;
     ClosableQueue<PipelineWorkItem> work_queue_;
-    ResultStore results_;
+    ResultStore<Result> results_;
     PipelineCancel cancel_;
     BBSink bb1_sink_;
     uint64_t output_slice_ = 0;

@@ -9,7 +9,7 @@ printf 'hello plan mode\n' >"$tmp/input/hello.txt"
 dd if=/dev/zero of="$tmp/input/blob.bin" bs=1M count=6 status=none
 
 bin/neotape-plan -C "$tmp/input" -o "$tmp/plan" hello.txt blob.bin
-bin/neotape-archiver -f "$tmp/reference.pax" --plan "$tmp/plan" --io-thread 4
+bin/mt-pax --plan "$tmp/plan" --slice-output-prefix "$tmp/reference-" --io-thread 4
 
 archiver_sock="unix://$tmp/archiver.sock"
 bin/neotape-archiver --listen "$archiver_sock" \
@@ -40,7 +40,7 @@ done
 bin/neotape-read --source "spool:$tmp/out" --connect "$extractor_sock"
 wait "$extractor_pid"
 
-bsdtar -xpf "$tmp/reference.pax" -C "$tmp/ref_out"
+bsdtar -xpf "$tmp/reference-000000.pax" -C "$tmp/ref_out"
 bsdtar -xpf "$tmp/extracted.pax" -C "$tmp/ext_out"
 if diff -rq "$tmp/ref_out" "$tmp/ext_out"; then
 	echo "smoke_tcp_plan_extract: ok"

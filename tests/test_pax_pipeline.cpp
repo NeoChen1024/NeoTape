@@ -1,13 +1,11 @@
 #include "neotape/closable_queue.hpp"
+#include "neotape/result_store.hpp"
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
-#include <map>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -44,7 +42,8 @@ void test_push_wakes_on_close() {
         finished.store(true, std::memory_order_relaxed);
     });
     std::this_thread::sleep_for(25ms);
-    require(!finished.load(std::memory_order_relaxed), "second push blocks while full");
+    require(!finished.load(std::memory_order_relaxed),
+            "second push blocks while full");
     q.close();
     t.join();
     require(!pushed, "blocked push returns false after close");
@@ -56,57 +55,14 @@ void test_close_drains_existing_items() {
     q.close();
     auto first = q.pop();
     auto second = q.pop();
-    require(first.has_value() && *first == 7, "closed queue drains existing item");
+    require(first.has_value() && *first == 7,
+            "closed queue drains existing item");
     require(!second.has_value(), "closed drained queue returns nullopt");
     require(!q.push(8), "push after close fails");
 }
 
-class TestResultStore {
-  public:
-    explicit TestResultStore(size_t max_size = 0) : max_size_(max_size) {}
-
-    bool put(uint64_t seq, std::string value) {
-        std::unique_lock lock(mtx_);
-        cv_.wait(lock, [&] {
-            return closed_ || max_size_ == 0 || results_.size() < max_size_;
-        });
-        if (closed_) {
-            return false;
-}
-        results_.emplace(seq, std::move(value));
-        cv_.notify_all();
-        return true;
-    }
-
-    std::optional<std::string> take(uint64_t seq) {
-        std::unique_lock lock(mtx_);
-        cv_.wait(lock, [&] { return closed_ || results_.contains(seq); });
-        auto it = results_.find(seq);
-        if (it == results_.end()) {
-            return std::nullopt;
-}
-        std::string value = std::move(it->second);
-        results_.erase(it);
-        cv_.notify_all();
-        return value;
-    }
-
-    void close() {
-        std::scoped_lock const lock(mtx_);
-        closed_ = true;
-        cv_.notify_all();
-    }
-
-  private:
-    std::mutex mtx_;
-    std::condition_variable cv_;
-    std::map<uint64_t, std::string> results_;
-    size_t max_size_ = 0;
-    bool closed_ = false;
-};
-
 void test_result_store_waits_for_exact_sequence() {
-    TestResultStore store;
+    neotape::ResultStore<std::string> store;
     std::optional<std::string> got;
     std::atomic<bool> completed{false};
     std::thread t([&] {
@@ -120,11 +76,12 @@ void test_result_store_waits_for_exact_sequence() {
             "take ignores other sequence results");
     store.put(5, "right");
     t.join();
-    require(got.has_value() && *got == "right", "take returns requested result");
+    require(got.has_value() && *got == "right",
+            "take returns requested result");
 }
 
 void test_result_store_close_wakes_take() {
-    TestResultStore store;
+    neotape::ResultStore<std::string> store;
     std::optional<std::string> got = "not closed";
     std::thread t([&] { got = store.take(9); });
     std::this_thread::sleep_for(25ms);
@@ -134,7 +91,7 @@ void test_result_store_close_wakes_take() {
 }
 
 void test_result_store_bounded_put_waits_for_space() {
-    TestResultStore store(1);
+    neotape::ResultStore<std::string> store(1);
     require(store.put(1, "first"), "initial bounded put succeeds");
     std::atomic<bool> second_done{false};
     bool second_put = false;
@@ -156,7 +113,7 @@ void test_result_store_bounded_put_waits_for_space() {
 }
 
 void test_result_store_close_wakes_bounded_put() {
-    TestResultStore store(1);
+    neotape::ResultStore<std::string> store(1);
     require(store.put(1, "first"), "initial bounded close test put succeeds");
     std::atomic<bool> second_done{false};
     bool second_put = true;
@@ -173,7 +130,7 @@ void test_result_store_close_wakes_bounded_put() {
 }
 
 void test_result_store_capacity_allows_earliest_late_completion() {
-    TestResultStore store(3);
+    neotape::ResultStore<std::string> store(3);
     require(store.put(2, "two"), "put later result 2 succeeds");
     require(store.put(1, "one"), "put later result 1 succeeds");
     std::atomic<bool> finished{false};

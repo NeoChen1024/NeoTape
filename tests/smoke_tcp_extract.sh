@@ -10,7 +10,7 @@ echo "hello world" >"$tmp/input/hello.txt"
 echo "another file" >"$tmp/input/bar.txt"
 
 # Run archiver in local (non-server) mode to get reference pax.
-bin/neotape-archiver -C "$tmp/input" -f "$tmp/reference.pax" hello.txt bar.txt
+bin/mt-pax -C "$tmp/input" -f "$tmp/reference.pax" hello.txt bar.txt
 
 # ---- Write phase: archiver server → writer → spool ----
 archiver_sock="unix://$tmp/archiver.sock"

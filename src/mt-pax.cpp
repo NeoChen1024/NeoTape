@@ -30,11 +30,12 @@ struct CliOptions {
 void usage(const char *prog) {
     std::cerr << format(
         "usage: {} -f <out-file|-> [-v|-vv] [-x] [-C <dir>]\n"
-        "       [-P <buffer-percent>] [--io-thread <N>]\n"
-        "       [--output-buffer-size <bytes>] <path> [path ...]\n"
-        "       {} --plan <file> --slice-output-prefix <prefix>\n"
-        "       [-v|-vv] [-P <buffer-percent>] [--io-thread <N>]\n"
-        "       [--output-buffer-size <bytes>]\n",
+        "       [-P <buffer-percent>] [-j|--io-thread <N>]\n"
+        "       [-B|--output-buffer-size <SIZE>] <path> [path ...]\n"
+        "       {} -p|--plan <file> -S|--slice-output-prefix <prefix>\n"
+        "       [-v|-vv] [-P <buffer-percent>] [-j|--io-thread <N>]\n"
+        "       [-B|--output-buffer-size <SIZE>]\n"
+        "SIZE accepts K, M, G, or T binary suffixes (for example 4M or 16G).\n",
         prog, prog);
 }
 
@@ -47,16 +48,18 @@ CliOptions parse_args(int argc, char **argv) {
     static const struct option long_opts[] = {
         {"directory", required_argument, nullptr, 'C'},
         {"buffer-percent", required_argument, nullptr, 'P'},
-        {"io-thread", required_argument, nullptr, 257},
-        {"output-buffer-size", required_argument, nullptr, 256},
-        {"plan", required_argument, nullptr, 258},
-        {"slice-output-prefix", required_argument, nullptr, 259},
+        {"io-thread", required_argument, nullptr, 'j'},
+        {"output-buffer-size", required_argument, nullptr, 'B'},
+        {"plan", required_argument, nullptr, 'p'},
+        {"slice-output-prefix", required_argument, nullptr, 'S'},
+        {"verbose", no_argument, nullptr, 'v'},
+        {"one-file-system", no_argument, nullptr, 'x'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
     CliOptions opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "C:f:P:vxh", long_opts, nullptr)) !=
+    while ((c = getopt_long(argc, argv, "C:f:P:j:B:p:S:vxh", long_opts, nullptr)) !=
            -1) {
         switch (c) {
         case 'C':
@@ -82,7 +85,7 @@ CliOptions parse_args(int argc, char **argv) {
         case 'x':
             opts.writer.one_file_system = true;
             break;
-        case 256:
+        case 'B':
             try {
                 opts.writer.output_buf_size = static_cast<size_t>(
                     neotape::parse_size(optarg, "output buffer size"));
@@ -91,7 +94,7 @@ CliOptions parse_args(int argc, char **argv) {
                 std::exit(2);
             }
             break;
-        case 257: {
+        case 'j': {
             char *end = nullptr;
             unsigned long const n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0') {
@@ -101,11 +104,11 @@ CliOptions parse_args(int argc, char **argv) {
             opts.writer.io_thread = static_cast<unsigned>(n);
             break;
         }
-        case 258:
+        case 'p':
             opts.plan_path = fs::path(optarg);
             opts.writer.plan_path = opts.plan_path;
             break;
-        case 259:
+        case 'S':
             opts.slice_output_prefix = optarg;
             break;
         case 'h':

@@ -83,7 +83,7 @@ headers currently confuse clangd 22.
 - `include/neotape/` — shared project headers (common types, format helpers)
 - `3rdparty/` — git submodules (BLAKE3, signify). Init with `git submodule update --init --recursive`
 - `docs/spec/` — active format spec; `docs/implementation/mt-pax-architecture.md` — mt-pax architecture
-- `tests/smoke_mt_pax_pipeline.sh`, `tests/smoke_tcp_archive.sh`, `tests/smoke_raw_store.sh`, `tests/smoke_inspect.sh`, `tests/smoke_mt_pax_parity.sh`, `tests/smoke_tcp_archive_multi.sh`, `tests/smoke_tcp_extract.sh`, `tests/smoke_signed_tcp_extract.sh`, `tests/smoke_writer_auth_fail.sh`, `tests/smoke_tcp_extract_multi.sh` — smoke tests; no test framework or CI yet
+- `tests/smoke_cli_options.sh`, `tests/smoke_mt_pax_pipeline.sh`, `tests/smoke_tcp_archive.sh`, `tests/smoke_raw_store.sh`, `tests/smoke_inspect.sh`, `tests/smoke_tcp_archive_multi.sh`, `tests/smoke_tcp_extract.sh`, `tests/smoke_signed_tcp_extract.sh`, `tests/smoke_writer_auth_fail.sh`, `tests/smoke_tcp_extract_multi.sh` — smoke tests; no test framework or CI yet
 
 ## Architecture pattern
 
@@ -116,10 +116,14 @@ the Extractor is the authoritative signed-frame validator.
 
 ## mt-pax CLI
 
+All long CLI options have short aliases shown by `-h`. Byte-size arguments use
+`SIZE` and accept case-insensitive binary `K`, `M`, `G`, and `T` suffixes, such
+as `4M` or `16G`; values without a suffix are bytes.
+
 ```
 bin/mt-pax -f <out-file|-> [-v|-vv] [-x] [-C <dir>]
            [-P <buffer-percent>] [--io-thread <N>]
-           [--output-buffer-size <bytes>] <path> [path...]
+           [--output-buffer-size <SIZE>] <path> [path...]
 ```
 
 All `pax` options plus:
@@ -128,7 +132,7 @@ All `pax` options plus:
   threads (serializer reads all files directly, large and small).  `N>1`
   spawns `N-1` workers for small files and streams large files via the
   serializer.
-- `--output-buffer-size <bytes>` — size of the internal output
+- `-B, --output-buffer-size <SIZE>` — size of the internal output
   `BoundedBuffer` (default 64 MB).  Larger values reduce write fragmentation
   at the cost of memory.
 - `-P <percent>` — waterline write restart threshold as percentage of the
@@ -140,9 +144,9 @@ All `pax` options plus:
 
 ```
 bin/neotape-archiver --listen <tcp://host:port|unix://path>
-                     [--volume-block-size <bytes>] [--archive-name <name>]
+                     [--volume-block-size <SIZE>] [--archive-name <name>]
                      [-C <dir>] [-P <percent>] [--io-thread <N>]
-                     [--output-buffer-size <bytes>] [--plan <file>]
+                     [--output-buffer-size <SIZE>] [--plan <file>]
                      [--retention-frame-count <N>]
                      [--fec]
                      [--sign-secret-key <file.sec>]
@@ -150,18 +154,18 @@ bin/neotape-archiver --listen <tcp://host:port|unix://path>
                      [-v|-vv] [-x] <path> [path...]
 ```
 
-In server mode (`--listen`) the archiver is a long-running producer that serves
-NeoTape records over a single TCP/UDS connection. Without `--listen` it behaves
-like `mt-pax` and writes a plain pax stream to `-f`. `--sign-secret-key` is
-server-mode only and signs every served frame with a signify-compatible secret
-key file. `--fec` protects content in local `32C + 4F` groups.
+The archiver is a long-running producer that serves NeoTape records over a
+single TCP/UDS connection. `--listen` is required; use `mt-pax` for standalone
+pax output. `--sign-secret-key` signs every served frame with a
+signify-compatible secret key file. `--fec` protects content in local `32C + 4F`
+groups.
 
 ## neotape-raw-store CLI
 
 ```
 bin/neotape-raw-store --listen <tcp://host:port|unix://path>
                        [--input <file|->]
-                       [--volume-block-size <bytes>]
+                       [--volume-block-size <SIZE>]
                        [--archive-name <name>]
                        [--retention-frame-count <N>]
                        [--fec]
@@ -250,8 +254,8 @@ bin/neotape-write --source <tcp://host:port|unix://path>
                   --target <tape:/dev/nst0|spool:./dir>
                   [--verify-pubkey <file.pub>]...
                   [--erase | --append]
-                  [--output-buffer-size <bytes>]
-                  [--max-volume-bytes <bytes>] [--debug]
+                  [--output-buffer-size <SIZE>]
+                  [--max-volume-bytes <SIZE>] [--debug]
 ```
 
 Short-lived per-volume writer client. Connects to an archiver and requests frames

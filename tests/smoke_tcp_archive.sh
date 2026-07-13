@@ -5,20 +5,31 @@ SOCK=/tmp/neotape-smoke-$$
 SPOOL=/tmp/neotape-smoke-spool-$$
 SRC=/tmp/neotape-smoke-src-$$
 WRITER_LOG=/tmp/neotape-smoke-writer-$$.log
+CLI_LOG=/tmp/neotape-smoke-cli-$$.log
 BLOCK=4096
 
 cleanup() {
-	rm -rf "$SOCK" "$SPOOL" "$SRC" "$WRITER_LOG"
+	rm -rf "$SOCK" "$SPOOL" "$SRC" "$WRITER_LOG" "$CLI_LOG"
 }
 trap cleanup EXIT
 
 mkdir -p "$SRC"
 echo "hello" >"$SRC/a.txt"
 
+if ./bin/neotape-archiver "$SRC" >"$CLI_LOG" 2>&1; then
+	echo "smoke_tcp_archive: archiver unexpectedly accepted no --listen"
+	exit 1
+fi
+if ! grep -F -- '--listen is required' "$CLI_LOG" >/dev/null; then
+	echo "smoke_tcp_archive: missing required --listen diagnostic"
+	cat "$CLI_LOG"
+	exit 1
+fi
+
 ./bin/neotape-archiver \
-	--listen "unix://$SOCK" \
-	--volume-block-size "$BLOCK" \
-	--archive-name smoke \
+	-l "unix://$SOCK" \
+	-b 4K \
+	-n smoke \
 	"$SRC" &
 ARCHIVER_PID=$!
 
@@ -28,7 +39,7 @@ for _ in $(seq 1 50); do
 	sleep 0.1
 done
 
-./bin/neotape-write --source "unix://$SOCK" --target "spool:$SPOOL" 2>"$WRITER_LOG"
+./bin/neotape-write -s "unix://$SOCK" -t "spool:$SPOOL" -B 8M 2>"$WRITER_LOG"
 wait "$ARCHIVER_PID"
 
 if ! grep -F 'writer: first frame parsed block_size=4096' "$WRITER_LOG" >/dev/null; then

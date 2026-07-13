@@ -77,45 +77,48 @@ struct Options {
 }
 
 void usage(const char *prog) {
-    std::cerr << format("usage: {} --source <tcp://host:port|unix://path>\n"
-                        "       --target <tape:/dev/nst0|spool:./dir>\n"
-                        "       [--verify-pubkey <file.pub>]...\n"
-                        "       [--erase | --append]\n"
-                        "       [--output-buffer-size <bytes>]\n"
-                        "       [--max-volume-bytes <bytes>] [--debug]\n",
+    std::cerr << format("usage: {} -s|--source <tcp://host:port|unix://path>\n"
+                        "       -t|--target <tape:/dev/nst0|spool:./dir>\n"
+                        "       [-k|--verify-pubkey <file.pub>]...\n"
+                        "       [-e|--erase | -a|--append]\n"
+                        "       [-B|--output-buffer-size <SIZE>]\n"
+                        "       [-m|--max-volume-bytes <SIZE>] [-d|--debug]\n"
+                        "SIZE accepts K, M, G, or T binary suffixes "
+                        "(for example 4M or 16G).\n",
                         prog);
 }
 
 Options parse_args(int argc, char **argv) {
     static const struct option long_opts[] = {
         {"source", required_argument, nullptr, 's'},
-        {"target", required_argument, nullptr, 256},
-        {"erase", no_argument, nullptr, 257},
-        {"append", no_argument, nullptr, 258},
-        {"output-buffer-size", required_argument, nullptr, 259},
-        {"max-volume-bytes", required_argument, nullptr, 260},
-        {"debug", no_argument, nullptr, 261},
-        {"verify-pubkey", required_argument, nullptr, 262},
+        {"target", required_argument, nullptr, 't'},
+        {"erase", no_argument, nullptr, 'e'},
+        {"append", no_argument, nullptr, 'a'},
+        {"output-buffer-size", required_argument, nullptr, 'B'},
+        {"max-volume-bytes", required_argument, nullptr, 'm'},
+        {"debug", no_argument, nullptr, 'd'},
+        {"verify-pubkey", required_argument, nullptr, 'k'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "s:h", long_opts, nullptr)) != -1) {
+    while ((c = getopt_long(argc, argv, "s:t:eaB:m:dk:h", long_opts,
+                            nullptr)) != -1) {
         switch (c) {
         case 's':
             opts.source_address = optarg;
             break;
-        case 256:
+        case 't':
             opts.target = parse_target(optarg);
             break;
-        case 257:
+        case 'e':
             opts.erase = true;
             break;
-        case 258:
+        case 'a':
             opts.append = true;
             break;
-        case 259: {
+        case 'B': {
             try {
                 opts.output_buffer_size = static_cast<size_t>(
                     neotape::parse_size(optarg, "output buffer size"));
@@ -125,7 +128,7 @@ Options parse_args(int argc, char **argv) {
             }
             break;
         }
-        case 260: {
+        case 'm': {
             try {
                 opts.max_volume_bytes =
                     neotape::parse_size(optarg, "max volume bytes");
@@ -135,10 +138,10 @@ Options parse_args(int argc, char **argv) {
             }
             break;
         }
-        case 261:
+        case 'd':
             opts.debug = true;
             break;
-        case 262:
+        case 'k':
             opts.verify_pubkey_paths.emplace_back(optarg);
             break;
         case 'h':

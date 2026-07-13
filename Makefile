@@ -54,14 +54,15 @@ UNIT_TESTS = \
 	$(BINDIR)/test_fec
 
 SMOKE_TESTS = \
+	tests/smoke_cli_options.sh \
 	tests/smoke_mt_pax_pipeline.sh \
 	tests/smoke_tcp_archive.sh \
 	tests/smoke_tcp_archive_multi.sh \
 	tests/smoke_raw_store.sh \
-	tests/smoke_mt_pax_parity.sh \
 	tests/smoke_inspect.sh \
 	tests/smoke_scan.sh \
 	tests/smoke_fec_pipeline.sh \
+	tests/smoke_extractor_bounded_memory.sh \
 	tests/smoke_salvage.sh \
 	tests/smoke_tcp_extract.sh \
 	tests/smoke_signed_tcp_extract.sh \
@@ -127,7 +128,7 @@ $(eval $(call make_cxx_binary,$(BINDIR)/neotape-inspect,NEOTAPE_INSPECT_OBJS,SIG
 $(eval $(call make_cxx_binary,$(BINDIR)/neotape-scan,NEOTAPE_SCAN_OBJS,CORE_LIBS))
 $(eval $(call make_cxx_binary,$(BINDIR)/neotape-dump,NEOTAPE_DUMP_OBJS,CORE_LIBS))
 
-$(BINDIR)/test_pax_pipeline: tests/test_pax_pipeline.cpp include/neotape/closable_queue.hpp | $(BINDIR)
+$(BINDIR)/test_pax_pipeline: tests/test_pax_pipeline.cpp include/neotape/closable_queue.hpp include/neotape/result_store.hpp | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $< -o $@
 
 $(eval $(call make_cpp_test,$(BINDIR)/test_tcp_protocol,tests/test_tcp_protocol.cpp,TEST_TCP_PROTOCOL_OBJS,CORE_LIBS,CORE_LIBS))
@@ -149,7 +150,7 @@ test-unit: $(UNIT_TESTS)
 	$(BINDIR)/test_fec
 
 test-smoke: $(MAIN_BINS) $(SMOKE_TESTS)
-	@for test_script in $(SMOKE_TESTS); do \
+	@set -e; for test_script in $(SMOKE_TESTS); do \
 		sh $$test_script; \
 	done
 

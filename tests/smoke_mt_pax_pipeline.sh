@@ -44,12 +44,20 @@ done
 mkfifo "$fd_archive"
 (sleep 2; cat "$fd_archive" >/dev/null) &
 slow_reader=$!
+set +e
 timeout 30 sh -c '
     ulimit -n 28
     exec ./bin/mt-pax -f "$1" -C "$2" --io-thread 1 --output-buffer-size 1M src 2>"$3"
-' _ "$fd_archive" "$fd_root" "$fd_err" || true
+' _ "$fd_archive" "$fd_root" "$fd_err"
+fd_status=$?
+set -e
 wait "$slow_reader" 2>/dev/null || true
 rm -f "$fd_archive"
+if [ "$fd_status" -ne 0 ]; then
+    printf 'FAIL: mt-pax fd-pressure test exited with status %s\n' "$fd_status" >&2
+    cat "$fd_err" >&2
+    exit 1
+fi
 if grep -q 'Can.t open' "$fd_err"; then
     printf 'FAIL: mt-pax fd-pressure test leaked file descriptors\n' >&2
     exit 1

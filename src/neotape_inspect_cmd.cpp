@@ -74,39 +74,40 @@ struct Options {
 }
 
 void usage(const char *prog) {
-    std::cerr << format("usage: {} --source <spool:./dir|tape:/dev/nst0>\n"
-                        "       [--verify-pubkey <file.pub>]...\n"
-                        "       [--require-signed] [--debug] [--raw] [-h]\n",
+    std::cerr << format("usage: {} -s|--source <spool:./dir|tape:/dev/nst0>\n"
+                        "       [-k|--verify-pubkey <file.pub>]...\n"
+                        "       [-S|--require-signed] [-d|--debug] [-r|--raw] "
+                        "[-h]\n",
                         prog);
 }
 
 Options parse_args(int argc, char **argv) {
     static const struct option long_opts[] = {
         {"source", required_argument, nullptr, 's'},
-        {"debug", no_argument, nullptr, 256},
-        {"raw", no_argument, nullptr, 257},
-        {"verify-pubkey", required_argument, nullptr, 258},
-        {"require-signed", no_argument, nullptr, 259},
+        {"debug", no_argument, nullptr, 'd'},
+        {"raw", no_argument, nullptr, 'r'},
+        {"verify-pubkey", required_argument, nullptr, 'k'},
+        {"require-signed", no_argument, nullptr, 'S'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "s:h", long_opts, nullptr)) != -1) {
+    while ((c = getopt_long(argc, argv, "s:drk:Sh", long_opts, nullptr)) != -1) {
         switch (c) {
         case 's':
             opts.source = parse_source(optarg);
             break;
-        case 256:
+        case 'd':
             opts.debug = true;
             break;
-        case 257:
+        case 'r':
             opts.raw = true;
             break;
-        case 258:
+        case 'k':
             opts.verify_pubkey_paths.emplace_back(optarg);
             break;
-        case 259:
+        case 'S':
             opts.require_signed = true;
             break;
         case 'h':
@@ -337,19 +338,13 @@ class TapeFrameReader final : public FrameReader {
 
     ReadResult next() override {
         for (;;) {
-            uint64_t const file_num = current_file_num();
             ssize_t const n =
                 ::read(dev_->fd(), buffer_.data(), buffer_.size());
             if (n < 0) {
                 if (errno == EIO) {
-                    // Filemark on tape.
-                    dev_->space_fwd_filemark(1);
-                    return ReadResult{
-                        {},
-                        file_num,
-                        true,
-                        false,
-                        format("filemark after file #{}", file_num)};
+                    // Linux st reports a tape filemark as either a zero-byte
+                    // read or EIO and leaves the drive positioned after it.
+                    return filemark_result();
                 }
                 throw std::runtime_error(format(
                     "read {}: {}", dev_->device_path(), std::strerror(errno)));
@@ -357,30 +352,31 @@ class TapeFrameReader final : public FrameReader {
             if (n == 0) {
                 // Could be filemark or EOD.
                 if (dev_->status().eod()) {
-                    return ReadResult{{}, file_num, false, true, "end"};
+                    return ReadResult{{}, tapefile_num_, false, true, "end"};
                 }
-                dev_->space_fwd_filemark(1);
-                return ReadResult{{},
-                                  file_num,
-                                  true,
-                                  false,
-                                  format("filemark after file #{}", file_num)};
+                return filemark_result();
             }
 
             return ReadResult{
-                vector<std::byte>(buffer_.data(), buffer_.data() + n), file_num,
-                false, false, dev_->device_path()};
+                vector<std::byte>(buffer_.data(), buffer_.data() + n),
+                tapefile_num_, false, false, dev_->device_path()};
         }
     }
 
   private:
-    uint64_t current_file_num() const {
-        int const fileno = dev_->get_fileno();
-        return fileno >= 0 ? static_cast<uint64_t>(fileno) : 0;
+    ReadResult filemark_result() {
+        uint64_t const completed_tapefile = tapefile_num_++;
+        return ReadResult{{},
+                          completed_tapefile,
+                          true,
+                          false,
+                          format("filemark after file #{}",
+                                 completed_tapefile)};
     }
 
     std::unique_ptr<mt::TapeDevice> dev_;
     vector<std::byte> buffer_;
+    uint64_t tapefile_num_ = 0;
 };
 
 // -----------------------------------------------------------------------

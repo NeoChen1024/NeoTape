@@ -26,9 +26,10 @@ using std::string;
 }
 
 void usage(const char *prog) {
-    std::cerr << format("usage: {} --listen <tcp://host:port|unix://path>\n"
-                        "       [-o <file>] [--verify-pubkey <file.pub>]...\n"
-                        "       [--require-signed] [--salvage] [-v] [-h]\n",
+    std::cerr << format("usage: {} -l|--listen <tcp://host:port|unix://path>\n"
+                        "       [-o|--output <file>] [-v|--verbose]\n"
+                        "       [-k|--verify-pubkey <file.pub>]...\n"
+                        "       [-S|--require-signed] [-s|--salvage] [-v] [-h]\n",
                         prog);
 }
 
@@ -46,15 +47,16 @@ Options parse_args(int argc, char **argv) {
         {"listen", required_argument, nullptr, 'l'},
         {"output", required_argument, nullptr, 'o'},
         {"verbose", no_argument, nullptr, 'v'},
-        {"verify-pubkey", required_argument, nullptr, 256},
-        {"require-signed", no_argument, nullptr, 257},
-        {"salvage", no_argument, nullptr, 258},
+        {"verify-pubkey", required_argument, nullptr, 'k'},
+        {"require-signed", no_argument, nullptr, 'S'},
+        {"salvage", no_argument, nullptr, 's'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "l:o:vh", long_opts, nullptr)) != -1) {
+    while ((c = getopt_long(argc, argv, "l:o:k:Ssvh", long_opts, nullptr)) !=
+           -1) {
         switch (c) {
         case 'l':
             opts.listen_address = optarg;
@@ -65,13 +67,13 @@ Options parse_args(int argc, char **argv) {
         case 'v':
             opts.verbose = true;
             break;
-        case 256:
+        case 'k':
             opts.verify_pubkey_paths.emplace_back(optarg);
             break;
-        case 257:
+        case 'S':
             opts.require_signed = true;
             break;
-        case 258:
+        case 's':
             opts.salvage = true;
             break;
         case 'h':

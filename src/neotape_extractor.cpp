@@ -37,7 +37,6 @@ using std::vector;
 struct ExtractorState {
     FrameValidator validator;
     bool saw_archive_end = false;
-    vector<uint8_t> slice_payload;
     bool require_signed = false;
     vector<SignifyPublicKey> verify_keys;
     bool warned_signed_unverified = false;
@@ -49,6 +48,29 @@ struct ExtractorState {
         pending_content_shards;
     FecAvailableShards fec_shards;
 };
+
+[[nodiscard]] bool write_output(FILE *output, const uint8_t *data,
+                                std::size_t size) {
+    if (size == 0) {
+        return true;
+    }
+    size_t const written = std::fwrite(data, 1, size, output);
+    if (written != size) {
+        std::cerr << format("extractor: write output failed: {}\n",
+                            std::strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool flush_output(FILE *output) {
+    if (std::fflush(output) != 0) {
+        std::cerr << format("extractor: flush output failed: {}\n",
+                            std::strerror(errno));
+        return false;
+    }
+    return true;
+}
 
 void remember_fec_content(ExtractorState &state, const FrameHeader &header,
                           const uint8_t *data, bool available) {
@@ -67,35 +89,27 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
 
 [[nodiscard]] bool emit_fec_group(ExtractorState &state,
                                   const FecDescriptor &descriptor,
-                                  std::size_t shard_size) {
+                                  std::size_t shard_size, FILE *output) {
     for (uint16_t index = 0; index < descriptor.source_frame_count; ++index) {
         uint64_t const sequence = descriptor.source_content_frame_start + index;
         auto const found = std::ranges::find_if(
             state.pending_content_shards,
             [&](const auto &entry) { return entry.first == sequence; });
         if (found != state.pending_content_shards.end()) {
-            state.fec_shards[index] = found->second;
+            state.fec_shards[index] = std::move(found->second);
         }
     }
 
+    std::size_t const unavailable = std::ranges::count_if(
+        state.fec_shards.begin(),
+        state.fec_shards.begin() + descriptor.source_frame_count,
+        [](const auto &shard) { return !shard.has_value(); });
+    std::vector<FecShard> recovered;
     try {
-        std::vector<FecShard> const recovered =
-            recover_rs_32_4(state.fec_shards, descriptor.source_frame_count,
-                            descriptor.source_stream_size, shard_size,
-                            descriptor.fec_group_blake3);
-        uint64_t remaining = descriptor.source_stream_size;
-        for (const FecShard &shard : recovered) {
-            std::size_t const count = static_cast<std::size_t>(
-                std::min<uint64_t>(remaining, shard.size()));
-            const auto *bytes = reinterpret_cast<const uint8_t *>(shard.data());
-            state.slice_payload.insert(state.slice_payload.end(), bytes,
-                                       bytes + count);
-            remaining -= count;
-        }
-        std::size_t const unavailable = std::ranges::count_if(
-            state.fec_shards.begin(),
-            state.fec_shards.begin() + descriptor.source_frame_count,
-            [](const auto &shard) { return !shard.has_value(); });
+        recovered = recover_rs_32_4(
+            state.salvage ? state.fec_shards : std::move(state.fec_shards),
+            descriptor.source_frame_count, descriptor.source_stream_size,
+            shard_size, descriptor.fec_group_blake3);
         if (unavailable != 0) {
             std::cerr << format("extractor: FEC repaired {} unavailable "
                                 "content shard(s)\n",
@@ -120,34 +134,33 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
             if (state.fec_shards[index].has_value()) {
                 const auto *bytes = reinterpret_cast<const uint8_t *>(
                     state.fec_shards[index]->data());
-                state.slice_payload.insert(state.slice_payload.end(), bytes,
-                                           bytes + count);
+                if (!write_output(output, bytes, count)) {
+                    state.pending_content_shards.clear();
+                    state.fec_shards = {};
+                    return false;
+                }
             }
             remaining -= count;
         }
+        state.pending_content_shards.clear();
+        state.fec_shards = {};
+        return true;
+    }
+
+    uint64_t remaining = descriptor.source_stream_size;
+    for (const FecShard &shard : recovered) {
+        std::size_t const count = static_cast<std::size_t>(
+            std::min<uint64_t>(remaining, shard.size()));
+        const auto *bytes = reinterpret_cast<const uint8_t *>(shard.data());
+        if (!write_output(output, bytes, count)) {
+            state.pending_content_shards.clear();
+            state.fec_shards = {};
+            return false;
+        }
+        remaining -= count;
     }
     state.pending_content_shards.clear();
     state.fec_shards = {};
-    return true;
-}
-
-[[nodiscard]] bool flush_slice(ExtractorState &state, FILE *output) {
-    if (state.slice_payload.empty()) {
-        return true;
-    }
-    size_t const written = std::fwrite(state.slice_payload.data(), 1,
-                                       state.slice_payload.size(), output);
-    if (written != state.slice_payload.size()) {
-        std::cerr << format("extractor: write output failed: {}\n",
-                            std::strerror(errno));
-        return false;
-    }
-    if (std::fflush(output) != 0) {
-        std::cerr << format("extractor: flush output failed: {}\n",
-                            std::strerror(errno));
-        return false;
-    }
-    state.slice_payload.clear();
     return true;
 }
 
@@ -263,8 +276,8 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
         }
         if (descriptor.repair_index + 1 == fec_repair_shards) {
             if (!emit_fec_group(state, descriptor,
-                                decoded_block_size(header) -
-                                    fixed_header_size)) {
+                                decoded_block_size(header) - fixed_header_size,
+                                output)) {
                 return false;
             }
         }
@@ -273,25 +286,26 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
 
     if ((!state.salvage && state.validator.saw_archive_end) ||
         (state.salvage && header.channel_type == ChannelType::ARCHIVE_END)) {
-        if (!flush_slice(state, output)) {
+        if (!flush_output(output)) {
             return false;
         }
         state.saw_archive_end = true;
         return true;
     }
 
-    // Slice boundary: flush the previous slice's accumulated payload.
+    // Preserve a useful output boundary for pipes and regular files.
     bool const slice_changed =
         state.salvage ? state.output_slice_seq.has_value() &&
                             header.slice_seq_num != *state.output_slice_seq
                       : header.slice_seq_num != prev_slice_seq;
     if (slice_changed) {
-        if (!flush_slice(state, output)) {
+        if (!flush_output(output)) {
             return false;
         }
     }
 
-    // --- accumulate content payload only ---
+    // Protected content is held only until its local FEC group commits.
+    // Unprotected content can be streamed as soon as the frame is accepted.
     if (header.channel_type == ChannelType::CH_CONTENT &&
         header.frame_payload_size > 0) {
         if (has_frame_flag_fec_protected(header.flags)) {
@@ -301,8 +315,9 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
         }
         const uint8_t *payload =
             data + static_cast<std::ptrdiff_t>(fixed_header_size);
-        state.slice_payload.insert(state.slice_payload.end(), payload,
-                                   payload + header.frame_payload_size);
+        if (!write_output(output, payload, header.frame_payload_size)) {
+            return false;
+        }
         state.output_slice_seq = header.slice_seq_num;
     }
 
@@ -357,8 +372,9 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
                 break;
             }
             case MessageType::tape_eof: {
-                NEOTAPE_DEBUG("extractor: received tape_eof, flushing slice\n");
-                if (!flush_slice(state, output)) {
+                NEOTAPE_DEBUG(
+                    "extractor: received tape_eof, flushing output\n");
+                if (!flush_output(output)) {
                     return false;
                 }
                 // Reader is about to disconnect — return to accept next reader.

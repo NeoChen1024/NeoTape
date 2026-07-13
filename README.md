@@ -119,6 +119,10 @@ compiled build artifacts excluded. See
 
 ## Usage
 
+All long CLI options have short aliases shown by `-h`. Byte-size arguments use
+`SIZE` and accept case-insensitive binary `K`, `M`, `G`, and `T` suffixes, such
+as `4M` or `16G`; a value without a suffix is interpreted as bytes.
+
 ### bin/neotape-plan
 
 ```sh
@@ -133,14 +137,14 @@ NeoTape writer. It does not write archives.
 ```sh
 bin/mt-pax -f <output-file|-> [-v|-vv] [-x] [-C <dir>]
            [-P <buffer-percent>] [--io-thread <N>]
-           [--output-buffer-size <bytes>] <path> [path ...]
+           [--output-buffer-size <SIZE>] <path> [path ...]
 ```
 
 Additional options:
 
 - `--io-thread <N>`  Total I/O threads (default 1). N=1 uses no worker threads;
   N>1 spawns N-1 workers for small files.
-- `--output-buffer-size <bytes>`  Internal output buffer size (default 64 MB).
+- `-B, --output-buffer-size <SIZE>`  Internal output buffer size (default 64 MB).
 - `-P <percent>`  Waterline write restart threshold (0-100). When non-zero the
   output thread waits until the buffer reaches at least this full before
   draining, useful for sequential writes on HDD/tape.
@@ -149,21 +153,20 @@ Additional options:
 
 ```sh
 bin/neotape-archiver --listen <tcp://host:port|unix://path>
-                     [--volume-block-size <bytes>] [--archive-name <name>]
+                     [--volume-block-size <SIZE>] [--archive-name <name>]
                      [-C <dir>] [-P <percent>] [--io-thread <N>]
-                     [--output-buffer-size <bytes>] [--plan <file>]
+                     [--output-buffer-size <SIZE>] [--plan <file>]
                      [--retention-frame-count <N>]
                      [--sign-secret-key <file.sec>]
                      [--sign-passphrase-file <path>]
                      [-v|-vv] [-x] <path> [path...]
 ```
 
-`neotape-archiver` is a functional superset of `mt-pax`. In server mode it
-listens on a TCP or Unix-domain socket and serves NeoTape-framed records to
-`neotape-write` clients. Without `--listen` it writes a plain pax stream to
-`-f <out-file|->`, matching `mt-pax` output. When `--sign-secret-key` is set,
-every served frame is signed with the supplied signify secret key; encrypted
-`.sec` files are supported via `--sign-passphrase-file`.
+`neotape-archiver` listens on a TCP or Unix-domain socket and serves
+NeoTape-framed records to `neotape-write` clients. Use `mt-pax` when a standalone
+pax archive file is needed. When `--sign-secret-key` is set, every served frame
+is signed with the supplied signify secret key; encrypted `.sec` files are
+supported via `--sign-passphrase-file`.
 
 ### bin/neotape-write (per-volume writer client)
 
@@ -172,8 +175,8 @@ bin/neotape-write --source <tcp://host:port|unix://path>
                   --target <tape:/dev/nst0|spool:./dir>
                   [--verify-pubkey <file.pub>]...
                   [--erase | --append]
-                  [--output-buffer-size <bytes>]
-                  [--max-volume-bytes <bytes>] [--debug]
+                  [--output-buffer-size <SIZE>]
+                  [--max-volume-bytes <SIZE>] [--debug]
 ```
 
 `neotape-write` connects to a running `neotape-archiver` and requests frames one

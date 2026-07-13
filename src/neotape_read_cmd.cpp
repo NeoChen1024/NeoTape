@@ -60,8 +60,8 @@ struct Options {
 }
 
 void usage(const char *prog) {
-    std::cerr << format("usage: {} --source <tape:/dev/nst0|spool:./dir>\n"
-                        "       --connect <tcp://host:port|unix://path>\n",
+    std::cerr << format("usage: {} -s|--source <tape:/dev/nst0|spool:./dir>\n"
+                        "       -c|--connect <tcp://host:port|unix://path> [-h]\n",
                         prog);
 }
 
@@ -118,7 +118,7 @@ class TapeSourceReader final : public SourceReader {
         ssize_t const n = ::read(dev_->fd(), buffer_.data(), buffer_.size());
         if (n < 0) {
             if (errno == EIO) {
-                dev_->space_fwd_filemark(1);
+                // Linux st leaves the drive positioned after a filemark.
                 ++filemark_count;
                 return std::nullopt;
             }
@@ -129,7 +129,6 @@ class TapeSourceReader final : public SourceReader {
                 eod = true;
                 return std::nullopt;
             }
-            dev_->space_fwd_filemark(1);
             ++filemark_count;
             return std::nullopt;
         }

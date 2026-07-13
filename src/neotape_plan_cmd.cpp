@@ -96,9 +96,10 @@ void warn(const string &message) {
 
 void usage(const char *prog) {
     std::cerr << format(
-        "usage: {} [-C <dir>] -o <file|-> [--slice-size <bytes>]\n"
-        "       [--metadata-buffer-size <bytes>] [-x] [-v]\n"
-        "       [--io-threads <N>] <path> [path ...]\n",
+        "usage: {} [-C <dir>] -o <file|-> [-s|--slice-size <SIZE>]\n"
+        "       [-m|--metadata-buffer-size <SIZE>] [-x] [-v]\n"
+        "       [-j|--io-threads <N>] <path> [path ...]\n"
+        "SIZE accepts K, M, G, or T binary suffixes (for example 4M or 16G).\n",
         prog);
 }
 
@@ -108,7 +109,9 @@ Options parse_args(int argc, char **argv) {
         {"metadata-buffer-size", required_argument, nullptr, 'm'},
         {"output", required_argument, nullptr, 'o'},
         {"directory", required_argument, nullptr, 'C'},
-        {"io-threads", required_argument, nullptr, 256},
+        {"io-threads", required_argument, nullptr, 'j'},
+        {"one-file-system", no_argument, nullptr, 'x'},
+        {"verbose", no_argument, nullptr, 'v'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
@@ -116,7 +119,8 @@ Options parse_args(int argc, char **argv) {
     bool saw_chdir = false;
     int c = 0;
     optind = 1;
-    while ((c = getopt_long(argc, argv, "C:o:xvh", long_opts, nullptr)) != -1) {
+    while ((c = getopt_long(argc, argv, "C:o:s:m:j:xvh", long_opts, nullptr)) !=
+           -1) {
         switch (c) {
         case 's':
             opts.slice_size = neotape::parse_size(optarg, "slice size");
@@ -141,7 +145,7 @@ Options parse_args(int argc, char **argv) {
         case 'v':
             opts.verbose = true;
             break;
-        case 256: {
+        case 'j': {
             char *end = nullptr;
             unsigned long const n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0') {

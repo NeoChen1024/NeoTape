@@ -4,6 +4,10 @@ Status: non-normative implementation reference.
 
 This appendix documents the current NeoTape tools and their CLI usage.
 
+Every long option has a short alias listed by each command's `-h` output.
+Byte-size arguments accept case-insensitive binary `K`, `M`, `G`, and `T`
+suffixes (for example `4M` or `16G`); an unsuffixed value is bytes.
+
 ## TCP archive pipeline
 
 The archiver and writer are a long-running server / short-lived client pair that
@@ -24,12 +28,8 @@ bin/neotape-write --source tcp://tapehost:9000 \
   --target spool:./out
 ```
 
-Without `--listen`, the archiver behaves like `mt-pax` and writes a plain pax
-stream to `-f`:
-
-```sh
-bin/neotape-archiver -f output.pax -C /data photos docs
-```
+`--listen` is required. Use the standalone `mt-pax` command below when a plain
+pax archive file is needed.
 
 ## Raw byte-stream store
 

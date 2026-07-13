@@ -52,13 +52,14 @@ struct Options {
 
 void usage(const char *prog) {
     std::cerr << format(
-        "usage: {} --listen <tcp://host:port|unix://path>\n"
-        "       [--input <file|->] [--volume-block-size <bytes>]\n"
-        "       [--archive-name <name>] [--retention-frame-count <N>]\n"
-        "       [--fec]\n"
-        "       [--sign-secret-key <file.sec>]\n"
-        "       [--sign-passphrase-file <path>]\n"
-        "       [--debug] [-h]\n",
+        "usage: {} -l|--listen <tcp://host:port|unix://path>\n"
+        "       [-i|--input <file|->] [-b|--volume-block-size <SIZE>]\n"
+        "       [-n|--archive-name <name>] [-r|--retention-frame-count <N>]\n"
+        "       [-F|--fec]\n"
+        "       [-k|--sign-secret-key <file.sec>]\n"
+        "       [-K|--sign-passphrase-file <path>]\n"
+        "       [-d|--debug] [-h]\n"
+        "SIZE accepts K, M, G, or T binary suffixes (for example 4M or 16G).\n",
         prog);
 }
 
@@ -68,18 +69,18 @@ Options parse_args(int argc, char **argv) {
         {"input", required_argument, nullptr, 'i'},
         {"volume-block-size", required_argument, nullptr, 'b'},
         {"archive-name", required_argument, nullptr, 'n'},
-        {"retention-frame-count", required_argument, nullptr, 256},
-        {"debug", no_argument, nullptr, 257},
-        {"sign-secret-key", required_argument, nullptr, 258},
-        {"sign-passphrase-file", required_argument, nullptr, 259},
-        {"fec", no_argument, nullptr, 260},
+        {"retention-frame-count", required_argument, nullptr, 'r'},
+        {"debug", no_argument, nullptr, 'd'},
+        {"sign-secret-key", required_argument, nullptr, 'k'},
+        {"sign-passphrase-file", required_argument, nullptr, 'K'},
+        {"fec", no_argument, nullptr, 'F'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "l:i:b:n:h", long_opts, nullptr)) !=
-           -1) {
+    while ((c = getopt_long(argc, argv, "l:i:b:n:r:dk:K:Fh", long_opts,
+                            nullptr)) != -1) {
         switch (c) {
         case 'l':
             opts.listen_address = optarg;
@@ -94,7 +95,7 @@ Options parse_args(int argc, char **argv) {
         case 'n':
             opts.archive_name = optarg;
             break;
-        case 256: {
+        case 'r': {
             char *end = nullptr;
             unsigned long const n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0' || n == 0 || n > 1000000) {
@@ -105,16 +106,16 @@ Options parse_args(int argc, char **argv) {
             opts.retention_frame_count = static_cast<uint64_t>(n);
             break;
         }
-        case 257:
+        case 'd':
             opts.debug = true;
             break;
-        case 258:
+        case 'k':
             opts.sign_secret_key_file = optarg;
             break;
-        case 259:
+        case 'K':
             opts.sign_passphrase_file = optarg;
             break;
-        case 260:
+        case 'F':
             opts.fec_enabled = true;
             break;
         case 'h':

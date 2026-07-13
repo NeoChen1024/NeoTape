@@ -11,7 +11,7 @@ mkdir "$tmp/input"
 echo "hello signed world" >"$tmp/input/hello.txt"
 echo "another signed file" >"$tmp/input/bar.txt"
 
-bin/neotape-archiver -C "$tmp/input" -f "$tmp/reference.pax" hello.txt bar.txt
+bin/mt-pax -C "$tmp/input" -f "$tmp/reference.pax" hello.txt bar.txt
 
 archiver_sock="unix://$tmp/archiver.sock"
 
