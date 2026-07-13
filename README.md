@@ -107,6 +107,20 @@ make test
 make bot_bundle
 ```
 
+Measure the ISA-L `rs_32_4` generator and four-shard correction throughput:
+
+```sh
+make benchmark-fec
+bin/benchmark_fec --shard-size 4M --iterations 8
+```
+
+The reported MiB/s uses protected source payload bytes as the denominator for
+both operations. This is an informational benchmark and has no machine-specific
+pass/fail threshold. Correction uses four missing data shards and includes
+matrix inversion, reconstruction, allocations, surviving-shard copies, and the
+BLAKE3 group commitment check; preparing the input fixture is outside the timed
+region.
+
 Produces `bin/mt-pax`, `bin/neotape-plan`, `bin/neotape-archiver`,
 `bin/neotape-raw-store`, `bin/neotape-write`, `bin/neotape-read`,
 `bin/neotape-extractor`, `bin/neotape-inspect`, `bin/neotape-scan`, and test
@@ -175,6 +189,8 @@ bin/neotape-write --source <tcp://host:port|unix://path>
                   --target <tape:/dev/nst0|spool:./dir>
                   [--verify-pubkey <file.pub>]...
                   [--erase | --append]
+                  [--recovery-bundle <tar>]
+                  [--recovery-bundle-block-size <SIZE>]
                   [--output-buffer-size <SIZE>]
                   [--max-volume-bytes <SIZE>] [--debug]
 ```
@@ -188,6 +204,13 @@ rewind to BOT and overwrite, or `--append` to space to EOD and continue. When
 one or more `--verify-pubkey` files are configured, the writer first
 authenticates the source archiver with a challenge-response signature and then
 verifies each signed frame before writing it.
+
+In non-append mode, `-R, --recovery-bundle <tar>` places a recovery tar before
+the NeoTape data. On physical tape, recovery records default to 256 KiB and can
+be changed with `-r, --recovery-bundle-block-size <SIZE>`; the final record is
+zero-padded and followed by a filemark. NeoTape frames then use their own
+volume block size. For spool targets the writer installs an exact copy as
+`recovery-bundle.tar`. The option is incompatible with `--append`.
 
 ### bin/neotape-raw-store (raw byte-stream producer)
 

@@ -254,6 +254,8 @@ int main(int argc, char **argv) {
 
         uint64_t record_count = 0;
         uint64_t filemark_count = 0;
+        uint64_t skipped_prefix_records = 0;
+        bool saw_neotape_frame = false;
 
         for (;;) {
             auto msg = neotape::tcp::read_message(fd);
@@ -266,7 +268,22 @@ int main(int argc, char **argv) {
                 bool eod = false;
                 auto record = reader->next_record(filemark_count, eod);
 
-                while (!eod && !record) {
+                for (;;) {
+                    while (!eod && !record) {
+                        record = reader->next_record(filemark_count, eod);
+                    }
+                    if (eod || saw_neotape_frame) {
+                        break;
+                    }
+                    bool const has_magic =
+                        record->size() >= neotape::magic.size() &&
+                        std::memcmp(record->data(), neotape::magic.data(),
+                                    neotape::magic.size()) == 0;
+                    if (has_magic) {
+                        saw_neotape_frame = true;
+                        break;
+                    }
+                    ++skipped_prefix_records;
                     record = reader->next_record(filemark_count, eod);
                 }
 
@@ -276,6 +293,12 @@ int main(int argc, char **argv) {
                     std::cerr << format("neotape-read: {} frames sent\n",
                                         record_count);
                     return 0;
+                }
+
+                if (skipped_prefix_records != 0 && record_count == 0) {
+                    std::cerr << format(
+                        "neotape-read: skipped {} non-NeoTape BOT records\n",
+                        skipped_prefix_records);
                 }
 
                 {

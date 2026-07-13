@@ -43,6 +43,8 @@ TEST_BINS = \
 	$(BINDIR)/test_signature \
 	$(BINDIR)/test_fec
 
+BENCHMARK_BINS = $(BINDIR)/benchmark_fec
+
 EXE = $(MAIN_BINS) $(TEST_BINS)
 
 UNIT_TESTS = \
@@ -75,7 +77,7 @@ CLANG_FORMAT ?= clang-format
 SRC_FILES = $(wildcard src/*.cpp include/neotape/*.hpp)
 CLANG_TIDY ?= clang-tidy
 
-.PHONY: all clean countline fix test test-build test-unit test-smoke test_pax_cli compile_commands bot_bundle
+.PHONY: all clean countline fix test test-build test-unit test-smoke test_pax_cli benchmark-fec compile_commands bot_bundle
 
 compile_commands.json:
 	python3 scripts/gen_compile_commands.py
@@ -116,6 +118,7 @@ TEST_FORMAT_OBJS = src/neotape_format.o
 TEST_VALIDATE_OBJS = src/neotape_validate.o src/neotape_fec.o src/neotape_format.o
 TEST_SIGNATURE_OBJS = src/neotape_frame_builder.o src/neotape_fec.o src/neotape_signature.o src/neotape_format.o
 TEST_FEC_OBJS = src/neotape_fec.o src/neotape_frame_builder.o src/neotape_format.o src/neotape_signature.o
+BENCHMARK_FEC_OBJS = src/neotape_fec.o src/neotape_format.o src/neotape_common.o
 
 $(eval $(call make_cxx_binary,$(BINDIR)/mt-pax,MT_PAX_OBJS,CORE_LIBS))
 $(eval $(call make_cxx_binary,$(BINDIR)/neotape-plan,NEOTAPE_PLAN_OBJS,CORE_LIBS))
@@ -136,6 +139,7 @@ $(eval $(call make_cpp_test,$(BINDIR)/test_format,tests/test_format.cpp,TEST_FOR
 $(eval $(call make_cpp_test,$(BINDIR)/test_validate,tests/test_validate.cpp,TEST_VALIDATE_OBJS,FEC_LIBS,FEC_LIBS))
 $(eval $(call make_cpp_test,$(BINDIR)/test_signature,tests/test_signature.cpp,TEST_SIGNATURE_OBJS,SIGNED_FEC_LIBS,SIGNED_FEC_LIBS))
 $(eval $(call make_cpp_test,$(BINDIR)/test_fec,tests/test_fec.cpp,TEST_FEC_OBJS,SIGNED_FEC_LIBS,SIGNED_FEC_LIBS))
+$(eval $(call make_cpp_test,$(BINDIR)/benchmark_fec,tests/benchmark_fec.cpp,BENCHMARK_FEC_OBJS,FEC_LIBS,FEC_LIBS))
 
 test: test-unit test-smoke
 
@@ -156,6 +160,9 @@ test-smoke: $(MAIN_BINS) $(SMOKE_TESTS)
 
 test_pax_cli: $(BINDIR)/mt-pax
 	sh tests/smoke_mt_pax_pipeline.sh
+
+benchmark-fec: $(BENCHMARK_BINS)
+	$(BENCHMARK_BINS)
 
 bot_bundle: $(BOT_BUNDLE)
 
@@ -180,7 +187,7 @@ fix:
 	$(CLANG_TIDY) --fix $(SRC_FILES) -- $(CXXFLAGS)
 	$(CLANG_FORMAT) -i $(SRC_FILES)
 clean:
-	-rm -f $(EXE) $(BINDIR)/*.o src/*.o src/*.d tests/*.o tests/*.d $(THIRDPARTY_LIBS) $(B3OBJ) $(SIGNIFYOBJ) $(BOT_BUNDLE)
+	-rm -f $(EXE) $(BENCHMARK_BINS) $(BINDIR)/*.o src/*.o src/*.d tests/*.o tests/*.d $(THIRDPARTY_LIBS) $(B3OBJ) $(SIGNIFYOBJ) $(BOT_BUNDLE)
 	-rm -rf $(ISALBUILDDIR)
 
 -include $(wildcard src/*.d tests/*.d)

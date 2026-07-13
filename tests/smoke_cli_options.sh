@@ -28,6 +28,7 @@ check_help bin/neotape-raw-store '-l|--listen' '-b|--volume-block-size' \
 	'-r|--retention-frame-count' '-F|--fec' 'SIZE accepts K, M, G, or T'
 check_help bin/neotape-write '-s|--source' '-t|--target' \
 	'-B|--output-buffer-size' '-m|--max-volume-bytes' \
+	'-R|--recovery-bundle' '-r|--recovery-bundle-block-size' \
 	'SIZE accepts K, M, G, or T'
 check_help bin/neotape-extractor '-l|--listen' '-k|--verify-pubkey' \
 	'-S|--require-signed' '-s|--salvage'

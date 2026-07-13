@@ -18,6 +18,7 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <format>
 #include <getopt.h>
 #include <iostream>
@@ -40,6 +41,10 @@ using std::string;
 using std::string_view;
 using std::vector;
 
+namespace fs = std::filesystem;
+
+constexpr uint64_t default_recovery_bundle_block_size = 256ULL * 1024;
+
 struct TargetLocator {
     enum Kind { none, tape, spool } kind = none;
     std::string path;
@@ -60,6 +65,8 @@ struct Options {
     TargetLocator target;
     bool erase = false;
     bool append = false;
+    std::optional<fs::path> recovery_bundle;
+    std::optional<uint64_t> recovery_bundle_block_size;
     size_t output_buffer_size = 256ULL * 1024 * 1024;
     std::optional<uint64_t> max_volume_bytes;
     vector<string> verify_pubkey_paths;
@@ -81,6 +88,9 @@ void usage(const char *prog) {
                         "       -t|--target <tape:/dev/nst0|spool:./dir>\n"
                         "       [-k|--verify-pubkey <file.pub>]...\n"
                         "       [-e|--erase | -a|--append]\n"
+                        "       [-R|--recovery-bundle <tar>]\n"
+                        "       [-r|--recovery-bundle-block-size <SIZE>] "
+                        "(default 256K)\n"
                         "       [-B|--output-buffer-size <SIZE>]\n"
                         "       [-m|--max-volume-bytes <SIZE>] [-d|--debug]\n"
                         "SIZE accepts K, M, G, or T binary suffixes "
@@ -94,6 +104,8 @@ Options parse_args(int argc, char **argv) {
         {"target", required_argument, nullptr, 't'},
         {"erase", no_argument, nullptr, 'e'},
         {"append", no_argument, nullptr, 'a'},
+        {"recovery-bundle", required_argument, nullptr, 'R'},
+        {"recovery-bundle-block-size", required_argument, nullptr, 'r'},
         {"output-buffer-size", required_argument, nullptr, 'B'},
         {"max-volume-bytes", required_argument, nullptr, 'm'},
         {"debug", no_argument, nullptr, 'd'},
@@ -103,7 +115,7 @@ Options parse_args(int argc, char **argv) {
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "s:t:eaB:m:dk:h", long_opts,
+    while ((c = getopt_long(argc, argv, "s:t:eaR:r:B:m:dk:h", long_opts,
                             nullptr)) != -1) {
         switch (c) {
         case 's':
@@ -118,6 +130,19 @@ Options parse_args(int argc, char **argv) {
         case 'a':
             opts.append = true;
             break;
+        case 'R':
+            opts.recovery_bundle = fs::path(optarg);
+            break;
+        case 'r': {
+            try {
+                opts.recovery_bundle_block_size = neotape::parse_size(
+                    optarg, "recovery bundle block size");
+            } catch (const std::exception &e) {
+                std::cerr << format("neotape-write: {}\n", e.what());
+                std::exit(2);
+            }
+            break;
+        }
         case 'B': {
             try {
                 opts.output_buffer_size = static_cast<size_t>(
@@ -161,6 +186,44 @@ Options parse_args(int argc, char **argv) {
     }
     if (opts.erase && opts.append) {
         usage_error("--erase and --append are mutually exclusive");
+    }
+    if (opts.append && opts.recovery_bundle.has_value()) {
+        usage_error("--recovery-bundle cannot be used with --append");
+    }
+    if (opts.recovery_bundle_block_size.has_value() &&
+        !opts.recovery_bundle.has_value()) {
+        usage_error("--recovery-bundle-block-size requires "
+                    "--recovery-bundle");
+    }
+    if (opts.recovery_bundle_block_size.has_value() &&
+        opts.target.kind != TargetLocator::tape) {
+        usage_error(
+            "--recovery-bundle-block-size is only valid with tape targets");
+    }
+    if (opts.recovery_bundle_block_size.has_value() &&
+        (*opts.recovery_bundle_block_size > neotape::max_block_size ||
+         *opts.recovery_bundle_block_size < neotape::min_block_size ||
+         *opts.recovery_bundle_block_size % 1024 != 0)) {
+        usage_error(format(
+            "--recovery-bundle-block-size must be from {} to {} bytes and a "
+            "multiple of 1 KiB",
+            neotape::min_block_size, neotape::max_block_size));
+    }
+
+    if (opts.recovery_bundle.has_value()) {
+        std::error_code ec;
+        if (!fs::is_regular_file(*opts.recovery_bundle, ec) || ec) {
+            usage_error(format("recovery bundle is not a regular file: {}",
+                               opts.recovery_bundle->string()));
+        }
+        uintmax_t const size = fs::file_size(*opts.recovery_bundle, ec);
+        if (ec) {
+            usage_error(format("cannot stat recovery bundle {}: {}",
+                               opts.recovery_bundle->string(), ec.message()));
+        }
+        if (size == 0) {
+            usage_error("recovery bundle must not be empty");
+        }
     }
 
     if (opts.max_volume_bytes.has_value() &&
@@ -309,14 +372,19 @@ void write_trailing_filemark(mt::TapeDevice *dev) {
 class CapacityLimitedTapeDevice : public mt::TapeDevice {
   public:
     CapacityLimitedTapeDevice(std::unique_ptr<mt::TapeDevice> inner,
-                              uint64_t max_bytes)
+                              uint64_t max_bytes, uint64_t initial_written = 0)
         : mt::TapeDevice(-1, inner->device_path(), inner->is_read_write()),
-          inner_(std::move(inner)), max_bytes_(max_bytes) {}
+          inner_(std::move(inner)), max_bytes_(max_bytes),
+          written_(initial_written) {
+        if (written_ > max_bytes_) {
+            throw mt::Error(device_path(), "capacity limit", ENOSPC);
+        }
+    }
 
     [[nodiscard]] int fd() const noexcept override { return inner_->fd(); }
 
     void write_record(const void *data, std::size_t size) override {
-        if (written_ + size > max_bytes_) {
+        if (size > max_bytes_ - written_) {
             throw mt::Error(device_path(), "capacity limit", ENOSPC);
         }
         inner_->write_record(data, size);
@@ -397,8 +465,75 @@ class CapacityLimitedTapeDevice : public mt::TapeDevice {
   private:
     std::unique_ptr<mt::TapeDevice> inner_;
     uint64_t max_bytes_;
-    uint64_t written_ = 0;
+    uint64_t written_;
 };
+
+uint64_t install_spool_recovery_bundle(const fs::path &root,
+                                       const fs::path &source) {
+    fs::create_directories(root);
+    fs::path const destination = root / "recovery-bundle.tar";
+    fs::path const pending =
+        root / format("recovery-bundle.tar.pending.{}", ::getpid());
+    std::error_code ec;
+    fs::remove(pending, ec);
+    ec.clear();
+    fs::copy_file(source, pending, fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        throw std::runtime_error(format("copy recovery bundle: {}", ec.message()));
+    }
+    uint64_t const size = fs::file_size(pending, ec);
+    if (ec) {
+        fs::remove(pending);
+        throw std::runtime_error(
+            format("stat copied recovery bundle: {}", ec.message()));
+    }
+    fs::rename(pending, destination, ec);
+    if (ec) {
+        fs::remove(pending);
+        throw std::runtime_error(
+            format("install recovery bundle: {}", ec.message()));
+    }
+    return size;
+}
+
+void write_tape_recovery_bundle(mt::TapeDevice &dev, const fs::path &source,
+                                size_t record_size) {
+    std::ifstream input(source, std::ios::binary);
+    if (!input) {
+        throw std::runtime_error(
+            format("cannot open recovery bundle: {}", source.string()));
+    }
+
+    vector<std::byte> record(record_size);
+    uint64_t source_bytes = 0;
+    uint64_t record_count = 0;
+    for (;;) {
+        std::fill(record.begin(), record.end(), std::byte{0});
+        input.read(reinterpret_cast<char *>(record.data()),
+                   static_cast<std::streamsize>(record.size()));
+        std::streamsize const n = input.gcount();
+        if (n == 0) {
+            if (!input.eof()) {
+                throw std::runtime_error("error reading recovery bundle");
+            }
+            break;
+        }
+        source_bytes += static_cast<uint64_t>(n);
+        dev.write_record(record.data(), record.size());
+        ++record_count;
+        if (n < static_cast<std::streamsize>(record.size())) {
+            if (!input.eof()) {
+                throw std::runtime_error("error reading recovery bundle");
+            }
+            break;
+        }
+    }
+    dev.write_filemark();
+    std::cerr << format(
+        "writer: wrote recovery bundle {} ({} source bytes, {} tape records "
+        "of {} bytes)\n",
+        source.string(), source_bytes, record_count, record_size);
+}
 
 void tape_writer_thread(mt::TapeDevice *dev, int fd,
                         std::mutex &socket_write_mtx, WriterState &state) {
@@ -586,14 +721,16 @@ int main(int argc, char **argv) {
             if (opts.target.kind == TargetLocator::tape) {
                 dev = std::make_unique<mt::TapeDevice>(opts.target.path, true);
             } else {
-                auto spool = std::make_unique<mt::SpoolTapeDevice>(
-                    std::filesystem::path(opts.target.path), true);
-                if (opts.max_volume_bytes.has_value()) {
-                    dev = std::make_unique<CapacityLimitedTapeDevice>(
-                        std::move(spool), *opts.max_volume_bytes);
-                } else {
-                    dev = std::move(spool);
+                fs::path const spool_root(opts.target.path);
+                fs::path const installed_bundle =
+                    spool_root / "recovery-bundle.tar";
+                if (!opts.erase && !opts.append &&
+                    fs::exists(installed_bundle)) {
+                    fail("spool appears to contain a recovery bundle; use "
+                         "--erase or --append");
                 }
+                dev = std::make_unique<mt::SpoolTapeDevice>(
+                    std::filesystem::path(opts.target.path), true);
             }
 
             // Default policy: refuse to overwrite existing tape content.
@@ -615,6 +752,40 @@ int main(int argc, char **argv) {
                 dev->space_to_eod();
             } else {
                 dev->rewind(); // --erase or empty tape
+            }
+
+            uint64_t recovery_bundle_bytes = 0;
+            if (opts.target.kind == TargetLocator::tape &&
+                opts.recovery_bundle.has_value()) {
+                uint64_t const bundle_block_size =
+                    opts.recovery_bundle_block_size.value_or(
+                        default_recovery_bundle_block_size);
+                write_tape_recovery_bundle(
+                    *dev, *opts.recovery_bundle,
+                    static_cast<size_t>(bundle_block_size));
+            } else if (opts.target.kind == TargetLocator::spool) {
+                fs::path const spool_root(opts.target.path);
+                fs::path const installed_bundle =
+                    spool_root / "recovery-bundle.tar";
+                if (opts.recovery_bundle.has_value()) {
+                    recovery_bundle_bytes = install_spool_recovery_bundle(
+                        spool_root, *opts.recovery_bundle);
+                    std::cerr << format(
+                        "writer: installed recovery bundle {} ({} bytes)\n",
+                        installed_bundle.string(), recovery_bundle_bytes);
+                } else if (opts.erase) {
+                    std::error_code ec;
+                    fs::remove(installed_bundle, ec);
+                    if (ec) {
+                        fail(format("remove stale recovery bundle: {}",
+                                    ec.message()));
+                    }
+                }
+                if (opts.max_volume_bytes.has_value()) {
+                    dev = std::make_unique<CapacityLimitedTapeDevice>(
+                        std::move(dev), *opts.max_volume_bytes,
+                        recovery_bundle_bytes);
+                }
             }
 
             output = TargetOutput{std::move(dev)};

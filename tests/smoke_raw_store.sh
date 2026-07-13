@@ -6,6 +6,8 @@ SPOOL=/tmp/neotape-raw-store-spool-$$
 INPUT=/tmp/neotape-raw-store-input-$$.bin
 WRITER_LOG=/tmp/neotape-raw-store-writer-$$.log
 SERVER_LOG=/tmp/neotape-raw-store-server-$$.log
+BUNDLE=/tmp/neotape-raw-store-recovery-$$.tar
+OPTION_LOG=/tmp/neotape-raw-store-option-$$.log
 BLOCK=4096
 PAYLOAD_CAP=$((BLOCK - 512))
 INPUT_SIZE=$((PAYLOAD_CAP * 2 + 123))
@@ -14,7 +16,8 @@ cleanup() {
 	if [ -n "${RAW_STORE_PID:-}" ]; then
 		kill "$RAW_STORE_PID" 2>/dev/null || true
 	fi
-	rm -rf "$SOCK" "$SPOOL" "$INPUT" "$WRITER_LOG" "$SERVER_LOG"
+	rm -rf "$SOCK" "$SPOOL" "$INPUT" "$WRITER_LOG" "$SERVER_LOG" \
+		"$BUNDLE" "$OPTION_LOG"
 }
 trap cleanup EXIT
 
@@ -25,6 +28,22 @@ size = int(sys.argv[2])
 with open(path, 'wb') as f:
     f.write(bytes((i % 251 for i in range(size))))
 PY
+
+tar -cf "$BUNDLE" -C "$(dirname "$INPUT")" "$(basename "$INPUT")"
+mkdir -p "$SPOOL"
+printf 'stale bundle\n' >"$SPOOL/recovery-bundle.tar"
+
+if ./bin/neotape-write -s unix:///nonexistent -t "spool:$SPOOL" \
+	-a -R "$BUNDLE" 2>"$OPTION_LOG"; then
+	echo "smoke_raw_store: --append accepted --recovery-bundle"
+	exit 1
+fi
+if ! grep -F -- '--recovery-bundle cannot be used with --append' \
+	"$OPTION_LOG" >/dev/null; then
+	echo "smoke_raw_store: missing append/recovery-bundle diagnostic"
+	cat "$OPTION_LOG"
+	exit 1
+fi
 
 ./bin/neotape-raw-store \
 	--listen "unix://$SOCK" \
@@ -45,9 +64,15 @@ if [ ! -S "$SOCK" ]; then
 	exit 1
 fi
 
-./bin/neotape-write --source "unix://$SOCK" --target "spool:$SPOOL" 2>"$WRITER_LOG"
+./bin/neotape-write --source "unix://$SOCK" --target "spool:$SPOOL" \
+	--erase --recovery-bundle "$BUNDLE" 2>"$WRITER_LOG"
 wait "$RAW_STORE_PID"
 RAW_STORE_PID=
+
+if ! cmp -s "$BUNDLE" "$SPOOL/recovery-bundle.tar"; then
+	echo "smoke_raw_store: installed recovery bundle differs from input"
+	exit 1
+fi
 
 FILE_COUNT=$(find "$SPOOL" -maxdepth 1 -type f -name '*.nts' | wc -l)
 if [ "$FILE_COUNT" -ne 2 ]; then

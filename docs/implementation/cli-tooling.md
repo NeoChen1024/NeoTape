@@ -21,7 +21,8 @@ bin/neotape-archiver --listen tcp://0.0.0.0:9000 \
 
 # Write one volume's worth of data to tape (short-lived, per-volume):
 bin/neotape-write --source tcp://tapehost:9000 \
-  --target tape:/dev/nst0
+  --target tape:/dev/nst0 --erase \
+  --recovery-bundle output/bot.tar
 
 # Write to a spool directory instead of a real tape device:
 bin/neotape-write --source tcp://tapehost:9000 \
@@ -30,6 +31,13 @@ bin/neotape-write --source tcp://tapehost:9000 \
 
 `--listen` is required. Use the standalone `mt-pax` command below when a plain
 pax archive file is needed.
+
+`-R, --recovery-bundle <tar>` is available in non-append mode. A tape target
+writes the bundle at BOT using separate 256 KiB records by default. Use
+`-r, --recovery-bundle-block-size <SIZE>` to override that size. The writer
+pads the final bundle record, writes a filemark, and then writes NeoTape frames
+at the volume's own block size. A spool target copies the original tar to
+`recovery-bundle.tar`; it is deliberately outside the numbered `.nts` stream.
 
 ## Raw byte-stream store
 

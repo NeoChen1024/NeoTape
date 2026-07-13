@@ -254,6 +254,8 @@ bin/neotape-write --source <tcp://host:port|unix://path>
                   --target <tape:/dev/nst0|spool:./dir>
                   [--verify-pubkey <file.pub>]...
                   [--erase | --append]
+                  [--recovery-bundle <tar>]
+                  [--recovery-bundle-block-size <SIZE>]
                   [--output-buffer-size <SIZE>]
                   [--max-volume-bytes <SIZE>] [--debug]
 ```
@@ -265,6 +267,10 @@ By default the writer refuses to overwrite existing content. Use `--erase` to
 rewind to BOT and overwrite, or `--append` to space to EOD and continue. When
 `--verify-pubkey` is present, the writer authenticates the source server before
 opening/rewinding media, then verifies every signed frame before writing it.
+In non-append mode, `--recovery-bundle` writes a tar before the NeoTape stream.
+Physical tape recovery records use a separate block size (256 KiB by default,
+configurable with `--recovery-bundle-block-size`), while spool targets store
+the exact tar as `recovery-bundle.tar`.
 
 ## Thread architecture (mt-pax)
 
