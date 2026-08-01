@@ -53,16 +53,25 @@ numbered `.nts` stream. `--recovery-bundle` is incompatible with `--append`.
 
 `make bot_bundle` archives the current repository working tree directly, so the
 contents of checked-out `3rdparty/` git submodules are included in the bundle.
-The tar step excludes common build artifacts and VCS metadata.
-
-Excluded content includes:
+The tar is written in POSIX pax format (`--format=pax`), as required for
+recovery bundles by the format spec. The tar step excludes common build
+artifacts, VCS metadata, and local tooling state, mirroring the repository
+`.gitignore`:
 
 - `bin/`
 - `build/`
 - `output/`
 - `*.o`
 - `*.a`
+- `*.d`
+- `*/target/` (cargo/Rust build trees inside `3rdparty/` submodules)
+- `.cache/`
+- `.pi/`
+- `.codex/`
+- `.vscode/`
+- `.worktrees/`
 - `compile_commands.json`
+- VCS metadata via `--exclude-vcs` (`.git` in the repository and submodules)
 
 This means the bundle contains the source, docs, scripts, tests, and other
 project files needed to rebuild or inspect NeoTape later, without packaging the
@@ -81,8 +90,14 @@ This design is deliberate:
 
 ## Relationship to Spec
 
-The normative format documents only say that an optional recovery bundle may be
-written before the first NeoTape slice.
+The format spec (`docs/spec/07-spool-dir.md`, `docs/spec/11-appendix-layout-examples.md`)
+defines the optional recovery bundle as a plain pax archive named
+`recovery-bundle.tar`, placed at the spool root or written as the first tape
+file before the first slice; readers must skip it when locating the first
+NeoTape frame.
 
-This file defines the current repository-level implementation choice for how
-that bundle is produced.
+`make bot_bundle` conforms to the pax-format requirement via `--format=pax`.
+The file is produced in the build tree as `output/bot.tar`; when installed by
+`neotape-write` (see "Writing the Bundle"), a spool target stores it as
+`recovery-bundle.tar` and a tape target writes it as the first tape file at
+BOT, followed by a filemark.

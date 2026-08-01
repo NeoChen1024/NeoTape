@@ -1,4 +1,4 @@
-# shellcheck disable=SC1007,SC2037,SC2046,SC2068,SC2091,SC2283
+# shellcheck disable=SC1007,SC1036,SC1088,SC2037,SC2046,SC2068,SC2091,SC2283
 CC	= cc
 CXX	= c++
 .DEFAULT_GOAL := all
@@ -168,6 +168,7 @@ bot_bundle: $(BOT_BUNDLE)
 
 $(BOT_BUNDLE): | $(OUTPUTDIR)
 	tar -cf $@ \
+		--format=pax \
 		--exclude-vcs \
 		--exclude='./bin' \
 		--exclude='./build' \
@@ -175,6 +176,13 @@ $(BOT_BUNDLE): | $(OUTPUTDIR)
 		--exclude='./compile_commands.json' \
 		--exclude='*.o' \
 		--exclude='*.a' \
+		--exclude='*.d' \
+		--exclude='*/target' \
+		--exclude='.cache' \
+		--exclude='.pi' \
+		--exclude='.codex' \
+		--exclude='.vscode' \
+		--exclude='.worktrees' \
 		.
 
 $(BINDIR)/% : src/%.c $(B3LIB) | $(BINDIR)

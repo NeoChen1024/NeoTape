@@ -28,9 +28,6 @@ source archiver over TCP or Unix-domain sockets before it touches media.
 ## Specification Status
 
 The active format specification lives under [`docs/spec/`](docs/spec/).
-The current FEC channel and profile specification lives in
-[`docs/spec/04-fec-channel.md`](docs/spec/04-fec-channel.md), with shared
-conformance rules in [`docs/spec/05-validation.md`](docs/spec/05-validation.md).
 
 ## Hierarchy
 
@@ -73,7 +70,7 @@ block-size change within a volume as a format error.
 | 5     | Raw byte-stream store              | Done   |
 | 6     | Frame inspect / compliance         | Done   |
 | 7     | Recovery & salvage                 | Done   |
-| 8     | Optional BOT recovery bundle       | Spec   |
+| 8     | Optional BOT recovery bundle       | Done   |
 | 9     | Optional FEC repair channel        | Done   |
 
 See [`docs/spec/`](docs/spec/) for the active format specification and [`docs/implementation/`](docs/implementation/) for
