@@ -1,5 +1,7 @@
 #include "neotape/tcp_protocol.hpp"
 
+#include <catch2/catch_test_macros.hpp>
+
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -8,12 +10,11 @@
 using neotape::tcp::Message;
 using neotape::tcp::MessageType;
 
-[[noreturn]] static void fail(const std::string &msg) {
-    std::cerr << "test_tcp_protocol: " << msg << "\n";
-    std::exit(1);
+static void fail(const std::string &msg) {
+    FAIL(msg);
 }
 
-int main() {
+TEST_CASE("TCP protocol messages and addresses", "[unit][protocol]") {
     int fds[2];
     if (pipe(fds) != 0) {
         fail("pipe failed");
@@ -255,6 +256,4 @@ int main() {
             fail("empty address should throw");
     }
 
-    std::cout << "test_tcp_protocol: ok\n";
-    return 0;
 }

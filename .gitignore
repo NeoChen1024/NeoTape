@@ -1,8 +1,4 @@
-*.o
-*.d
 build/
-bin/
-lib/
 *.log
 .agent/
 .codex/
@@ -15,4 +11,3 @@ testing/
 out/
 output/
 .pi/
-compile_commands.json

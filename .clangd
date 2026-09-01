@@ -1,29 +1,6 @@
 CompileFlags:
-  Add:
-    - -I/home/neo_chen/vcs/NeoTape/include
-    - -I/home/neo_chen/vcs/NeoTape/tests
-    - -I/home/neo_chen/vcs/NeoTape/3rdparty/BLAKE3/c
-    - -I/home/neo_chen/vcs/NeoTape/3rdparty/crc32c/include
-    - -I/usr/local/include
-    - -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++
-    - -isystem/usr/lib/gcc/x86_64-pc-linux-gnu/15.2.1/include/c++/x86_64-pc-linux-gnu
-    - -D__STDC_CONSTANT_MACROS
-    - -D__STDC_LIMIT_MACROS
-  Compiler: clang++
-
----
-If:
-  PathMatch: .*\.cpp
-CompileFlags:
-  Add:
-    - -std=c++20
-
----
-If:
-  PathMatch: .*\.c
-CompileFlags:
-  Add:
-    - -std=c17
+  CompilationDatabase: build/dev
+  Compiler: /usr/bin/c++
 
 ---
 If:

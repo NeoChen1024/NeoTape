@@ -1,14 +1,15 @@
 #include "neotape/closable_queue.hpp"
 #include "neotape/result_store.hpp"
 
-#include <atomic>
+#include <catch2/catch_test_macros.hpp>
+
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <future>
 #include <iostream>
 #include <optional>
 #include <string>
-#include <thread>
 #include <utility>
 
 namespace {
@@ -16,36 +17,33 @@ namespace {
 using namespace std::chrono_literals;
 
 void require(bool cond, const char *msg) {
-    if (!cond) {
-        std::cerr << "test_pax_pipeline: " << msg << "\n";
-        std::exit(1);
-    }
+    INFO(msg);
+    REQUIRE(cond);
 }
 
 void test_pop_wakes_on_close() {
     neotape::ClosableQueue<int> q(1);
-    std::optional<int> got = 42;
-    std::thread t([&] { got = q.pop(); });
-    std::this_thread::sleep_for(25ms);
+    auto pending = std::async(std::launch::async, [&] { return q.pop(); });
+    require(pending.wait_for(50ms) == std::future_status::timeout,
+            "empty queue pop remains pending");
     q.close();
-    t.join();
+    require(pending.wait_for(1s) == std::future_status::ready,
+            "close wakes empty queue pop before deadline");
+    std::optional<int> const got = pending.get();
     require(!got.has_value(), "closed empty queue returns nullopt");
 }
 
 void test_push_wakes_on_close() {
     neotape::ClosableQueue<int> q(1);
     require(q.push(1), "initial push succeeds");
-    std::atomic<bool> finished{false};
-    bool pushed = true;
-    std::thread t([&] {
-        pushed = q.push(2);
-        finished.store(true, std::memory_order_relaxed);
-    });
-    std::this_thread::sleep_for(25ms);
-    require(!finished.load(std::memory_order_relaxed),
+    auto pending =
+        std::async(std::launch::async, [&] { return q.push(2); });
+    require(pending.wait_for(50ms) == std::future_status::timeout,
             "second push blocks while full");
     q.close();
-    t.join();
+    require(pending.wait_for(1s) == std::future_status::ready,
+            "close wakes blocked push before deadline");
+    bool const pushed = pending.get();
     require(!pushed, "blocked push returns false after close");
 }
 
@@ -63,47 +61,45 @@ void test_close_drains_existing_items() {
 
 void test_result_store_waits_for_exact_sequence() {
     neotape::ResultStore<std::string> store;
-    std::optional<std::string> got;
-    std::atomic<bool> completed{false};
-    std::thread t([&] {
-        got = store.take(5);
-        completed.store(true, std::memory_order_release);
-    });
-    std::this_thread::sleep_for(25ms);
+    auto pending =
+        std::async(std::launch::async, [&] { return store.take(5); });
+    require(pending.wait_for(50ms) == std::future_status::timeout,
+            "take waits for requested sequence");
     store.put(4, "wrong");
-    std::this_thread::sleep_for(25ms);
-    require(!completed.load(std::memory_order_acquire),
+    require(pending.wait_for(50ms) == std::future_status::timeout,
             "take ignores other sequence results");
     store.put(5, "right");
-    t.join();
+    require(pending.wait_for(1s) == std::future_status::ready,
+            "requested sequence wakes take before deadline");
+    std::optional<std::string> const got = pending.get();
     require(got.has_value() && *got == "right",
             "take returns requested result");
 }
 
 void test_result_store_close_wakes_take() {
     neotape::ResultStore<std::string> store;
-    std::optional<std::string> got = "not closed";
-    std::thread t([&] { got = store.take(9); });
-    std::this_thread::sleep_for(25ms);
+    auto pending =
+        std::async(std::launch::async, [&] { return store.take(9); });
+    require(pending.wait_for(50ms) == std::future_status::timeout,
+            "missing result keeps take pending");
     store.close();
-    t.join();
+    require(pending.wait_for(1s) == std::future_status::ready,
+            "close wakes pending take before deadline");
+    std::optional<std::string> const got = pending.get();
     require(!got.has_value(), "closed result store wakes pending take");
 }
 
 void test_result_store_bounded_put_waits_for_space() {
     neotape::ResultStore<std::string> store(1);
     require(store.put(1, "first"), "initial bounded put succeeds");
-    std::atomic<bool> second_done{false};
-    bool second_put = false;
-    std::thread t([&] {
-        second_put = store.put(2, "second");
-        second_done.store(true, std::memory_order_release);
-    });
-    std::this_thread::sleep_for(25ms);
-    require(!second_done.load(std::memory_order_acquire),
+    auto pending =
+        std::async(std::launch::async, [&] { return store.put(2, "second"); });
+    require(pending.wait_for(50ms) == std::future_status::timeout,
             "bounded result store put blocks while full");
     auto first = store.take(1);
-    t.join();
+    require(pending.wait_for(1s) == std::future_status::ready,
+            "free capacity wakes blocked put before deadline");
+    bool const second_put = pending.get();
     require(first.has_value() && *first == "first",
             "take returns first bounded result");
     require(second_put, "blocked bounded put succeeds after take frees space");
@@ -115,17 +111,14 @@ void test_result_store_bounded_put_waits_for_space() {
 void test_result_store_close_wakes_bounded_put() {
     neotape::ResultStore<std::string> store(1);
     require(store.put(1, "first"), "initial bounded close test put succeeds");
-    std::atomic<bool> second_done{false};
-    bool second_put = true;
-    std::thread t([&] {
-        second_put = store.put(2, "second");
-        second_done.store(true, std::memory_order_release);
-    });
-    std::this_thread::sleep_for(25ms);
-    require(!second_done.load(std::memory_order_acquire),
+    auto pending =
+        std::async(std::launch::async, [&] { return store.put(2, "second"); });
+    require(pending.wait_for(50ms) == std::future_status::timeout,
             "bounded result store put waits before close");
     store.close();
-    t.join();
+    require(pending.wait_for(1s) == std::future_status::ready,
+            "close wakes bounded put before deadline");
+    bool const second_put = pending.get();
     require(!second_put, "blocked bounded put returns false after close");
 }
 
@@ -133,16 +126,11 @@ void test_result_store_capacity_allows_earliest_late_completion() {
     neotape::ResultStore<std::string> store(3);
     require(store.put(2, "two"), "put later result 2 succeeds");
     require(store.put(1, "one"), "put later result 1 succeeds");
-    std::atomic<bool> finished{false};
-    bool put_zero = false;
-    std::thread t([&] {
-        put_zero = store.put(0, "zero");
-        finished.store(true, std::memory_order_relaxed);
-    });
-    std::this_thread::sleep_for(25ms);
-    require(finished.load(std::memory_order_relaxed),
+    auto pending =
+        std::async(std::launch::async, [&] { return store.put(0, "zero"); });
+    require(pending.wait_for(1s) == std::future_status::ready,
             "earliest result can publish after later results");
-    t.join();
+    bool const put_zero = pending.get();
     require(put_zero, "earliest result put succeeds");
     auto zero = store.take(0);
     require(zero.has_value() && *zero == "zero",
@@ -151,7 +139,7 @@ void test_result_store_capacity_allows_earliest_late_completion() {
 
 } // namespace
 
-int main() {
+TEST_CASE("pax pipeline synchronization primitives", "[unit][pax]") {
     test_pop_wakes_on_close();
     test_push_wakes_on_close();
     test_close_drains_existing_items();
@@ -160,5 +148,4 @@ int main() {
     test_result_store_bounded_put_waits_for_space();
     test_result_store_close_wakes_bounded_put();
     test_result_store_capacity_allows_earliest_late_completion();
-    return 0;
 }

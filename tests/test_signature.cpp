@@ -2,9 +2,11 @@
 #include "neotape/frame_builder.hpp"
 #include "neotape/signature.hpp"
 
+#include <catch2/catch_test_macros.hpp>
+
 extern "C" {
-#define b64_pton __b64_pton
-#define b64_ntop __b64_ntop
+#define b64_pton neotape_b64_pton
+#define b64_ntop neotape_b64_ntop
 #include "signify/base64.h"
 #include "signify/compat.h"
 #include "signify/sha2.h"
@@ -33,15 +35,13 @@ using neotape::SignifySecretKey;
 using std::array;
 using std::string;
 using std::string_view;
+const string regress_pubkey =
+    string(NEOTAPE_SOURCE_DIR) + "/3rdparty/signify/regress/regresskey.pub";
+const string regress_seckey =
+    string(NEOTAPE_SOURCE_DIR) + "/3rdparty/signify/regress/regresskey.sec";
 
-inline constexpr string_view regress_pubkey =
-    "3rdparty/signify/regress/regresskey.pub";
-inline constexpr string_view regress_seckey =
-    "3rdparty/signify/regress/regresskey.sec";
-
-[[noreturn]] void fail(const string &msg) {
-    std::cerr << "test_signature: " << msg << "\n";
-    std::exit(1);
+void fail(const string &msg) {
+    FAIL(msg);
 }
 
 void expect(bool ok, const string &msg) {
@@ -120,7 +120,7 @@ string armor_secret_key(const SignifySecretKey &key, string_view passphrase,
         blob[40 + i] = static_cast<uint8_t>(key.secret_key[i] ^ xor_key[i]);
     }
     char base64[512];
-    if (__b64_ntop(blob.data(), blob.size(), base64, sizeof(base64)) == -1) {
+    if (neotape_b64_ntop(blob.data(), blob.size(), base64, sizeof(base64)) == -1) {
         fail("b64_ntop failed");
     }
     return "untrusted comment: signify secret key\n" + string(base64) + "\n";
@@ -128,9 +128,9 @@ string armor_secret_key(const SignifySecretKey &key, string_view passphrase,
 
 void test_load_signify_keys_and_sign_verify() {
     SignifyPublicKey const pubkey =
-        neotape::load_signify_public_key(string(regress_pubkey));
+        neotape::load_signify_public_key(regress_pubkey);
     SignifySecretKey const seckey =
-        neotape::load_signify_secret_key(string(regress_seckey));
+        neotape::load_signify_secret_key(regress_seckey);
     expect(pubkey.key_id == seckey.key_id, "key ids should match");
 
     Hash const hash = sample_hash();
@@ -166,9 +166,9 @@ void test_load_encrypted_signify_secret_key() {
 
 void test_validate_frame_signature() {
     SignifyPublicKey const pubkey =
-        neotape::load_signify_public_key(string(regress_pubkey));
+        neotape::load_signify_public_key(regress_pubkey);
     SignifySecretKey const seckey =
-        neotape::load_signify_secret_key(string(regress_seckey));
+        neotape::load_signify_secret_key(regress_seckey);
     Hash const hash = sample_hash();
 
     FrameHeader header;
@@ -226,9 +226,9 @@ void test_validate_frame_signature() {
 
 void test_auth_nonce_sign_verify() {
     SignifyPublicKey const pubkey =
-        neotape::load_signify_public_key(string(regress_pubkey));
+        neotape::load_signify_public_key(regress_pubkey);
     SignifySecretKey const seckey =
-        neotape::load_signify_secret_key(string(regress_seckey));
+        neotape::load_signify_secret_key(regress_seckey);
 
     neotape::AuthNonceBytes nonce{};
     for (size_t i = 0; i < nonce.size(); ++i) {
@@ -247,9 +247,9 @@ void test_auth_nonce_sign_verify() {
 
 void test_patch_volume_seq_num_finalizes_deferred_record() {
     SignifyPublicKey const pubkey =
-        neotape::load_signify_public_key(string(regress_pubkey));
+        neotape::load_signify_public_key(regress_pubkey);
     SignifySecretKey const seckey =
-        neotape::load_signify_secret_key(string(regress_seckey));
+        neotape::load_signify_secret_key(regress_seckey);
 
     neotape::ContentFrameBuilder builder(
         4096, "00000000-0000-4000-8000-000000000123", "sig-test");
@@ -301,11 +301,10 @@ void test_patch_volume_seq_num_finalizes_deferred_record() {
 
 } // namespace
 
-int main() {
+TEST_CASE("signify-compatible signatures", "[unit][signature]") {
     test_load_signify_keys_and_sign_verify();
     test_load_encrypted_signify_secret_key();
     test_validate_frame_signature();
     test_auth_nonce_sign_verify();
     test_patch_volume_seq_num_finalizes_deferred_record();
-    return 0;
 }

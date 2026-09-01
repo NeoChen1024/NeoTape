@@ -40,6 +40,7 @@ docs/
     path-pitfalls.md                Path handling conventions and gotchas
     phase-3.5-mt-pax-writer.md      Historical mt-pax writer phase notes
     recovery-bundle.md              BOT recovery bundle packaging strategy
+    cmake-build-system.md           CMake migration decisions and verification
 
   archive/                          Historical review and migration notes
     2026-06-17-project-review-findings.md

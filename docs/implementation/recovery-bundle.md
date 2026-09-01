@@ -15,18 +15,18 @@ codebase.
 The bundle is intended for operator-assisted recovery and source preservation,
 not for automatic execution by a reader.
 
-## Makefile Target
+## CMake Target
 
 The repository provides:
 
 ```sh
-make bot_bundle
+cmake --build --preset dev --target bot_bundle
 ```
 
 This writes:
 
 ```text
-output/bot.tar
+build/dev/output/bot.tar
 ```
 
 ## Writing the Bundle
@@ -34,9 +34,9 @@ output/bot.tar
 Pass the generated tar to a non-append writer invocation:
 
 ```sh
-bin/neotape-write --source unix:///run/neotape/archive.sock \
+build/dev/bin/neotape-write --source unix:///run/neotape/archive.sock \
   --target tape:/dev/nst0 --erase \
-  --recovery-bundle output/bot.tar
+  --recovery-bundle build/dev/output/bot.tar
 ```
 
 For physical tape, recovery-bundle records use a block size separate from the
@@ -51,14 +51,14 @@ numbered `.nts` stream. `--recovery-bundle` is incompatible with `--append`.
 
 ## Bundle Contents
 
-`make bot_bundle` archives the current repository working tree directly, so the
+The `bot_bundle` target archives the current repository working tree directly, so the
 contents of checked-out `3rdparty/` git submodules are included in the bundle.
 The tar is written in POSIX pax format (`--format=pax`), as required for
 recovery bundles by the format spec. The tar step excludes common build
 artifacts, VCS metadata, and local tooling state, mirroring the repository
 `.gitignore`:
 
-- `bin/`
+- `build/`
 - `build/`
 - `output/`
 - `*.o`
@@ -96,8 +96,8 @@ defines the optional recovery bundle as a plain pax archive named
 file before the first slice; readers must skip it when locating the first
 NeoTape frame.
 
-`make bot_bundle` conforms to the pax-format requirement via `--format=pax`.
-The file is produced in the build tree as `output/bot.tar`; when installed by
+The `bot_bundle` target conforms to the pax-format requirement via `--format=pax`.
+The file is produced as `build/dev/output/bot.tar`; when installed by
 `neotape-write` (see "Writing the Bundle"), a spool target stores it as
 `recovery-bundle.tar` and a tape target writes it as the first tape file at
 BOT, followed by a filemark.

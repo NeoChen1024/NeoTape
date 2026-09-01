@@ -1,5 +1,7 @@
 #include "neotape/format.hpp"
 
+#include <catch2/catch_test_macros.hpp>
+
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -13,9 +15,8 @@ namespace {
 
 using std::string;
 
-[[noreturn]] void fail(const string &msg) {
-    std::cerr << "test_format: " << msg << "\n";
-    std::exit(1);
+void fail(const string &msg) {
+    FAIL(msg);
 }
 
 void expect(bool ok, const string &msg) {
@@ -285,13 +286,11 @@ void test_frame_hash_canonicalization() {
 
 } // namespace
 
-int main() {
+TEST_CASE("NeoTape frame format", "[unit][format]") {
     test_channel_type_values();
     test_layout_round_trip();
     test_signed_frame_signature_round_trip();
     test_unsigned_serializer_rejects_signature();
     test_validation();
     test_frame_hash_canonicalization();
-    std::cout << "test_format: ok\n";
-    return 0;
 }

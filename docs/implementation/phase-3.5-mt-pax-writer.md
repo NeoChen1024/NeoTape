@@ -2,7 +2,7 @@
 
 Status: implementation note.
 
-Phase 3.5 is the multi-threaded pax writer (`bin/mt-pax`, source
+Phase 3.5 is the multi-threaded pax writer (`build/dev/bin/mt-pax`, source
 `src/mt-pax.cpp`). It produces the same POSIX pax byte stream as the original
 single-threaded writer, but uses a worker pool to serialize small files in
 parallel and a streaming path for large files.

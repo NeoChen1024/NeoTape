@@ -2,6 +2,8 @@
 #include "neotape/format.hpp"
 #include "neotape/validate.hpp"
 
+#include <catch2/catch_test_macros.hpp>
+
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
@@ -21,9 +23,8 @@ using std::string;
 using std::string_view;
 using std::vector;
 
-[[noreturn]] void fail(const string &msg) {
-    std::cerr << "test_validate: " << msg << "\n";
-    std::exit(1);
+void fail(const string &msg) {
+    FAIL(msg);
 }
 
 void expect(bool ok, const string &msg) {
@@ -485,7 +486,7 @@ void test_seeded_validator_accepts_fec_group_split_across_volumes() {
 
 } // namespace
 
-int main() {
+TEST_CASE("NeoTape archive validation", "[unit][validation]") {
     test_restore_mode_metadata_hash_warning();
     test_restore_mode_metadata_structural_failure_is_fatal();
     test_validator_rejects_first_frame_with_nonzero_channel_frame_seq();
@@ -496,6 +497,4 @@ int main() {
     test_validator_accepts_interleaved_fec_group();
     test_salvage_relaxes_consistency_but_keeps_integrity();
     test_seeded_validator_accepts_fec_group_split_across_volumes();
-    std::cout << "test_validate: ok\n";
-    return 0;
 }

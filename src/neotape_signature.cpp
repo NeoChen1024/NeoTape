@@ -1,8 +1,8 @@
 #include "neotape/signature.hpp"
 
 extern "C" {
-#define b64_pton __b64_pton
-#define b64_ntop __b64_ntop
+#define b64_pton neotape_b64_pton
+#define b64_ntop neotape_b64_ntop
 #include "signify/base64.h"
 #include "signify/compat.h"
 #include "signify/crypto_api.h"
@@ -120,7 +120,7 @@ array<uint8_t, N> decode_armored_payload(const string &path, string *comment) {
     ArmoredBlob const blob = parse_armored_blob(path);
     array<uint8_t, N> decoded{};
     int const rv =
-        __b64_pton(blob.base64.c_str(), decoded.data(), decoded.size());
+        neotape_b64_pton(blob.base64.c_str(), decoded.data(), decoded.size());
     if (rv != static_cast<int>(N)) {
         fail_parse(path, "invalid base64 payload");
     }

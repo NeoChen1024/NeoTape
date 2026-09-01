@@ -16,16 +16,16 @@ socket:
 
 ```sh
 # Start the archiver server (long-running, owns archive state):
-bin/neotape-archiver --listen tcp://0.0.0.0:9000 \
+build/dev/bin/neotape-archiver --listen tcp://0.0.0.0:9000 \
   -C /data photos docs
 
 # Write one volume's worth of data to tape (short-lived, per-volume):
-bin/neotape-write --source tcp://tapehost:9000 \
+build/dev/bin/neotape-write --source tcp://tapehost:9000 \
   --target tape:/dev/nst0 --erase \
   --recovery-bundle output/bot.tar
 
 # Write to a spool directory instead of a real tape device:
-bin/neotape-write --source tcp://tapehost:9000 \
+build/dev/bin/neotape-write --source tcp://tapehost:9000 \
   --target spool:./out
 ```
 
@@ -48,12 +48,12 @@ NeoTape records to `neotape-write` over TCP or a Unix-domain socket:
 
 ```sh
 # Store raw bytes from a file:
-bin/neotape-raw-store --listen tcp://0.0.0.0:9000 \
+build/dev/bin/neotape-raw-store --listen tcp://0.0.0.0:9000 \
   --archive-name disk-image --input image.raw
 
 # Or store raw bytes from a pipeline:
 dd if=/dev/nvme0n1 bs=4M | \
-  bin/neotape-raw-store --listen unix:///tmp/raw-store.sock
+  build/dev/bin/neotape-raw-store --listen unix:///tmp/raw-store.sock
 ```
 
 The entire input stream is one slice (`slice_seq_num = 0`). Within that slice,
@@ -65,7 +65,7 @@ final `archive_end` frame.
 ## Standalone pax writer
 
 ```sh
-bin/mt-pax -f output.pax --io-thread 4 -P 50 ./source
+build/dev/bin/mt-pax -f output.pax --io-thread 4 -P 50 ./source
 ```
 
 Multi-threaded pax writer with worker pool.  `--io-thread N` spawns N-1
@@ -75,7 +75,7 @@ workers for small files and streams large files through the serializer.
 ## Planner
 
 ```sh
-bin/neotape-plan -C /data -o home.plan photos docs
+build/dev/bin/neotape-plan -C /data -o home.plan photos docs
 ```
 
 Generates the record-oriented plan metadata stream consumed by
@@ -90,13 +90,13 @@ stream:
 
 ```sh
 # Start the extractor server (long-running, validates frames):
-bin/neotape-extractor --listen tcp://0.0.0.0:9000 -o output.pax
+build/dev/bin/neotape-extractor --listen tcp://0.0.0.0:9000 -o output.pax
 
 # Read one volume from tape and feed it to the extractor:
-bin/neotape-read --source tape:/dev/nst0 --connect tcp://tapehost:9000
+build/dev/bin/neotape-read --source tape:/dev/nst0 --connect tcp://tapehost:9000
 
 # Read from a spool directory:
-bin/neotape-read --source spool:./in --connect tcp://tapehost:9000
+build/dev/bin/neotape-read --source spool:./in --connect tcp://tapehost:9000
 ```
 
 FEC correction is automatic during normal extraction whenever the stream
@@ -110,10 +110,10 @@ policy.
 
 ```sh
 # Connect to extractor and read from tape:
-bin/neotape-read --source tape:/dev/nst0 --connect tcp://extractor_host:9000
+build/dev/bin/neotape-read --source tape:/dev/nst0 --connect tcp://extractor_host:9000
 
 # Connect to extractor and read from spool:
-bin/neotape-read --source spool:./in --connect unix:///tmp/extractor.sock
+build/dev/bin/neotape-read --source spool:./in --connect unix:///tmp/extractor.sock
 ```
 
 Reads NeoTape records from a tape device or spool directory and forwards them
@@ -130,10 +130,10 @@ verification status, followed by a compliance report:
 
 ```sh
 # Inspect a spool directory:
-bin/neotape-inspect --source spool:./out
+build/dev/bin/neotape-inspect --source spool:./out
 
 # Inspect a tape device:
-bin/neotape-inspect --source tape:/dev/nst0
+build/dev/bin/neotape-inspect --source tape:/dev/nst0
 ```
 
 The compliance report applies the full conformance rules from
@@ -151,10 +151,10 @@ introduced a new archive identity:
 
 ```sh
 # Summarize archive identities found in a spool:
-bin/neotape-scan --source spool:./out
+build/dev/bin/neotape-scan --source spool:./out
 
 # Also list each tapefile's first frame on tape:
-bin/neotape-scan --source tape:/dev/nst0 -v
+build/dev/bin/neotape-scan --source tape:/dev/nst0 -v
 ```
 
 ## Backend locators

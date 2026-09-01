@@ -81,12 +81,12 @@ for group completion. Successful repair reports the number of unavailable
 content shards recovered. Failure is fatal in normal mode and downgraded only
 in salvage mode.
 
-`tests/smoke_fec_pipeline.sh` covers undamaged normal restore, normal recovery
+`tests/test_recovery_integration.cpp` covers undamaged normal restore, normal recovery
 of damaged protected content, and normal recovery with both a content and a
 repair shard unavailable. It also verifies that five unavailable positions are
 fatal and cause the normal extractor to exit rather than emit partial group
-output or wait for another reader. `tests/smoke_salvage.sh` covers non-FEC
+output or wait for another reader. The salvage test in the same file covers non-FEC
 best-effort skipping and unverified-output diagnostics.
-`tests/smoke_extractor_bounded_memory.sh` restores a 320 MiB single-slice FEC
+`tests/test_bounded_memory_integration.cpp` restores a 320 MiB single-slice FEC
 stream under a 256 MiB address-space limit and compares the streamed output
 byte-for-byte, preventing reintroduction of slice-sized buffering.

@@ -1,6 +1,8 @@
 #include "neotape/fec.hpp"
 #include "neotape/frame_builder.hpp"
 
+#include <catch2/catch_test_macros.hpp>
+
 #include <algorithm>
 #include <cstdlib>
 #include <exception>
@@ -13,9 +15,8 @@ namespace {
 using neotape::FecShard;
 using std::string;
 
-[[noreturn]] void fail(const string &message) {
-    std::cerr << "test_fec: " << message << "\n";
-    std::exit(1);
+void fail(const string &message) {
+    FAIL(message);
 }
 
 void expect(bool condition, const string &message) {
@@ -256,11 +257,10 @@ void test_fec_frame_builder_layout() {
 
 } // namespace
 
-int main() {
+TEST_CASE("Reed-Solomon FEC", "[unit][fec]") {
     test_descriptor_round_trip();
     test_encode_coefficients();
     test_recover_four_missing_real_shards();
     test_recovery_rejects_wrong_commitment();
     test_fec_frame_builder_layout();
-    std::cout << "test_fec: ok\n";
 }

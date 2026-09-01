@@ -15,13 +15,13 @@ boundaries, enabling native tape seek to coarse checkpoint units without
 requiring per-frame filemarks.
 
 This is an early implementation-stage project. The current implementation
-includes a standalone pax writer (`bin/mt-pax`), a planner (`bin/neotape-plan`)
-for slicing metadata, long-running data producers (`bin/neotape-archiver`,
-`bin/neotape-raw-store`), per-volume tape/spool clients (`bin/neotape-write`,
-`bin/neotape-read`), a payload extractor (`bin/neotape-extractor`), an
-inspection/compliance tool (`bin/neotape-inspect`), and an archive-identity
-scanner (`bin/neotape-scan`), plus a validation-free tape dumper
-(`bin/neotape-dump`). Signed-frame verification is implemented in the
+includes a standalone pax writer (`build/dev/bin/mt-pax`), a planner (`build/dev/bin/neotape-plan`)
+for slicing metadata, long-running data producers (`build/dev/bin/neotape-archiver`,
+`build/dev/bin/neotape-raw-store`), per-volume tape/spool clients (`build/dev/bin/neotape-write`,
+`build/dev/bin/neotape-read`), a payload extractor (`build/dev/bin/neotape-extractor`), an
+inspection/compliance tool (`build/dev/bin/neotape-inspect`), and an archive-identity
+scanner (`build/dev/bin/neotape-scan`), plus a validation-free tape dumper
+(`build/dev/bin/neotape-dump`). Signed-frame verification is implemented in the
 writer, extractor, and inspect paths; the writer can also authenticate the
 source archiver over TCP or Unix-domain sockets before it touches media.
 
@@ -84,11 +84,12 @@ writer-side source authentication are implemented. See
 ## Dependencies
 
 - **C++20** compiler with `<format>` support (GCC 13+ or Clang 16+)
-- **GNU Make**
-- **libarchive** (system package, linked via `-larchive`)
+- **CMake 3.24 or newer** and **Ninja**
+- **Catch2 3** (system package, required by the `dev` preset)
+- **libarchive** (system package)
 - **BLAKE3** (bundled git submodule)
 - **ISA-L** (bundled git submodule, used by `rs_32_4` FEC)
-- **signify** sources (bundled git submodule, built as `lib/libsignify.a`)
+- **signify** sources (bundled git submodule)
 
 ### Initialize submodules
 
@@ -99,16 +100,18 @@ git submodule update --init --recursive
 ## Build
 
 ```sh
-make -j "$(nproc)"
-make test
-make bot_bundle
+cmake --preset dev
+cmake --build --preset dev
+ctest --preset dev
+cmake --build --preset dev --target bot_bundle
 ```
 
 Measure the ISA-L `rs_32_4` generator and four-shard correction throughput:
 
 ```sh
-make benchmark-fec
-bin/benchmark_fec --shard-size 4M --iterations 8
+cmake --preset benchmark
+cmake --build --preset benchmark
+build/benchmark/bin/benchmark_fec --shard-size 4M --iterations 8
 ```
 
 The reported MiB/s uses protected source payload bytes as the denominator for
@@ -118,12 +121,10 @@ matrix inversion, reconstruction, allocations, surviving-shard copies, and the
 BLAKE3 group commitment check; preparing the input fixture is outside the timed
 region.
 
-Produces `bin/mt-pax`, `bin/neotape-plan`, `bin/neotape-archiver`,
-`bin/neotape-raw-store`, `bin/neotape-write`, `bin/neotape-read`,
-`bin/neotape-extractor`, `bin/neotape-inspect`, `bin/neotape-scan`, and test
-binaries.
+Produces the CLI programs under `build/dev/bin/`. The `release` preset produces
+an optimized build without Catch2 or test targets under `build/release/bin/`.
 
-`make bot_bundle` writes `output/bot.tar`, a recovery bundle containing the
+The `bot_bundle` target writes `build/dev/output/bot.tar`, a recovery bundle containing the
 current repository working tree plus checked-out `3rdparty/` submodules, with
 compiled build artifacts excluded. See
 [`docs/implementation/recovery-bundle.md`](docs/implementation/recovery-bundle.md).
@@ -134,19 +135,19 @@ All long CLI options have short aliases shown by `-h`. Byte-size arguments use
 `SIZE` and accept case-insensitive binary `K`, `M`, `G`, and `T` suffixes, such
 as `4M` or `16G`; a value without a suffix is interpreted as bytes.
 
-### bin/neotape-plan
+### build/dev/bin/neotape-plan
 
 ```sh
-bin/neotape-plan -C /data -o home.plan photos docs
+build/dev/bin/neotape-plan -C /data -o home.plan photos docs
 ```
 
 `neotape-plan` scans source paths and emits per-slice metadata for later use by a
 NeoTape writer. It does not write archives.
 
-### bin/mt-pax (multi-threaded PAX writer)
+### build/dev/bin/mt-pax (multi-threaded PAX writer)
 
 ```sh
-bin/mt-pax -f <output-file|-> [-v|-vv] [-x] [-C <dir>]
+build/dev/bin/mt-pax -f <output-file|-> [-v|-vv] [-x] [-C <dir>]
            [-P <buffer-percent>] [--io-thread <N>]
            [--output-buffer-size <SIZE>] <path> [path ...]
 ```
@@ -160,10 +161,10 @@ Additional options:
   output thread waits until the buffer reaches at least this full before
   draining, useful for sequential writes on HDD/tape.
 
-### bin/neotape-archiver (long-running producer)
+### build/dev/bin/neotape-archiver (long-running producer)
 
 ```sh
-bin/neotape-archiver --listen <tcp://host:port|unix://path>
+build/dev/bin/neotape-archiver --listen <tcp://host:port|unix://path>
                      [--volume-block-size <SIZE>] [--archive-name <name>]
                      [-C <dir>] [-P <percent>] [--io-thread <N>]
                      [--output-buffer-size <SIZE>] [--plan <file>]
@@ -179,10 +180,10 @@ pax archive file is needed. When `--sign-secret-key` is set, every served frame
 is signed with the supplied signify secret key; encrypted `.sec` files are
 supported via `--sign-passphrase-file`.
 
-### bin/neotape-write (per-volume writer client)
+### build/dev/bin/neotape-write (per-volume writer client)
 
 ```sh
-bin/neotape-write --source <tcp://host:port|unix://path>
+build/dev/bin/neotape-write --source <tcp://host:port|unix://path>
                   --target <tape:/dev/nst0|spool:./dir>
                   [--verify-pubkey <file.pub>]...
                   [--erase | --append]
@@ -209,10 +210,10 @@ zero-padded and followed by a filemark. NeoTape frames then use their own
 volume block size. For spool targets the writer installs an exact copy as
 `recovery-bundle.tar`. The option is incompatible with `--append`.
 
-### bin/neotape-raw-store (raw byte-stream producer)
+### build/dev/bin/neotape-raw-store (raw byte-stream producer)
 
 ```sh
-bin/neotape-raw-store --listen unix:///run/neotape/raw.sock \
+build/dev/bin/neotape-raw-store --listen unix:///run/neotape/raw.sock \
                       --archive-name dataset \
                       --sign-secret-key backup.sec \
                       --retention-frame-count 5 < input.raw
@@ -225,20 +226,20 @@ emits a `tape_eof` slice boundary, then an
 back-pressure. Like `neotape-archiver`, it can sign frames with
 `--sign-secret-key` and `--sign-passphrase-file`.
 
-### bin/neotape-read (per-volume spool/tape reader)
+### build/dev/bin/neotape-read (per-volume spool/tape reader)
 
 ```sh
-bin/neotape-read --source spool:./vol1.spool \
+build/dev/bin/neotape-read --source spool:./vol1.spool \
                  --connect unix:///run/neotape/extractor.sock
 ```
 
 Reads NeoTape frames from a spool directory (or tape device) and forwards them
 to an extractor.  One reader process per volume.
 
-### bin/neotape-extractor (payload reconstruction)
+### build/dev/bin/neotape-extractor (payload reconstruction)
 
 ```sh
-bin/neotape-extractor --listen unix:///run/neotape/extractor.sock \
+build/dev/bin/neotape-extractor --listen unix:///run/neotape/extractor.sock \
                       -o /restore/backup.pax \
                       --verify-pubkey backup.pub --require-signed
 ```
@@ -262,11 +263,11 @@ repair shards before emitting it; no extractor-side `--fec` flag is required.
 See
 [`docs/implementation/fec-restore-behavior.md`](docs/implementation/fec-restore-behavior.md).
 
-### bin/neotape-inspect (frame-level verification)
+### build/dev/bin/neotape-inspect (frame-level verification)
 
 ```sh
-bin/neotape-inspect --source spool:./vol1.spool
-bin/neotape-inspect --source tape:/dev/nst0 --verify-pubkey backup.pub \
+build/dev/bin/neotape-inspect --source spool:./vol1.spool
+build/dev/bin/neotape-inspect --source tape:/dev/nst0 --verify-pubkey backup.pub \
                     --require-signed
 ```
 
@@ -294,11 +295,11 @@ resulting `.sec` and `.pub` files.
   `--verify-pubkey` and rejects unsigned or untrusted frames instead of treating
   signatures as optional.
 
-### bin/neotape-scan (archive identity scan)
+### build/dev/bin/neotape-scan (archive identity scan)
 
 ```sh
-bin/neotape-scan --source spool:./vol1.spool
-bin/neotape-scan --source tape:/dev/nst0 -v
+build/dev/bin/neotape-scan --source spool:./vol1.spool
+build/dev/bin/neotape-scan --source tape:/dev/nst0 -v
 ```
 
 Scans a spool directory or tape device by reading the first NeoTape frame in
@@ -307,10 +308,10 @@ each tapefile, deduplicates archive identities by `archive_uuid` and
 is first seen. Use `-v` to list every tapefile's first frame instead, including
 whether that tapefile introduced a new archive identity.
 
-### bin/neotape-dump (validation-free tape dump)
+### build/dev/bin/neotape-dump (validation-free tape dump)
 
 ```sh
-bin/neotape-dump --source tape:/dev/nst0 --target spool:./raw-dump -v
+build/dev/bin/neotape-dump --source tape:/dev/nst0 --target spool:./raw-dump -v
 ```
 
 Rewinds a tape and copies every physical record into numerically ordered spool
@@ -322,60 +323,60 @@ checks. The target directory must be empty.
 
 ```sh
 # Long-running archiver on a Unix-domain socket
-bin/neotape-archiver --listen unix:///run/neotape/home.sock \
+build/dev/bin/neotape-archiver --listen unix:///run/neotape/home.sock \
                      --archive-name home --volume-block-size 4M \
                      -C /data photos docs
 
 # Signed archiver using an existing signify secret key
-bin/neotape-archiver --listen unix:///run/neotape/home.sock \
+build/dev/bin/neotape-archiver --listen unix:///run/neotape/home.sock \
                      --archive-name home --volume-block-size 4M \
                      --sign-secret-key /keys/home-backup.sec \
                      --sign-passphrase-file /keys/home-backup.pass \
                      -C /data photos docs
 
 # Write one volume to a tape device
-bin/neotape-write --source unix:///run/neotape/home.sock \
+build/dev/bin/neotape-write --source unix:///run/neotape/home.sock \
                   --target tape:/dev/nst0
 
 # Write one signed volume and verify/authenticate the source first
-bin/neotape-write --source unix:///run/neotape/home.sock \
+build/dev/bin/neotape-write --source unix:///run/neotape/home.sock \
                   --target tape:/dev/nst0 \
                   --verify-pubkey /keys/home-backup.pub
 
 # Write one volume to a filesystem spool
-bin/neotape-write --source unix:///run/neotape/home.sock \
+build/dev/bin/neotape-write --source unix:///run/neotape/home.sock \
                   --target spool:./vol1.spool
 
 # Raw byte-stream store via stdin
-some-command | bin/neotape-raw-store --listen unix:///run/neotape/raw.sock
+some-command | build/dev/bin/neotape-raw-store --listen unix:///run/neotape/raw.sock
 
 # Read from spool and feed to extractor
-bin/neotape-read --source spool:./vol1.spool \
+build/dev/bin/neotape-read --source spool:./vol1.spool \
                  --connect unix:///run/neotape/extractor.sock
 
 # Inspect a spool or tape for compliance
-bin/neotape-inspect --source spool:./vol1.spool
-bin/neotape-inspect --source tape:/dev/nst0
+build/dev/bin/neotape-inspect --source spool:./vol1.spool
+build/dev/bin/neotape-inspect --source tape:/dev/nst0
 
 # Require valid signatures while inspecting or extracting
-bin/neotape-inspect --source spool:./vol1.spool \
+build/dev/bin/neotape-inspect --source spool:./vol1.spool \
                     --verify-pubkey /keys/home-backup.pub --require-signed
-bin/neotape-extractor --listen unix:///run/neotape/extractor.sock \
+build/dev/bin/neotape-extractor --listen unix:///run/neotape/extractor.sock \
                       -o ./restore/home.pax \
                       --verify-pubkey /keys/home-backup.pub --require-signed
 
 # Scan tapefile starts for archive identities
-bin/neotape-scan --source spool:./vol1.spool
-bin/neotape-scan --source tape:/dev/nst0 -v
+build/dev/bin/neotape-scan --source spool:./vol1.spool
+build/dev/bin/neotape-scan --source tape:/dev/nst0 -v
 
 # Pack a directory with 4 I/O threads
-bin/mt-pax -f backup.tar --io-thread 4 src/
+build/dev/bin/mt-pax -f backup.tar --io-thread 4 src/
 
 # Stream to stdout and pipe to bsdtar
-bin/mt-pax -f - --io-thread 2 src/ | bsdtar -tvf -
+build/dev/bin/mt-pax -f - --io-thread 2 src/ | bsdtar -tvf -
 
 # Multi-threaded with output buffer tuning for tape
-bin/mt-pax -f /dev/nst0 --io-thread 4 --output-buffer-size 256M -P 50 src/
+build/dev/bin/mt-pax -f /dev/nst0 --io-thread 4 --output-buffer-size 256M -P 50 src/
 ```
 
 ## Payload Format

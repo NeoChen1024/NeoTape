@@ -3,15 +3,15 @@
 ## What it is
 
 LTO tape-oriented multi-volume length-framed backup container. A pax writer
-exists: `bin/mt-pax` (multi-threaded with `--io-thread`, `src/mt-pax.cpp`).
-A planner (`bin/neotape-plan`) exists for slice metadata. Long-running data
-producers (`bin/neotape-archiver`, `bin/neotape-raw-store`) generate
+exists: `build/dev/bin/mt-pax` (multi-threaded with `--io-thread`, `src/mt-pax.cpp`).
+A planner (`build/dev/bin/neotape-plan`) exists for slice metadata. Long-running data
+producers (`build/dev/bin/neotape-archiver`, `build/dev/bin/neotape-raw-store`) generate
 NeoTape-framed records over a TCP or Unix-domain socket. Short-lived per-volume
-clients (`bin/neotape-write`, `bin/neotape-read`) connect to producers or
+clients (`build/dev/bin/neotape-write`, `build/dev/bin/neotape-read`) connect to producers or
 consumers and write/read frames to/from tape or spool. An
-`bin/neotape-extractor` consumes frames from a reader and reconstructs the
-payload stream. An `bin/neotape-inspect` scans spool or tape for frame-level
-verification and archive compliance reporting. `bin/neotape-dump` performs a
+`build/dev/bin/neotape-extractor` consumes frames from a reader and reconstructs the
+payload stream. An `build/dev/bin/neotape-inspect` scans spool or tape for frame-level
+verification and archive compliance reporting. `build/dev/bin/neotape-dump` performs a
 validation-free tape-to-spool copy. Producers optionally emit local
 `rs_32_4` FEC groups, and extractor salvage mode repairs unavailable protected
 content shards. The tape-device backend
@@ -22,30 +22,20 @@ signify-compatible key files; NeoTape verifies but does not generate keys.
 ## Build
 
 ```sh
-make -j "$(nproc)"      # produces bin/mt-pax, bin/neotape-archiver,
-                        # bin/neotape-raw-store, bin/neotape-write,
-                        # bin/neotape-read, bin/neotape-extractor,
-                        # bin/neotape-inspect, bin/neotape-scan,
-                        # bin/neotape-dump, bin/neotape-plan,
-                        # and test binaries
-make test
-make clean
+cmake --preset dev
+cmake --build --preset dev
+ctest --preset dev
 ```
 
-Dependencies: libarchive (system, `-larchive`), BLAKE3 (bundled submodule
-`3rdparty/BLAKE3` → `lib/libb3sum.a`), ISA-L (bundled submodule →
-`lib/libisal.a`), and bundled signify sources
-(`3rdparty/signify` → `lib/libsignify.a`).
+The `release` preset builds optimized production binaries without tests. Build
+products are always below `build/<preset>/`. Dependencies are CMake 3.24+,
+Ninja, system libarchive, system Catch2 3 when `BUILD_TESTING=ON`, and bundled
+BLAKE3, ISA-L, and signify submodules.
 
 ## clangd / LSP
 
-The repository includes `.clangd` and `compile_commands.json` so that clangd
-can parse the project out of the box. If you add or remove source files,
-regenerate the compilation database:
-
-```sh
-make compile_commands
-```
+The repository includes `.clangd`, which reads CMake's real compilation
+database from `build/dev`. Configure the `dev` preset before using clangd.
 
 clangd is configured to use GCC 15's libstdc++ headers because GCC 16's
 headers currently confuse clangd 22.
@@ -61,17 +51,17 @@ headers currently confuse clangd 22.
 
 - `src/mt-pax.cpp` — multi-threaded pax writer (worker pool, serializer, streaming large files)
 - `src/neotape_plan_cmd.cpp` — planner for slice metadata
-- `src/neotape_archiver_cmd.cpp` — `bin/neotape-archiver` CLI entry point
-- `src/neotape_raw_store_cmd.cpp` — `bin/neotape-raw-store` raw-stream server CLI entry point
-- `src/neotape_read_cmd.cpp` — `bin/neotape-read` CLI entry point
-- `src/neotape_extractor_cmd.cpp` — `bin/neotape-extractor` CLI entry point
+- `src/neotape_archiver_cmd.cpp` — `build/dev/bin/neotape-archiver` CLI entry point
+- `src/neotape_raw_store_cmd.cpp` — `build/dev/bin/neotape-raw-store` raw-stream server CLI entry point
+- `src/neotape_read_cmd.cpp` — `build/dev/bin/neotape-read` CLI entry point
+- `src/neotape_extractor_cmd.cpp` — `build/dev/bin/neotape-extractor` CLI entry point
 - `src/neotape_extractor.cpp` — extractor state machine (frame accumulation, payload reassembly)
-- `src/neotape_inspect_cmd.cpp` — `bin/neotape-inspect` CLI entry point
+- `src/neotape_inspect_cmd.cpp` — `build/dev/bin/neotape-inspect` CLI entry point
 - `src/neotape_signature.cpp` — signify-compatible key loading, frame signing, auth nonce signing
 - `src/neotape_fec.cpp` — FEC descriptor codec and ISA-L `rs_32_4` encode/recovery
 - `src/neotape_dump_cmd.cpp` — validation-free tape-to-spool dumper
 - `src/neotape_validate.cpp` — shared archive-frame validation (root: `include/neotape/validate.hpp`)
-- `src/neotape_write_cmd.cpp` — `bin/neotape-write` CLI entry point
+- `src/neotape_write_cmd.cpp` — `build/dev/bin/neotape-write` CLI entry point
 - `src/neotape_tcp_server.cpp` — archiver server and frame packing
 - `src/neotape_tcp_protocol.cpp` — framed TCP message I/O
 - `src/neotape_*.cpp` — NeoTape format and tape manipulation library (format layer and `namespace mt`)
@@ -83,7 +73,7 @@ headers currently confuse clangd 22.
 - `include/neotape/` — shared project headers (common types, format helpers)
 - `3rdparty/` — git submodules (BLAKE3, signify). Init with `git submodule update --init --recursive`
 - `docs/spec/` — active format spec; `docs/implementation/mt-pax-architecture.md` — mt-pax architecture
-- `tests/smoke_cli_options.sh`, `tests/smoke_mt_pax_pipeline.sh`, `tests/smoke_tcp_archive.sh`, `tests/smoke_raw_store.sh`, `tests/smoke_inspect.sh`, `tests/smoke_tcp_archive_multi.sh`, `tests/smoke_tcp_extract.sh`, `tests/smoke_signed_tcp_extract.sh`, `tests/smoke_writer_auth_fail.sh`, `tests/smoke_tcp_extract_multi.sh` — smoke tests; no test framework or CI yet
+- `tests/test_*_integration.cpp` and `tests/support/` — Catch2 process-level integration tests and their POSIX process harness
 
 ## Architecture pattern
 
@@ -121,7 +111,7 @@ All long CLI options have short aliases shown by `-h`. Byte-size arguments use
 as `4M` or `16G`; values without a suffix are bytes.
 
 ```
-bin/mt-pax -f <out-file|-> [-v|-vv] [-x] [-C <dir>]
+build/dev/bin/mt-pax -f <out-file|-> [-v|-vv] [-x] [-C <dir>]
            [-P <buffer-percent>] [--io-thread <N>]
            [--output-buffer-size <SIZE>] <path> [path...]
 ```
@@ -143,7 +133,7 @@ All `pax` options plus:
 ## neotape-archiver CLI
 
 ```
-bin/neotape-archiver --listen <tcp://host:port|unix://path>
+build/dev/bin/neotape-archiver --listen <tcp://host:port|unix://path>
                      [--volume-block-size <SIZE>] [--archive-name <name>]
                      [-C <dir>] [-P <percent>] [--io-thread <N>]
                      [--output-buffer-size <SIZE>] [--plan <file>]
@@ -163,7 +153,7 @@ groups.
 ## neotape-raw-store CLI
 
 ```
-bin/neotape-raw-store --listen <tcp://host:port|unix://path>
+build/dev/bin/neotape-raw-store --listen <tcp://host:port|unix://path>
                        [--input <file|->]
                        [--volume-block-size <SIZE>]
                        [--archive-name <name>]
@@ -182,7 +172,7 @@ signify-compatible key handling as `neotape-archiver`.
 ## neotape-inspect CLI
 
 ```
-bin/neotape-inspect --source <spool:./dir|tape:/dev/nst0>
+build/dev/bin/neotape-inspect --source <spool:./dir|tape:/dev/nst0>
                     [--verify-pubkey <file.pub>]...
                     [--require-signed] [--debug] [--raw] [-h]
 ```
@@ -201,7 +191,7 @@ are reported as signed and unverified.
 ## neotape-read CLI
 
 ```
-bin/neotape-read --source <tape:/dev/nst0|spool:./dir>
+build/dev/bin/neotape-read --source <tape:/dev/nst0|spool:./dir>
        --connect <tcp://host:port|unix://path>
 ```
 
@@ -212,7 +202,7 @@ or Unix-domain socket. One reader process handles exactly one volume.
 ## neotape-extractor CLI
 
 ```
-bin/neotape-extractor --listen <tcp://host:port|unix://path>
+build/dev/bin/neotape-extractor --listen <tcp://host:port|unix://path>
        [-o <file>] [--verify-pubkey <file.pub>]...
        [--require-signed] [--salvage] [-v] [-h]
 ```
@@ -239,7 +229,7 @@ group commitment fails; salvage alone permits surviving-shard fallback. See
 ## neotape-dump CLI
 
 ```
-bin/neotape-dump --source <tape:/dev/nst0>
+build/dev/bin/neotape-dump --source <tape:/dev/nst0>
                   --target <spool:./dir> [-v] [-h]
 ```
 
@@ -250,7 +240,7 @@ integrity validation; the target directory must be empty.
 ## neotape-write CLI
 
 ```
-bin/neotape-write --source <tcp://host:port|unix://path>
+build/dev/bin/neotape-write --source <tcp://host:port|unix://path>
                   --target <tape:/dev/nst0|spool:./dir>
                   [--verify-pubkey <file.pub>]...
                   [--erase | --append]
@@ -287,7 +277,7 @@ responsibilities of each thread role:
 
 ## Key conventions
 
-- C++20, GNU Make, no build system other than Makefile
+- C++20 with a CMake/Ninja build system
 - Order functions top-down: define a function before its first caller.
   Avoid forward declarations for file-internal functions within the same
   translation unit; move the definition above the call site instead.
