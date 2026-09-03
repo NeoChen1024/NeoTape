@@ -175,7 +175,7 @@ TEST_CASE("two volumes restore one continuous archive",
         30s);
     INFO(first_writer.standard_error);
     REQUIRE_FALSE(first_writer.timed_out);
-    REQUIRE(first_writer.exit_code == 1);
+    REQUIRE(first_writer.exit_code == 3);
     require_success(Process::run(
         ProcessOptions{{NEOTAPE_WRITE, "--source",
                         "unix://" + archiver_socket.string(), "--target",

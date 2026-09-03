@@ -136,7 +136,7 @@ TEST_CASE("null writer validates an archive across capacity-limited volumes",
         INFO("stdout:\n" << writer.standard_output);
         INFO("stderr:\n" << writer.standard_error);
         REQUIRE_FALSE(writer.timed_out);
-        REQUIRE((writer.exit_code == 0 || writer.exit_code == 1));
+        REQUIRE((writer.exit_code == 0 || writer.exit_code == 3));
         if (writer.exit_code == 0) {
             break;
         }

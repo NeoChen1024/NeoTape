@@ -36,6 +36,10 @@ build/dev/bin/neotape-write --source tcp://tapehost:9000 \
 `--listen` is required. Use the standalone `mt-pax` command below when a plain
 pax archive file is needed.
 
+`neotape-write` exits with status `3` when the current volume is full and the
+archive requires another writer invocation. Status `0` means the complete
+archive, including `archive_end`, was accepted.
+
 `-R, --recovery-bundle <tar>` is available in non-append mode. A tape target
 writes the bundle at BOT using separate 256 KiB records by default. Use
 `-r, --recovery-bundle-block-size <SIZE>` to override that size. The writer

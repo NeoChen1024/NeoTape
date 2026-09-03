@@ -44,6 +44,7 @@ using std::vector;
 namespace fs = std::filesystem;
 
 constexpr uint64_t default_recovery_bundle_block_size = 256ULL * 1024;
+constexpr int exit_volume_change_required = 3;
 
 struct TargetLocator {
     enum Kind { none, tape, spool, null_sink } kind = none;
@@ -891,7 +892,7 @@ int main(int argc, char **argv) {
                 std::cerr << format(
                     "writer: reached end of tape after {} written frames\n",
                     wstate.written_frame_count.load());
-                return 1;
+                return exit_volume_change_required;
             }
 
             // Enforce output buffer limit.
@@ -984,13 +985,25 @@ int main(int argc, char **argv) {
                                 "writer: reached end of tape after {} written "
                                 "frames\n",
                                 wstate.written_frame_count.load());
-                            return 1;
+                            return exit_volume_change_required;
                         }
                         std::this_thread::sleep_for(
                             std::chrono::milliseconds(10));
                     }
                     joiner.join();
-                    write_bytes(msg->payload);
+                    try {
+                        write_bytes(msg->payload);
+                    } catch (const mt::Error &e) {
+                        if (e.error_code() != ENOSPC) {
+                            throw;
+                        }
+                        write_trailing_filemark(output.device.get());
+                        std::cerr << format(
+                            "writer: reached end of tape after {} written "
+                            "frames\n",
+                            wstate.written_frame_count.load());
+                        return exit_volume_change_required;
+                    }
                     write_msg(Message{
                         MessageType::ack_frame,
                         uint64_to_le_bytes(header.global_frame_seq_num)});

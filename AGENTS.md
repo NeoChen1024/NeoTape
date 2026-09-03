@@ -255,6 +255,8 @@ Short-lived per-volume writer client. Connects to an archiver and requests frame
 one at a time. Writes to a tape device or filesystem spool directory. The `null`
 target performs full validation and acknowledgement while discarding records;
 `--max-volume-bytes` can simulate capacity for spool and null targets.
+Exit status `3` requests another volume/writer invocation; `0` means the archive
+is complete.
 
 By default the writer refuses to overwrite existing content. Use `--erase` to
 rewind to BOT and overwrite, or `--append` to space to EOD and continue. When

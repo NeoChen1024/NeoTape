@@ -198,6 +198,9 @@ at a time. It writes each record to a tape device or a filesystem spool director
 The `null` target performs the complete validation and acknowledgement flow but
 discards records instead of writing them. One writer process handles exactly one
 volume; `--max-volume-bytes` can simulate capacity on spool and null targets.
+The writer exits with status `3` when the current volume is full and another
+writer invocation should continue the archive; status `0` means the archive is
+complete.
 
 By default the writer refuses to overwrite existing content. Use `--erase` to
 rewind to BOT and overwrite, or `--append` to space to EOD and continue. When
