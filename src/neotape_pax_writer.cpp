@@ -459,15 +459,7 @@ vector<PlanRecord> read_plan_records(const fs::path &path) {
 
 // ====================== Entry Formatting =====================
 
-void mark_link_target_as_utf8(archive_entry *entry) {
-    if (const char *s = archive_entry_symlink(entry); s != nullptr) {
-        archive_entry_update_symlink_utf8(entry, s);
-    } else if (const char *h = archive_entry_hardlink(entry); h != nullptr) {
-        archive_entry_update_hardlink_utf8(entry, h);
-    }
-}
-
-void copy_pathname_utf8(archive_entry *entry, const string &path) {
+void copy_pathname(archive_entry *entry, const string &path) {
     archive_entry_copy_pathname(entry, path.c_str());
 }
 
@@ -552,7 +544,7 @@ archive_entry *planned_entry_from_path(archive *disk, const string &path) {
     if (!entry) {
         throw std::runtime_error("cannot allocate entry");
     }
-    copy_pathname_utf8(entry.get(), path);
+    copy_pathname(entry.get(), path);
     archive_entry_copy_sourcepath(entry.get(), path.c_str());
     int const r =
         archive_read_disk_entry_from_file(disk, entry.get(), -1, nullptr);
@@ -562,9 +554,8 @@ archive_entry *planned_entry_from_path(archive *disk, const string &path) {
     if (r < ARCHIVE_OK) {
         warn_archive("read filesystem", disk);
     }
-    copy_pathname_utf8(entry.get(), path);
+    copy_pathname(entry.get(), path);
     archive_entry_copy_sourcepath(entry.get(), path.c_str());
-    mark_link_target_as_utf8(entry.get());
     return entry.release();
 }
 
@@ -651,7 +642,7 @@ vector<std::byte> serialize_entry(archive_entry *entry, int fd) {
                         "set uncompressed");
     check_archive_throw(archive_write_set_format_pax(a), a, "set pax format");
     check_archive_throw(
-        archive_write_set_options(a, "xattrheader=ALL,hdrcharset=UTF-8"), a,
+        archive_write_set_options(a, "xattrheader=ALL,hdrcharset=BINARY"), a,
         "set options");
     check_archive_throw(archive_write_set_bytes_per_block(a, 512), a,
                         "set block size");
@@ -703,7 +694,7 @@ void stream_large_entry(BBSink &sink, archive_entry *entry, int fd) {
                         "set uncompressed");
     check_archive_throw(archive_write_set_format_pax(a), a, "set pax format");
     check_archive_throw(
-        archive_write_set_options(a, "xattrheader=ALL,hdrcharset=UTF-8"), a,
+        archive_write_set_options(a, "xattrheader=ALL,hdrcharset=BINARY"), a,
         "set options");
     check_archive_throw(archive_write_set_bytes_per_block(a, 512), a,
                         "set block size");
@@ -1601,10 +1592,8 @@ PaxWriteResult write_pax_archive(const Options &opts,
                     const char *src = archive_entry_sourcepath(entry.get());
                     if (src != nullptr) {
                         string ap = neotape::archive_path_for_source(spec, src);
-                        copy_pathname_utf8(entry.get(), ap);
+                        copy_pathname(entry.get(), ap);
                     }
-                    mark_link_target_as_utf8(entry.get());
-
                     archive_entry *raw_entry = entry.release();
                     archive_entry *spare_raw = nullptr;
                     archive_entry_linkify(resolver, &raw_entry, &spare_raw);

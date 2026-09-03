@@ -112,6 +112,41 @@ TEST_CASE("archiver and writer create a valid spool",
             std::string("NeoTape\0", 8));
 }
 
+TEST_CASE("null writer validates an archive across capacity-limited volumes",
+          "[integration][archive][null][socket]") {
+    TemporaryDirectory temporary;
+    fs::path const source = temporary.path() / "source";
+    fs::path const socket = temporary.path() / "archiver.sock";
+    fs::create_directory(source);
+    write_pattern(source / fs::path("opaque-\x82\xe7.bin"), 64 * 1024);
+
+    Process archiver(ProcessOptions{
+        {NEOTAPE_ARCHIVER, "--listen", "unix://" + socket.string(),
+         "--volume-block-size", "4096", "--archive-name", "null-test",
+         "-C", source.string(), "."}});
+    REQUIRE(wait_for_unix_socket(socket, archiver, 5s));
+
+    int volume_count = 0;
+    for (; volume_count < 32; ++volume_count) {
+        ProcessResult const writer = Process::run(
+            ProcessOptions{{NEOTAPE_WRITE, "--source",
+                            "unix://" + socket.string(), "--target", "null",
+                            "--max-volume-bytes", "16K"}},
+            30s);
+        INFO("stdout:\n" << writer.standard_output);
+        INFO("stderr:\n" << writer.standard_error);
+        REQUIRE_FALSE(writer.timed_out);
+        REQUIRE((writer.exit_code == 0 || writer.exit_code == 1));
+        if (writer.exit_code == 0) {
+            break;
+        }
+    }
+
+    REQUIRE(volume_count > 0);
+    REQUIRE(volume_count < 32);
+    require_success(archiver.wait(30s));
+}
+
 TEST_CASE("raw spool passes inspect and scan reporting",
           "[integration][raw-store][inspect][scan][socket]") {
     TemporaryDirectory temporary;

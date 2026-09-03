@@ -54,6 +54,9 @@ An entry record. Fields:
 | `<gname>`    | Group name as a string (empty when unknown).                                                                           |
 | `<filepath>` | Archive path (relative, may include the source-directory prefix, no leading `/`).                                    |
 
+Path bytes in `<path>` and `<filepath>` are opaque and MUST NOT be decoded or
+re-encoded; NUL is reserved for record termination and `/` separates components.
+
 All fields are mandatory — every entry record carries all 10 fields. Unknown
 or unavailable values use a reasonable zero sentinel (`0` or `""`) rather than
 being omitted. An unavailable `<mtime>` is encoded as `0`; this is intentionally

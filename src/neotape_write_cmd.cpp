@@ -46,18 +46,22 @@ namespace fs = std::filesystem;
 constexpr uint64_t default_recovery_bundle_block_size = 256ULL * 1024;
 
 struct TargetLocator {
-    enum Kind { none, tape, spool } kind = none;
+    enum Kind { none, tape, spool, null_sink } kind = none;
     std::string path;
 };
 
 TargetLocator parse_target(const std::string &s) {
+    if (s == "null") {
+        return {TargetLocator::null_sink, {}};
+    }
     if (s.starts_with("tape:")) {
         return {TargetLocator::tape, s.substr(5)};
     }
     if (s.starts_with("spool:")) {
         return {TargetLocator::spool, s.substr(6)};
     }
-    throw std::runtime_error("target must be tape:<device> or spool:<dir>");
+    throw std::runtime_error(
+        "target must be tape:<device>, spool:<dir>, or null");
 }
 
 struct Options {
@@ -85,7 +89,7 @@ struct Options {
 
 void usage(const char *prog) {
     std::cerr << format("usage: {} -s|--source <tcp://host:port|unix://path>\n"
-                        "       -t|--target <tape:/dev/nst0|spool:./dir>\n"
+                        "       -t|--target <tape:/dev/nst0|spool:./dir|null>\n"
                         "       [-k|--verify-pubkey <file.pub>]...\n"
                         "       [-e|--erase | -a|--append]\n"
                         "       [-R|--recovery-bundle <tar>]\n"
@@ -190,6 +194,14 @@ Options parse_args(int argc, char **argv) {
     if (opts.append && opts.recovery_bundle.has_value()) {
         usage_error("--recovery-bundle cannot be used with --append");
     }
+    if (opts.target.kind == TargetLocator::null_sink &&
+        (opts.erase || opts.append)) {
+        usage_error("--erase and --append are not valid with a null target");
+    }
+    if (opts.target.kind == TargetLocator::null_sink &&
+        opts.recovery_bundle.has_value()) {
+        usage_error("--recovery-bundle is not valid with a null target");
+    }
     if (opts.recovery_bundle_block_size.has_value() &&
         !opts.recovery_bundle.has_value()) {
         usage_error("--recovery-bundle-block-size requires "
@@ -227,8 +239,10 @@ Options parse_args(int argc, char **argv) {
     }
 
     if (opts.max_volume_bytes.has_value() &&
-        opts.target.kind != TargetLocator::spool) {
-        usage_error("--max-volume-bytes is only valid with spool targets");
+        opts.target.kind != TargetLocator::spool &&
+        opts.target.kind != TargetLocator::null_sink) {
+        usage_error(
+            "--max-volume-bytes is only valid with spool or null targets");
     }
 
     constexpr size_t min_output_buffer_size = 8ULL * 1024 * 1024;
@@ -368,6 +382,53 @@ void write_trailing_filemark(mt::TapeDevice *dev) {
     (void)dev;
     NEOTAPE_DEBUG("writer: omitting trailing filemark at EOT/EOD\n");
 }
+
+class NullTapeDevice final : public mt::TapeDevice {
+  public:
+    NullTapeDevice() : mt::TapeDevice(-1, "null", true) {}
+
+    void write_record(const void *data, std::size_t size) override {
+        (void)data;
+        (void)size;
+        ++current_record_;
+    }
+
+  protected:
+    void do_mtop(int op, int count) override {
+        switch (op) {
+        case mt::MTWEOF:
+            current_file_ += static_cast<uint64_t>(count);
+            current_record_ = 0;
+            return;
+        case mt::MTREW:
+            current_file_ = 0;
+            current_record_ = 0;
+            return;
+        case mt::MTEOM:
+            return;
+        default:
+            throw mt::Error(device_path(), "mtop", ENOTSUP);
+        }
+    }
+
+    mt::Position do_tell() override {
+        return {static_cast<long>(current_record_)};
+    }
+
+    mt::Status do_status() override {
+        long flags = mt::GMT_EOD | mt::GMT_ONLINE;
+        if (current_file_ == 0 && current_record_ == 0) {
+            flags |= mt::GMT_BOT;
+        }
+        return mt::Status(0, 0, 0, flags, 0,
+                          static_cast<int>(current_file_),
+                          static_cast<int>(current_record_));
+    }
+
+  private:
+    uint64_t current_file_ = 0;
+    uint64_t current_record_ = 0;
+};
 
 class CapacityLimitedTapeDevice : public mt::TapeDevice {
   public:
@@ -709,8 +770,7 @@ int main(int argc, char **argv) {
         bool validator_seeded = false;
         bool warned_signed_unverified = false;
 
-        // Output abstraction: a tape or spool device.  There is no raw file
-        // mode; spool is the filesystem surrogate for tape.
+        // Output abstraction: a tape, spool, or validation-only null device.
         struct TargetOutput {
             std::unique_ptr<mt::TapeDevice> device;
         };
@@ -720,7 +780,7 @@ int main(int argc, char **argv) {
             std::unique_ptr<mt::TapeDevice> dev;
             if (opts.target.kind == TargetLocator::tape) {
                 dev = std::make_unique<mt::TapeDevice>(opts.target.path, true);
-            } else {
+            } else if (opts.target.kind == TargetLocator::spool) {
                 fs::path const spool_root(opts.target.path);
                 fs::path const installed_bundle =
                     spool_root / "recovery-bundle.tar";
@@ -731,6 +791,8 @@ int main(int argc, char **argv) {
                 }
                 dev = std::make_unique<mt::SpoolTapeDevice>(
                     std::filesystem::path(opts.target.path), true);
+            } else {
+                dev = std::make_unique<NullTapeDevice>();
             }
 
             // Default policy: refuse to overwrite existing tape content.
@@ -781,11 +843,11 @@ int main(int argc, char **argv) {
                                     ec.message()));
                     }
                 }
-                if (opts.max_volume_bytes.has_value()) {
-                    dev = std::make_unique<CapacityLimitedTapeDevice>(
-                        std::move(dev), *opts.max_volume_bytes,
-                        recovery_bundle_bytes);
-                }
+            }
+            if (opts.max_volume_bytes.has_value()) {
+                dev = std::make_unique<CapacityLimitedTapeDevice>(
+                    std::move(dev), *opts.max_volume_bytes,
+                    recovery_bundle_bytes);
             }
 
             output = TargetOutput{std::move(dev)};

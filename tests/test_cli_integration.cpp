@@ -63,6 +63,7 @@ TEST_CASE("CLI help exposes supported options", "[integration][cli]") {
                {"-s|--source", "-t|--target", "-B|--output-buffer-size",
                 "-m|--max-volume-bytes", "-R|--recovery-bundle",
                 "-r|--recovery-bundle-block-size",
+                "tape:/dev/nst0|spool:./dir|null",
                 "SIZE accepts K, M, G, or T"});
     check_help(NEOTAPE_EXTRACTOR,
                {"-l|--listen", "-k|--verify-pubkey",

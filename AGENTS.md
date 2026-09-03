@@ -8,7 +8,8 @@ A planner (`build/dev/bin/neotape-plan`) exists for slice metadata. Long-running
 producers (`build/dev/bin/neotape-archiver`, `build/dev/bin/neotape-raw-store`) generate
 NeoTape-framed records over a TCP or Unix-domain socket. Short-lived per-volume
 clients (`build/dev/bin/neotape-write`, `build/dev/bin/neotape-read`) connect to producers or
-consumers and write/read frames to/from tape or spool. An
+consumers and write/read frames to/from tape or spool. The writer also has a
+validation-only `null` target that discards validated frames. An
 `build/dev/bin/neotape-extractor` consumes frames from a reader and reconstructs the
 payload stream. An `build/dev/bin/neotape-inspect` scans spool or tape for frame-level
 verification and archive compliance reporting. `build/dev/bin/neotape-dump` performs a
@@ -241,7 +242,7 @@ integrity validation; the target directory must be empty.
 
 ```
 build/dev/bin/neotape-write --source <tcp://host:port|unix://path>
-                  --target <tape:/dev/nst0|spool:./dir>
+                  --target <tape:/dev/nst0|spool:./dir|null>
                   [--verify-pubkey <file.pub>]...
                   [--erase | --append]
                   [--recovery-bundle <tar>]
@@ -251,7 +252,9 @@ build/dev/bin/neotape-write --source <tcp://host:port|unix://path>
 ```
 
 Short-lived per-volume writer client. Connects to an archiver and requests frames
-one at a time. Writes to a tape device or filesystem spool directory.
+one at a time. Writes to a tape device or filesystem spool directory. The `null`
+target performs full validation and acknowledgement while discarding records;
+`--max-volume-bytes` can simulate capacity for spool and null targets.
 
 By default the writer refuses to overwrite existing content. Use `--erase` to
 rewind to BOT and overwrite, or `--append` to space to EOD and continue. When

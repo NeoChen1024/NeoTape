@@ -100,3 +100,38 @@ TEST_CASE("multi-threaded mt-pax preserves files and symlinks",
             std::string(std::istreambuf_iterator<char>(actual), {}));
     REQUIRE(fs::is_symlink(output / "src/dirs/dir-17/link-17"));
 }
+
+TEST_CASE("mt-pax preserves opaque pathname and symlink target bytes",
+          "[integration][pax][filename]") {
+    TemporaryDirectory temporary;
+    fs::path const source = temporary.path() / "src";
+    fs::path const archive = temporary.path() / "archive.tar";
+    fs::path const output = temporary.path() / "out";
+    fs::create_directory(source);
+    fs::create_directory(output);
+
+    std::string const opaque_name = "opaque-\x82\xe7.bin";
+    fs::path const opaque_path = source / fs::path(opaque_name);
+    std::ofstream(opaque_path) << "opaque filename payload\n";
+    fs::create_symlink(fs::path(opaque_name), source / "opaque-link");
+
+    ProcessResult const archive_result = Process::run(
+        ProcessOptions{{NEOTAPE_MT_PAX, "-f", archive.string(), "-C",
+                        temporary.path().string(), "src"}},
+        30s);
+    require_success(archive_result);
+
+    ProcessResult const extract_result = Process::run(
+        ProcessOptions{{NEOTAPE_BSDTAR, "-xpf", archive.string(), "-C",
+                        output.string()}},
+        30s);
+    require_success(extract_result);
+
+    fs::path const extracted_file = output / "src" / fs::path(opaque_name);
+    REQUIRE(fs::is_regular_file(extracted_file));
+    std::ifstream payload(extracted_file);
+    REQUIRE(std::string(std::istreambuf_iterator<char>(payload), {}) ==
+            "opaque filename payload\n");
+    REQUIRE(fs::read_symlink(output / "src/opaque-link").native() ==
+            opaque_name);
+}

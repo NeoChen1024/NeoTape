@@ -27,6 +27,10 @@ build/dev/bin/neotape-write --source tcp://tapehost:9000 \
 # Write to a spool directory instead of a real tape device:
 build/dev/bin/neotape-write --source tcp://tapehost:9000 \
   --target spool:./out
+
+# Validate the complete stream without retaining frame data:
+build/dev/bin/neotape-write --source tcp://tapehost:9000 \
+  --target null --max-volume-bytes 1T
 ```
 
 `--listen` is required. Use the standalone `mt-pax` command below when a plain
@@ -166,6 +170,7 @@ colon only, so locator paths may contain additional colons.
 |------|--------|---------|
 | `tape:` | `tape:/dev/nst0` | `neotape-write --target`, `neotape-read --source` |
 | `spool:` | `spool:./dir` | `neotape-write --target`, `neotape-read --source` |
+| `null` | `null` | `neotape-write --target` |
 | `tcp:` | `tcp://host:port` | `neotape-archiver --listen`, `neotape-raw-store --listen`, `neotape-extractor --listen`, `neotape-write --source`, `neotape-read --connect` |
 | `unix:` | `unix:///path/socket` | `neotape-archiver --listen`, `neotape-raw-store --listen`, `neotape-extractor --listen`, `neotape-write --source`, `neotape-read --connect` |
 

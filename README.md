@@ -184,7 +184,7 @@ supported via `--sign-passphrase-file`.
 
 ```sh
 build/dev/bin/neotape-write --source <tcp://host:port|unix://path>
-                  --target <tape:/dev/nst0|spool:./dir>
+                  --target <tape:/dev/nst0|spool:./dir|null>
                   [--verify-pubkey <file.pub>]...
                   [--erase | --append]
                   [--recovery-bundle <tar>]
@@ -195,7 +195,9 @@ build/dev/bin/neotape-write --source <tcp://host:port|unix://path>
 
 `neotape-write` connects to a running `neotape-archiver` and requests frames one
 at a time. It writes each record to a tape device or a filesystem spool directory.
-One writer process writes exactly one volume.
+The `null` target performs the complete validation and acknowledgement flow but
+discards records instead of writing them. One writer process handles exactly one
+volume; `--max-volume-bytes` can simulate capacity on spool and null targets.
 
 By default the writer refuses to overwrite existing content. Use `--erase` to
 rewind to BOT and overwrite, or `--append` to space to EOD and continue. When
