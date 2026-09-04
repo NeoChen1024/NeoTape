@@ -38,7 +38,8 @@ pax archive file is needed.
 
 `neotape-write` exits with status `3` when the current volume is full and the
 archive requires another writer invocation. Status `0` means the complete
-archive, including `archive_end`, was accepted.
+archive, including `archive_end`, was accepted; `1` reports a runtime or source
+error, and `2` reports invalid command-line usage.
 
 `-R, --recovery-bundle <tar>` is available in non-append mode. A tape target
 writes the bundle at BOT using separate 256 KiB records by default. Use
@@ -185,3 +186,33 @@ colon only, so locator paths may contain additional colons.
 | stdout | Pure payload bytes (for readers) or structured output (for inspect/plan). |
 | stderr | Diagnostics, progress, warnings, BLAKE3 hash of output. |
 | `/dev/tty` | Interactive prompts for volume change, error resolution. |
+
+Every diagnostic line starts with the executable name. Default output contains
+only lifecycle events, warnings, errors, and one authoritative completion
+summary per process; connection-local protocol details are debug output.
+Progress display updates are serialized with ordinary diagnostics so an event
+always starts on a fresh line.
+
+Frame counters use explicit names:
+
+- `committed_frames` counts unique frames acknowledged by the writer.
+- `frame_transmissions` counts all frame records sent, including retransmits.
+- `forwarded_frames` counts records sent by one reader invocation.
+- `validated_frames` counts frames accepted by the extractor.
+
+While `neotape-write` is active it updates an mbuffer-style status line once
+per second:
+
+```text
+in @   136M/s, out @   133M/s, frames @     33/s, volume      4, slice     21, frame    1107012,   1.4T total, buffer  82% full
+```
+
+`in` counts bytes that passed frame validation; `out`, `frames`, and the
+volume/slice/frame position advance only after the target operation succeeds.
+`total` is the frame bytes handled by this writer invocation, and `buffer` is
+the queued byte percentage relative to `--output-buffer-size`. The status does
+not estimate physical tape capacity.
+
+Paths in diagnostics are escaped byte-for-byte when they contain non-ASCII or
+control bytes. This escaping affects display only; archived and planned
+pathnames remain byte opaque.

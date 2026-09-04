@@ -18,8 +18,8 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
-#include <fstream>
 #include <format>
+#include <fstream>
 #include <getopt.h>
 #include <iostream>
 #include <memory>
@@ -78,8 +78,36 @@ struct Options {
     bool debug = false;
 };
 
+string_view target_kind_name(TargetLocator::Kind kind) {
+    switch (kind) {
+    case TargetLocator::tape:
+        return "tape";
+    case TargetLocator::spool:
+        return "spool";
+    case TargetLocator::null_sink:
+        return "null";
+    case TargetLocator::none:
+        break;
+    }
+    return "unknown";
+}
+
+void report_volume_capacity_reached(TargetLocator::Kind kind,
+                                    uint64_t committed_frames) {
+    if (kind == TargetLocator::tape) {
+        neotape::write_diagnostic(
+            format("neotape-write: end of tape reached: committed_frames={}",
+                   committed_frames));
+        return;
+    }
+    neotape::write_diagnostic(
+        format("neotape-write: volume capacity reached: target={} "
+               "committed_frames={}",
+               target_kind_name(kind), committed_frames));
+}
+
 [[noreturn]] void fail(const string &msg) {
-    std::cerr << format("neotape-write: {}\n", msg);
+    neotape::write_diagnostic(format("neotape-write: {}", msg));
     std::exit(1);
 }
 
@@ -140,8 +168,8 @@ Options parse_args(int argc, char **argv) {
             break;
         case 'r': {
             try {
-                opts.recovery_bundle_block_size = neotape::parse_size(
-                    optarg, "recovery bundle block size");
+                opts.recovery_bundle_block_size =
+                    neotape::parse_size(optarg, "recovery bundle block size");
             } catch (const std::exception &e) {
                 std::cerr << format("neotape-write: {}\n", e.what());
                 std::exit(2);
@@ -358,6 +386,8 @@ neotape::FrameSignatureStatus verify_frame_record(
 
 struct PendingFrame {
     uint64_t global_seq_num;
+    uint64_t volume_seq_num;
+    uint64_t slice_seq_num;
     vector<std::byte> record;
     bool is_filemark = false;
 };
@@ -371,8 +401,113 @@ struct WriterState {
     string writer_error_text;
     std::atomic<bool> has_written_frame{false};
     std::atomic<uint64_t> last_written_seq{0};
+    std::atomic<uint64_t> last_written_volume{0};
+    std::atomic<uint64_t> last_written_slice{0};
     std::atomic<uint64_t> written_frame_count{0};
+    std::atomic<uint64_t> validated_bytes{0};
+    std::atomic<uint64_t> written_bytes{0};
+    std::atomic<size_t> queued_bytes{0};
     std::atomic<bool> eot_reached{false};
+};
+
+string status_count_rate(uint64_t items_per_second) {
+    if (items_per_second < 1000) {
+        return std::to_string(items_per_second);
+    }
+    if (items_per_second < 1000ULL * 1000) {
+        return format("{:.1f}k",
+                      static_cast<double>(items_per_second) / 1000.0);
+    }
+    return format("{:.1f}M",
+                  static_cast<double>(items_per_second) / (1000.0 * 1000.0));
+}
+
+void print_writer_progress(uint64_t in_rate, uint64_t out_rate,
+                           uint64_t frame_rate, const WriterState &state,
+                           size_t output_buffer_size) {
+    bool const has_frame = state.has_written_frame.load();
+    string const volume =
+        has_frame ? std::to_string(state.last_written_volume.load()) : "-";
+    string const slice =
+        has_frame ? std::to_string(state.last_written_slice.load()) : "-";
+    string const frame =
+        has_frame ? std::to_string(state.last_written_seq.load()) : "-";
+    size_t const queued = state.queued_bytes.load();
+    size_t const buffer_percent =
+        output_buffer_size == 0
+            ? 0
+            : static_cast<size_t>(std::min<long double>(
+                  100.0L, static_cast<long double>(queued) * 100.0L /
+                              static_cast<long double>(output_buffer_size)));
+
+    neotape::write_progress(
+        format("in @ {:>6}/s, out @ {:>6}/s, frames @ {:>6}/s, "
+               "volume {:>6}, slice {:>6}, frame {:>10}, {:>6} total, "
+               "buffer {:3}% full  ",
+               neotape::humanize_number(static_cast<size_t>(in_rate)),
+               neotape::humanize_number(static_cast<size_t>(out_rate)),
+               status_count_rate(frame_rate), volume, slice, frame,
+               neotape::humanize_number(
+                   static_cast<size_t>(state.written_bytes.load())),
+               buffer_percent));
+}
+
+class WriterProgress {
+  public:
+    WriterProgress(const WriterState &state, size_t output_buffer_size)
+        : state_(state), output_buffer_size_(output_buffer_size),
+          thread_([this] { run(); }) {}
+
+    ~WriterProgress() { stop(); }
+    WriterProgress(const WriterProgress &) = delete;
+    WriterProgress &operator=(const WriterProgress &) = delete;
+
+    void stop() {
+        bool expected = false;
+        if (!stopped_.compare_exchange_strong(expected, true)) {
+            return;
+        }
+        cv_.notify_all();
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+        neotape::finish_progress();
+    }
+
+  private:
+    void run() {
+        uint64_t last_input = 0;
+        uint64_t last_output = 0;
+        uint64_t last_frames = 0;
+        auto last_time = std::chrono::steady_clock::now();
+
+        std::unique_lock lock(mutex_);
+        while (!cv_.wait_for(lock, std::chrono::seconds(1),
+                             [this] { return stopped_.load(); })) {
+            auto const now = std::chrono::steady_clock::now();
+            double const seconds =
+                std::chrono::duration<double>(now - last_time).count();
+            uint64_t const input = state_.validated_bytes.load();
+            uint64_t const output = state_.written_bytes.load();
+            uint64_t const frames = state_.written_frame_count.load();
+            print_writer_progress(
+                static_cast<uint64_t>((input - last_input) / seconds),
+                static_cast<uint64_t>((output - last_output) / seconds),
+                static_cast<uint64_t>((frames - last_frames) / seconds), state_,
+                output_buffer_size_);
+            last_input = input;
+            last_output = output;
+            last_frames = frames;
+            last_time = now;
+        }
+    }
+
+    const WriterState &state_;
+    size_t output_buffer_size_;
+    std::atomic<bool> stopped_{false};
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::thread thread_;
 };
 
 // Do not write a trailing filemark when EOT has been reached. On real tape
@@ -381,7 +516,7 @@ struct WriterState {
 // the next uncommitted frame.
 void write_trailing_filemark(mt::TapeDevice *dev) {
     (void)dev;
-    NEOTAPE_DEBUG("writer: omitting trailing filemark at EOT/EOD\n");
+    NEOTAPE_DEBUG("neotape-write: omitting trailing filemark at EOT/EOD\n");
 }
 
 class NullTapeDevice final : public mt::TapeDevice {
@@ -421,8 +556,7 @@ class NullTapeDevice final : public mt::TapeDevice {
         if (current_file_ == 0 && current_record_ == 0) {
             flags |= mt::GMT_BOT;
         }
-        return mt::Status(0, 0, 0, flags, 0,
-                          static_cast<int>(current_file_),
+        return mt::Status(0, 0, 0, flags, 0, static_cast<int>(current_file_),
                           static_cast<int>(current_record_));
     }
 
@@ -541,7 +675,8 @@ uint64_t install_spool_recovery_bundle(const fs::path &root,
     ec.clear();
     fs::copy_file(source, pending, fs::copy_options::overwrite_existing, ec);
     if (ec) {
-        throw std::runtime_error(format("copy recovery bundle: {}", ec.message()));
+        throw std::runtime_error(
+            format("copy recovery bundle: {}", ec.message()));
     }
     uint64_t const size = fs::file_size(pending, ec);
     if (ec) {
@@ -591,10 +726,11 @@ void write_tape_recovery_bundle(mt::TapeDevice &dev, const fs::path &source,
         }
     }
     dev.write_filemark();
-    std::cerr << format(
-        "writer: wrote recovery bundle {} ({} source bytes, {} tape records "
-        "of {} bytes)\n",
-        source.string(), source_bytes, record_count, record_size);
+    std::cerr << format("neotape-write: wrote recovery bundle {} ({} source "
+                        "bytes, {} tape records "
+                        "of {} bytes)\n",
+                        source.string(), source_bytes, record_count,
+                        record_size);
 }
 
 void tape_writer_thread(mt::TapeDevice *dev, int fd,
@@ -608,15 +744,16 @@ void tape_writer_thread(mt::TapeDevice *dev, int fd,
             return !state.output_queue.empty() || state.writer_stop.load();
         });
         if (state.output_queue.empty() && state.writer_stop.load()) {
-            NEOTAPE_DEBUG("writer_thread: stopping (queue empty + stop)\n");
+            NEOTAPE_DEBUG("neotape-write: writer thread stopping\n");
             return;
         }
         auto frame = std::move(state.output_queue.front());
         state.output_queue.pop_front();
+        state.queued_bytes.fetch_sub(frame.record.size());
         lock.unlock();
 
         if (frame.is_filemark) {
-            NEOTAPE_DEBUG("writer_thread: writing filemark\n");
+            NEOTAPE_DEBUG("neotape-write: writer thread writing filemark\n");
             try {
                 dev->write_filemark();
             } catch (const std::exception &e) {
@@ -628,14 +765,16 @@ void tape_writer_thread(mt::TapeDevice *dev, int fd,
         }
 
         bool status_eot = false;
-        NEOTAPE_DEBUG("writer_thread: frame global_seq={} record_size={}\n",
-                      frame.global_seq_num, frame.record.size());
+        NEOTAPE_DEBUG(
+            "neotape-write: writer thread frame global_seq={} record_size={}\n",
+            frame.global_seq_num, frame.record.size());
         try {
             status_eot = dev->status().eot();
         } catch (const mt::Error &e) {
             if (e.error_code() == ENOSPC) {
-                NEOTAPE_DEBUG("writer_thread: pre-write status ENOSPC, "
-                              "treating as EOT\n");
+                NEOTAPE_DEBUG(
+                    "neotape-write: writer thread pre-write status ENOSPC, "
+                    "treating as EOT\n");
                 state.eot_reached.store(true);
                 return;
             }
@@ -644,21 +783,24 @@ void tape_writer_thread(mt::TapeDevice *dev, int fd,
             return;
         }
         if (status_eot) {
-            NEOTAPE_DEBUG(
-                "writer_thread: pre-write status EOT, treating as EOT\n");
+            NEOTAPE_DEBUG("neotape-write: writer thread pre-write status EOT, "
+                          "treating as EOT\n");
             state.eot_reached.store(true);
             return;
         }
 
         try {
             dev->write_record(frame.record.data(), frame.record.size());
-            state.has_written_frame.store(true);
+            state.written_bytes.fetch_add(frame.record.size());
+            state.last_written_volume.store(frame.volume_seq_num);
+            state.last_written_slice.store(frame.slice_seq_num);
             state.last_written_seq.store(frame.global_seq_num);
+            state.has_written_frame.store(true);
             state.written_frame_count.fetch_add(1);
         } catch (const mt::Error &e) {
             if (e.error_code() == ENOSPC) {
-                NEOTAPE_DEBUG(
-                    "writer_thread: write_record ENOSPC, treating as EOT\n");
+                NEOTAPE_DEBUG("neotape-write: writer thread write_record "
+                              "ENOSPC, treating as EOT\n");
                 state.eot_reached.store(true);
                 return;
             }
@@ -671,16 +813,18 @@ void tape_writer_thread(mt::TapeDevice *dev, int fd,
             return;
         }
 
-        NEOTAPE_DEBUG("writer_thread: frame global_seq={} written\n",
-                      frame.global_seq_num);
+        NEOTAPE_DEBUG(
+            "neotape-write: writer thread frame global_seq={} written\n",
+            frame.global_seq_num);
 
         status_eot = false;
         try {
             status_eot = dev->status().eot();
         } catch (const mt::Error &e) {
             if (e.error_code() == ENOSPC) {
-                NEOTAPE_DEBUG("writer_thread: post-write status ENOSPC, "
-                              "treating as EOT\n");
+                NEOTAPE_DEBUG(
+                    "neotape-write: writer thread post-write status ENOSPC, "
+                    "treating as EOT\n");
                 state.eot_reached.store(true);
                 return;
             }
@@ -689,28 +833,31 @@ void tape_writer_thread(mt::TapeDevice *dev, int fd,
             return;
         }
         if (status_eot) {
-            NEOTAPE_DEBUG(
-                "writer_thread: post-write status EOT, treating as EOT\n");
+            NEOTAPE_DEBUG("neotape-write: writer thread post-write status EOT, "
+                          "treating as EOT\n");
             state.eot_reached.store(true);
             return;
         }
 
         try {
             std::scoped_lock const write_lock(socket_write_mtx);
-            NEOTAPE_DEBUG("writer_thread: sending ack global_seq={}\n",
-                          frame.global_seq_num);
+            NEOTAPE_DEBUG(
+                "neotape-write: writer thread sending ack global_seq={}\n",
+                frame.global_seq_num);
             neotape::tcp::write_message(
                 fd, Message{MessageType::ack_frame,
                             uint64_to_le_bytes(frame.global_seq_num)});
-            NEOTAPE_DEBUG("writer_thread: ack sent global_seq={}\n",
-                          frame.global_seq_num);
+            NEOTAPE_DEBUG(
+                "neotape-write: writer thread ack sent global_seq={}\n",
+                frame.global_seq_num);
         } catch (const std::exception &e) {
             // If the archiver has already closed its end (archive complete),
             // the ACK is not needed; treat this as a clean shutdown.
             const char *what = e.what();
             if (std::strstr(what, "EPIPE") != nullptr ||
                 std::strstr(what, "Broken pipe") != nullptr) {
-                NEOTAPE_DEBUG("writer_thread: ack got EPIPE, clean shutdown\n");
+                NEOTAPE_DEBUG("neotape-write: writer thread ack got EPIPE, "
+                              "clean shutdown\n");
                 return;
             }
             state.writer_error_text = e.what();
@@ -833,9 +980,10 @@ int main(int argc, char **argv) {
                 if (opts.recovery_bundle.has_value()) {
                     recovery_bundle_bytes = install_spool_recovery_bundle(
                         spool_root, *opts.recovery_bundle);
-                    std::cerr << format(
-                        "writer: installed recovery bundle {} ({} bytes)\n",
-                        installed_bundle.string(), recovery_bundle_bytes);
+                    std::cerr << format("neotape-write: installed recovery "
+                                        "bundle {} ({} bytes)\n",
+                                        installed_bundle.string(),
+                                        recovery_bundle_bytes);
                 } else if (opts.erase) {
                     std::error_code ec;
                     fs::remove(installed_bundle, ec);
@@ -864,9 +1012,11 @@ int main(int argc, char **argv) {
         std::thread writer_thread(tape_writer_thread, output.device.get(), fd,
                                   std::ref(socket_write_mtx), std::ref(wstate));
         WriterThreadJoiner joiner(wstate, writer_thread);
+        WriterProgress progress(wstate, opts.output_buffer_size);
 
         auto joined_fail = [&](const string &msg) {
             joiner.join();
+            progress.stop();
             fail(msg);
         };
 
@@ -881,7 +1031,8 @@ int main(int argc, char **argv) {
             }
 
             if (wstate.eot_reached.load()) {
-                NEOTAPE_DEBUG("writer: eot_reached, joining thread\n");
+                NEOTAPE_DEBUG(
+                    "neotape-write: eot reached, joining writer thread\n");
                 joiner.join();
                 write_trailing_filemark(output.device.get());
                 uint64_t final_seq = wstate.last_written_seq.load();
@@ -889,33 +1040,29 @@ int main(int argc, char **argv) {
                     write_msg(Message{MessageType::ack_frame,
                                       uint64_to_le_bytes(final_seq)});
                 }
-                std::cerr << format(
-                    "writer: reached end of tape after {} written frames\n",
-                    wstate.written_frame_count.load());
+                progress.stop();
+                report_volume_capacity_reached(
+                    opts.target.kind, wstate.written_frame_count.load());
                 return exit_volume_change_required;
             }
 
             // Enforce output buffer limit.
             {
                 std::unique_lock lock(wstate.output_mtx);
-                size_t queued_bytes = 0;
-                for (const auto &f : wstate.output_queue) {
-                    queued_bytes += f.record.size();
-                }
-                if (queued_bytes >= opts.output_buffer_size) {
+                if (wstate.queued_bytes.load() >= opts.output_buffer_size) {
                     lock.unlock();
                     std::this_thread::sleep_for(std::chrono::milliseconds(10));
                     continue;
                 }
             }
 
-            NEOTAPE_DEBUG("writer: requesting next frame\n");
+            NEOTAPE_DEBUG("neotape-write: requesting next frame\n");
             write_msg(Message{MessageType::next_frame});
             auto msg = neotape::tcp::read_message(fd);
             if (!msg) {
                 joined_fail("unexpected disconnect");
             }
-            NEOTAPE_DEBUG("writer: received msg type={}\n",
+            NEOTAPE_DEBUG("neotape-write: received message type={}\n",
                           static_cast<int>(msg->type));
 
             switch (msg->type) {
@@ -926,8 +1073,8 @@ int main(int argc, char **argv) {
                 uint32_t record_size = neotape::decoded_block_size(header);
                 if (!volume_block_size.has_value()) {
                     volume_block_size = record_size;
-                    std::cerr << format(
-                        "writer: first frame parsed block_size={} "
+                    NEOTAPE_DEBUG(
+                        "neotape-write: first frame: block_size={} "
                         "archive_label=\"{}\" archive_uuid={} volume_seq={} "
                         "slice_seq={} global_seq={} channel={} "
                         "payload_size={}\n",
@@ -949,19 +1096,20 @@ int main(int argc, char **argv) {
                     if (signature_status ==
                             neotape::FrameSignatureStatus::signed_unverified &&
                         !warned_signed_unverified) {
-                        std::cerr
-                            << "writer: warning: signed frames are being "
-                               "written without authentication because no "
-                               "public key is configured\n";
+                        neotape::write_diagnostic(
+                            "neotape-write: warning: signed frames are being "
+                            "written without authentication because no "
+                            "public key is configured");
                         warned_signed_unverified = true;
                     }
                 } catch (const std::exception &e) {
                     joined_fail(e.what());
                 }
+                wstate.validated_bytes.fetch_add(msg->payload.size());
 
                 if (header.channel_type == neotape::ChannelType::ARCHIVE_END) {
                     NEOTAPE_DEBUG(
-                        "writer: archive_end frame, draining queue\n");
+                        "neotape-write: archive_end frame, draining queue\n");
                     wstate.output_cv.notify_all();
                     for (;;) {
                         std::unique_lock lock(wstate.output_mtx);
@@ -981,9 +1129,9 @@ int main(int argc, char **argv) {
                                     Message{MessageType::ack_frame,
                                             uint64_to_le_bytes(final_seq)});
                             }
-                            std::cerr << format(
-                                "writer: reached end of tape after {} written "
-                                "frames\n",
+                            progress.stop();
+                            report_volume_capacity_reached(
+                                opts.target.kind,
                                 wstate.written_frame_count.load());
                             return exit_volume_change_required;
                         }
@@ -998,45 +1146,59 @@ int main(int argc, char **argv) {
                             throw;
                         }
                         write_trailing_filemark(output.device.get());
-                        std::cerr << format(
-                            "writer: reached end of tape after {} written "
-                            "frames\n",
+                        progress.stop();
+                        report_volume_capacity_reached(
+                            opts.target.kind,
                             wstate.written_frame_count.load());
                         return exit_volume_change_required;
                     }
+                    wstate.written_bytes.fetch_add(msg->payload.size());
+                    wstate.last_written_volume.store(header.volume_seq_num);
+                    wstate.last_written_slice.store(header.slice_seq_num);
+                    wstate.last_written_seq.store(header.global_frame_seq_num);
+                    wstate.has_written_frame.store(true);
+                    wstate.written_frame_count.fetch_add(1);
                     write_msg(Message{
                         MessageType::ack_frame,
                         uint64_to_le_bytes(header.global_frame_seq_num)});
-                    NEOTAPE_DEBUG(
-                        "writer: sent ack for archive_end global_seq={}\n",
-                        header.global_frame_seq_num);
-                    std::cerr
-                        << format("writer: received archive end at frame {}\n",
+                    NEOTAPE_DEBUG("neotape-write: sent ack for archive_end "
+                                  "global_seq={}\n",
                                   header.global_frame_seq_num);
+                    progress.stop();
+                    neotape::write_diagnostic(
+                        format("neotape-write: archive complete: target={} "
+                               "volume_frames={} final_global_seq={}",
+                               target_kind_name(opts.target.kind),
+                               wstate.written_frame_count.load(),
+                               header.global_frame_seq_num));
                     return 0;
                 }
 
                 uint64_t const gseq = header.global_frame_seq_num;
                 std::unique_lock const lock(wstate.output_mtx);
-                wstate.output_queue.push_back(
-                    PendingFrame{gseq, std::move(msg->payload)});
+                wstate.queued_bytes.fetch_add(msg->payload.size());
+                wstate.output_queue.push_back(PendingFrame{
+                    gseq, header.volume_seq_num, header.slice_seq_num,
+                    std::move(msg->payload)});
                 wstate.output_cv.notify_one();
                 break;
             }
             case MessageType::tape_eof: {
-                NEOTAPE_DEBUG("writer: pushing filemark to queue\n");
+                NEOTAPE_DEBUG("neotape-write: queuing filemark\n");
                 std::unique_lock const lock(wstate.output_mtx);
-                wstate.output_queue.push_back(PendingFrame{0, {}, true});
+                wstate.output_queue.push_back(PendingFrame{0, 0, 0, {}, true});
                 wstate.output_cv.notify_one();
                 break;
             }
 
             case MessageType::error: {
                 joiner.join();
+                progress.stop();
                 string const reason = decode_error_payload(
                     msg->payload, "archiver reported error");
-                std::cerr << format("neotape-write: {}\n", reason);
-                std::exit(2);
+                neotape::write_diagnostic(
+                    format("neotape-write: source error: {}", reason));
+                std::exit(1);
             }
             case MessageType::auth_challenge:
             case MessageType::auth_response:

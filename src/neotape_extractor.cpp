@@ -56,7 +56,7 @@ struct ExtractorState {
     }
     size_t const written = std::fwrite(data, 1, size, output);
     if (written != size) {
-        std::cerr << format("extractor: write output failed: {}\n",
+        std::cerr << format("neotape-extractor: write output failed: {}\n",
                             std::strerror(errno));
         return false;
     }
@@ -65,7 +65,7 @@ struct ExtractorState {
 
 [[nodiscard]] bool flush_output(FILE *output) {
     if (std::fflush(output) != 0) {
-        std::cerr << format("extractor: flush output failed: {}\n",
+        std::cerr << format("neotape-extractor: flush output failed: {}\n",
                             std::strerror(errno));
         return false;
     }
@@ -111,21 +111,23 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
             descriptor.source_frame_count, descriptor.source_stream_size,
             shard_size, descriptor.fec_group_blake3);
         if (unavailable != 0) {
-            std::cerr << format("extractor: FEC repaired {} unavailable "
-                                "content shard(s)\n",
-                                unavailable);
+            std::cerr << format(
+                "neotape-extractor: FEC repaired {} unavailable "
+                "content shard(s)\n",
+                unavailable);
         }
     } catch (const std::exception &error) {
         if (!state.salvage) {
-            std::cerr << format("extractor: FEC recovery failed: {}\n",
+            std::cerr << format("neotape-extractor: FEC recovery failed: {}\n",
                                 error.what());
             state.pending_content_shards.clear();
             state.fec_shards = {};
             return false;
         }
-        std::cerr << format("extractor: salvage FEC recovery failed: {}; "
-                            "emitting only surviving source shards\n",
-                            error.what());
+        std::cerr << format(
+            "neotape-extractor: salvage FEC recovery failed: {}; "
+            "emitting only surviving source shards\n",
+            error.what());
         uint64_t remaining = descriptor.source_stream_size;
         for (uint16_t index = 0; index < descriptor.source_frame_count;
              ++index) {
@@ -181,7 +183,7 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
     try {
         header = parse_fixed_header(data, record.size());
     } catch (const std::exception &error) {
-        std::cerr << format("extractor: {}{}\n",
+        std::cerr << format("neotape-extractor: {}{}\n",
                             state.salvage ? "salvage cannot skip frame: " : "",
                             error.what());
         return false;
@@ -219,13 +221,14 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
                                          header, data, record.size());
     }
     if (validation.status == RestoreFrameValidationStatus::warning) {
-        std::cerr << format("extractor: warning: {}\n", validation.message);
+        std::cerr << format("neotape-extractor: warning: {}\n",
+                            validation.message);
     } else if (validation.status == RestoreFrameValidationStatus::fatal) {
         if (!state.salvage) {
-            std::cerr << format("extractor: {}\n", validation.message);
+            std::cerr << format("neotape-extractor: {}\n", validation.message);
             return false;
         }
-        std::cerr << format("extractor: salvage skipped frame: {}\n",
+        std::cerr << format("neotape-extractor: salvage skipped frame: {}\n",
                             validation.message);
         if (header.channel_type == ChannelType::CH_CONTENT &&
             has_frame_flag_fec_protected(header.flags)) {
@@ -240,10 +243,11 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
                                  state.require_signed);
     if (signature_validation.error.has_value()) {
         if (!state.salvage) {
-            std::cerr << format("extractor: {}\n", *signature_validation.error);
+            std::cerr << format("neotape-extractor: {}\n",
+                                *signature_validation.error);
             return false;
         }
-        std::cerr << format("extractor: salvage skipped frame: {}\n",
+        std::cerr << format("neotape-extractor: salvage skipped frame: {}\n",
                             *signature_validation.error);
         ++state.processed_frames;
         return true;
@@ -251,7 +255,8 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
     if (signature_validation.status ==
             FrameSignatureStatus::signed_unverified &&
         !state.warned_signed_unverified) {
-        std::cerr << "extractor: warning: signed frames are not authenticated "
+        std::cerr << "neotape-extractor: warning: signed frames are not "
+                     "authenticated "
                      "because no public key is configured\n";
         state.warned_signed_unverified = true;
     }
@@ -389,7 +394,8 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
                 if (reason.empty()) {
                     reason = "reader reported error";
                 }
-                std::cerr << format("extractor: reader error: {}\n", reason);
+                std::cerr << format("neotape-extractor: reader error: {}\n",
+                                    reason);
                 return false;
             }
             case MessageType::next_frame:
@@ -401,7 +407,7 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
             }
         }
     } catch (const std::exception &e) {
-        std::cerr << format("extractor: {}\n", e.what());
+        std::cerr << format("neotape-extractor: {}\n", e.what());
         return false;
     }
 }
@@ -411,7 +417,8 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
 uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
     int const listener = create_listener(opts.listen_address);
     FdGuard const listener_guard(listener);
-    std::cerr << format("extractor listening on {}\n", opts.listen_address);
+    std::cerr << format("neotape-extractor: listening on {}\n",
+                        opts.listen_address);
 
     // Open output file once if a path is given; otherwise write to stdout.
     FILE *output = stdout;
@@ -423,7 +430,8 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
                 format("open {}: {}", opts.output_path, std::strerror(errno)));
         }
         output_owned = true;
-        std::cerr << format("extractor writing to {}\n", opts.output_path);
+        std::cerr << format("neotape-extractor: writing to {}\n",
+                            opts.output_path);
     }
 
     struct OutputGuard {
@@ -442,7 +450,8 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
     state.verify_keys = opts.verify_keys;
     state.salvage = opts.salvage;
     if (state.salvage) {
-        std::cerr << "extractor: SALVAGE MODE: output is not fully verified; "
+        std::cerr << "neotape-extractor: warning: SALVAGE MODE: output is not "
+                     "fully verified; "
                      "invalid frames will be skipped\n";
     }
     uint64_t total_frames = 0;
@@ -454,7 +463,7 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
             throw std::runtime_error(
                 format("accept: {}", std::strerror(saved_errno)));
         }
-        NEOTAPE_DEBUG("extractor: accepted reader connection\n");
+        NEOTAPE_DEBUG("neotape-extractor: accepted reader connection\n");
         FdGuard const client_guard(client);
 
         bool const complete = serve_client(client, state, output);
@@ -466,7 +475,6 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
                            : state.validator.expected_global_frame_seq == 0
                                ? 0
                                : state.validator.expected_global_frame_seq - 1;
-            std::cerr << "extractor: archive extraction complete\n";
             return total_frames;
         }
 
@@ -477,9 +485,10 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
                        : state.validator.expected_global_frame_seq == 0
                            ? 0
                            : state.validator.expected_global_frame_seq - 1;
-        std::cerr << format("extractor: reader disconnected after {} frames, "
-                            "waiting for next reader\n",
-                            total_frames);
+        std::cerr << format(
+            "neotape-extractor: reader disconnected: "
+            "total_validated_frames={}; waiting for next reader\n",
+            total_frames);
     }
 
     return total_frames;

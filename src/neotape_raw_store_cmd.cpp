@@ -37,7 +37,7 @@ struct Options {
 };
 
 [[noreturn]] void fail(const string &msg) {
-    std::cerr << format("neotape-raw-store: {}\n", msg);
+    neotape::write_diagnostic(format("neotape-raw-store: {}", msg));
     std::exit(1);
 }
 
@@ -205,13 +205,13 @@ void produce_raw_frames(FILE *input, const string &archive_uuid,
     }
 }
 
-uint64_t run_raw_store(FILE *input, const Options &opts) {
+neotape::VolumeServerSummary run_raw_store(FILE *input, const Options &opts) {
     neotape::VolumeServerOptions server_opts;
     server_opts.listen_address = opts.listen_address;
     server_opts.volume_block_size = opts.volume_block_size;
     server_opts.archive_name = opts.archive_name;
     server_opts.retention_frame_count = opts.retention_frame_count;
-    server_opts.log_label = "raw-store";
+    server_opts.log_label = "neotape-raw-store";
     if (opts.sign_secret_key_file.has_value()) {
         server_opts.frame_signer = neotape::load_signify_secret_key(
             *opts.sign_secret_key_file,
@@ -252,8 +252,15 @@ int main(int argc, char **argv) {
         }
         FileGuard const input_guard(raw_input, owned);
 
-        uint64_t const served = run_raw_store(raw_input, opts);
-        std::cerr << format("raw-store served {} frames\n", served);
+        neotape::VolumeServerSummary const summary =
+            run_raw_store(raw_input, opts);
+        neotape::write_diagnostic(
+            format("neotape-raw-store: archive complete: volumes={} "
+                   "committed_frames={} frame_transmissions={} connections={} "
+                   "uncommitted_disconnects={}",
+                   summary.committed_volumes, summary.committed_frames,
+                   summary.frame_transmissions, summary.connections,
+                   summary.uncommitted_disconnects));
         return 0;
     } catch (const std::exception &e) {
         fail(e.what());

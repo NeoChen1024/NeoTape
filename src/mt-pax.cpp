@@ -40,7 +40,7 @@ void usage(const char *prog) {
 }
 
 [[noreturn]] void fail(const string &message) {
-    std::cerr << format("pax: {}\n", message);
+    neotape::write_diagnostic(format("mt-pax: {}", message));
     std::exit(1);
 }
 
@@ -59,8 +59,8 @@ CliOptions parse_args(int argc, char **argv) {
 
     CliOptions opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "C:f:P:j:B:p:S:vxh", long_opts, nullptr)) !=
-           -1) {
+    while ((c = getopt_long(argc, argv, "C:f:P:j:B:p:S:vxh", long_opts,
+                            nullptr)) != -1) {
         switch (c) {
         case 'C':
             opts.writer.chdir_dir = optarg;
@@ -73,7 +73,7 @@ CliOptions parse_args(int argc, char **argv) {
             char *end = nullptr;
             unsigned long const n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0' || n > 100) {
-                std::cerr << "pax: -P requires a percent from 0 to 100\n";
+                std::cerr << "mt-pax: -P requires a percent from 0 to 100\n";
                 std::exit(2);
             }
             opts.writer.buffer_percent = static_cast<unsigned>(n);
@@ -90,7 +90,7 @@ CliOptions parse_args(int argc, char **argv) {
                 opts.writer.output_buf_size = static_cast<size_t>(
                     neotape::parse_size(optarg, "output buffer size"));
             } catch (const std::exception &e) {
-                std::cerr << format("pax: {}\n", e.what());
+                std::cerr << format("mt-pax: {}\n", e.what());
                 std::exit(2);
             }
             break;
@@ -98,7 +98,7 @@ CliOptions parse_args(int argc, char **argv) {
             char *end = nullptr;
             unsigned long const n = std::strtoul(optarg, &end, 10);
             if (end == optarg || *end != '\0') {
-                std::cerr << "pax: --io-thread requires a number\n";
+                std::cerr << "mt-pax: --io-thread requires a number\n";
                 std::exit(2);
             }
             opts.writer.io_thread = static_cast<unsigned>(n);
@@ -162,7 +162,7 @@ int main(int argc, char **argv) {
         neotape::PaxLocalOutputResult result =
             neotape::write_pax_to_local_output(opts.writer, out_opts);
 
-        std::cerr << format("\n{}  {}\n", result.write_result.blake3_hex,
+        std::cerr << format("{}  {}\n", result.write_result.blake3_hex,
                             result.output_target);
         return 0;
     } catch (const std::exception &e) {

@@ -3,6 +3,7 @@
 #include "neotape/pax_writer.hpp"
 #include "neotape/signature.hpp"
 #include "neotape/tcp_protocol.hpp"
+#include "neotape/volume_server.hpp"
 
 #include <cstdint>
 #include <string>
@@ -21,8 +22,7 @@ struct TcpArchiverOptions {
     PaxWriterOptions pax;
 };
 
-// Blocks until the first writer connects, the archive completes, or an error
-// occurs. Returns the number of frames served on this connection.
-uint64_t run_tcp_archiver(const TcpArchiverOptions &opts);
+// Blocks until the archive completes or an error occurs.
+VolumeServerSummary run_tcp_archiver(const TcpArchiverOptions &opts);
 
 } // namespace neotape

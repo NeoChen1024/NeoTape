@@ -12,10 +12,18 @@ namespace neotape {
 
 extern bool g_debug;
 
+// Serialize diagnostics with the live progress display.  Ordinary messages
+// terminate an active progress line before they are written.
+void write_diagnostic(std::string_view message);
+void write_progress(std::string_view message);
+void finish_progress();
+
+std::string escape_bytes_for_diagnostic(std::string_view bytes);
+
 #define NEOTAPE_DEBUG(...)                                                     \
     do {                                                                       \
         if (neotape::g_debug)                                                  \
-            std::cerr << std::format(__VA_ARGS__);                             \
+            neotape::write_diagnostic(std::format(__VA_ARGS__));               \
     } while (0)
 
 uint64_t parse_size(std::string_view text, std::string_view name);

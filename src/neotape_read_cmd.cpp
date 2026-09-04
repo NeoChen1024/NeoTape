@@ -60,9 +60,10 @@ struct Options {
 }
 
 void usage(const char *prog) {
-    std::cerr << format("usage: {} -s|--source <tape:/dev/nst0|spool:./dir>\n"
-                        "       -c|--connect <tcp://host:port|unix://path> [-h]\n",
-                        prog);
+    std::cerr << format(
+        "usage: {} -s|--source <tape:/dev/nst0|spool:./dir>\n"
+        "       -c|--connect <tcp://host:port|unix://path> [-h]\n",
+        prog);
 }
 
 Options parse_args(int argc, char **argv) {
@@ -290,8 +291,9 @@ int main(int argc, char **argv) {
                 if (eod) {
                     neotape::tcp::write_message(
                         fd, Message{MessageType::tape_eof, {}});
-                    std::cerr << format("neotape-read: {} frames sent\n",
-                                        record_count);
+                    std::cerr << format("neotape-read: volume complete: "
+                                        "forwarded_frames={} filemarks={}\n",
+                                        record_count, filemark_count);
                     return 0;
                 }
 
@@ -338,7 +340,10 @@ int main(int argc, char **argv) {
             }
         }
 
-        std::cerr << format("neotape-read: {} frames sent\n", record_count);
+        std::cerr << format(
+            "neotape-read: volume complete: forwarded_frames={} "
+            "filemarks={}\n",
+            record_count, filemark_count);
         return 0;
     } catch (const std::exception &e) {
         fail(e.what());

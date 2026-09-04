@@ -35,7 +35,9 @@ TEST_CASE("FEC extraction stays below a slice-sized address-space limit",
     fs::path const spool = temporary.path() / "spool";
     fs::path const raw_socket = temporary.path() / "raw.sock";
     fs::path const extract_socket = temporary.path() / "extract.sock";
-    { std::ofstream stream(input); }
+    {
+        std::ofstream stream(input);
+    }
     fs::resize_file(input, 320ULL * 1024 * 1024);
 
     Process raw_store(ProcessOptions{
@@ -43,15 +45,16 @@ TEST_CASE("FEC extraction stays below a slice-sized address-space limit",
          "--input", input.string(), "--volume-block-size", "1048576",
          "--archive-name", "bounded-memory-test", "--fec"}});
     REQUIRE(wait_for_unix_socket(raw_socket, raw_store, 5s));
-    require_success(Process::run(
-        ProcessOptions{{NEOTAPE_WRITE, "--source", "unix://" + raw_socket.string(),
-                        "--target", "spool:" + spool.string()}},
-        180s));
+    require_success(
+        Process::run(ProcessOptions{{NEOTAPE_WRITE, "--source",
+                                     "unix://" + raw_socket.string(),
+                                     "--target", "spool:" + spool.string()}},
+                     180s));
     require_success(raw_store.wait(180s));
 
-    ProcessOptions extractor_options{
-        {NEOTAPE_EXTRACTOR, "--listen", "unix://" + extract_socket.string(),
-         "-o", output.string()}};
+    ProcessOptions extractor_options{{NEOTAPE_EXTRACTOR, "--listen",
+                                      "unix://" + extract_socket.string(), "-o",
+                                      output.string()}};
     extractor_options.address_space_limit = 256ULL * 1024 * 1024;
     Process extractor(std::move(extractor_options));
     REQUIRE(wait_for_unix_socket(extract_socket, extractor, 5s));
@@ -61,7 +64,7 @@ TEST_CASE("FEC extraction stays below a slice-sized address-space limit",
         180s));
     ProcessResult const extraction = extractor.wait(180s);
     require_success(extraction);
-    REQUIRE(extraction.standard_error.find("archive extraction complete") !=
+    REQUIRE(extraction.standard_error.find("archive complete") !=
             std::string::npos);
     REQUIRE(fs::file_size(output) == fs::file_size(input));
     require_success(Process::run(

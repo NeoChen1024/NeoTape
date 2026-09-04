@@ -47,11 +47,10 @@ std::vector<std::byte> read_binary(const fs::path &path) {
     std::vector<char> characters{std::istreambuf_iterator<char>(input), {}};
     std::vector<std::byte> bytes;
     bytes.reserve(characters.size());
-    std::ranges::transform(characters, std::back_inserter(bytes),
-                           [](char value) {
-                               return static_cast<std::byte>(
-                                   static_cast<unsigned char>(value));
-                           });
+    std::ranges::transform(
+        characters, std::back_inserter(bytes), [](char value) {
+            return static_cast<std::byte>(static_cast<unsigned char>(value));
+        });
     return bytes;
 }
 
@@ -79,26 +78,32 @@ TEST_CASE("archiver and writer create a valid spool",
     fs::create_directory(source);
     std::ofstream(source / "a.txt") << "hello\n";
 
-    ProcessResult const missing_listener = Process::run(
-        ProcessOptions{{NEOTAPE_ARCHIVER, source.string()}}, 10s);
+    ProcessResult const missing_listener =
+        Process::run(ProcessOptions{{NEOTAPE_ARCHIVER, source.string()}}, 10s);
     REQUIRE(missing_listener.exit_code != 0);
     require_contains(missing_listener, "--listen is required");
 
-    Process archiver(ProcessOptions{
-        {NEOTAPE_ARCHIVER, "-l", "unix://" + socket.string(), "-b", "4K",
-         "-n", "smoke", source.string()}});
+    Process archiver(
+        ProcessOptions{{NEOTAPE_ARCHIVER, "-l", "unix://" + socket.string(),
+                        "-b", "4K", "-n", "smoke", source.string()}});
     REQUIRE(wait_for_unix_socket(socket, archiver, 5s));
 
     ProcessResult const writer = Process::run(
-        ProcessOptions{{NEOTAPE_WRITE, "-s", "unix://" + socket.string(),
-                        "-t", "spool:" + spool.string(), "-B", "8M"}},
+        ProcessOptions{{NEOTAPE_WRITE, "-s", "unix://" + socket.string(), "-t",
+                        "spool:" + spool.string(), "-B", "8M", "--debug"}},
         30s);
     require_success(writer);
     require_contains(writer, "block_size=4096");
     require_contains(writer, "archive_label=\"smoke\"");
     require_contains(writer, "volume_seq=1");
     require_contains(writer, "slice_seq=0");
-    require_success(archiver.wait(30s));
+    ProcessResult const archiver_result = archiver.wait(30s);
+    require_success(archiver_result);
+    require_contains(archiver_result, "neotape-archiver: archive complete:");
+    require_contains(archiver_result, "committed_frames=");
+    require_contains(archiver_result, "frame_transmissions=");
+    REQUIRE(archiver_result.standard_error.find("on this connection") ==
+            std::string::npos);
 
     std::vector<fs::path> const files = spool_files(spool);
     REQUIRE(files.size() == 2);
@@ -122,8 +127,8 @@ TEST_CASE("null writer validates an archive across capacity-limited volumes",
 
     Process archiver(ProcessOptions{
         {NEOTAPE_ARCHIVER, "--listen", "unix://" + socket.string(),
-         "--volume-block-size", "4096", "--archive-name", "null-test",
-         "-C", source.string(), "."}});
+         "--volume-block-size", "4096", "--archive-name", "null-test", "-C",
+         source.string(), "."}});
     REQUIRE(wait_for_unix_socket(socket, archiver, 5s));
 
     int volume_count = 0;
@@ -144,7 +149,10 @@ TEST_CASE("null writer validates an archive across capacity-limited volumes",
 
     REQUIRE(volume_count > 0);
     REQUIRE(volume_count < 32);
-    require_success(archiver.wait(30s));
+    ProcessResult const archiver_result = archiver.wait(30s);
+    require_success(archiver_result);
+    require_contains(archiver_result, "neotape-archiver: archive complete:");
+    require_contains(archiver_result, "volume committed: volume=1");
 }
 
 TEST_CASE("raw spool passes inspect and scan reporting",
@@ -180,9 +188,8 @@ TEST_CASE("raw spool passes inspect and scan reporting",
     REQUIRE(wait_for_unix_socket(socket, raw_store, 5s));
 
     ProcessResult const writer = Process::run(
-        ProcessOptions{{NEOTAPE_WRITE, "--source",
-                        "unix://" + socket.string(), "--target",
-                        "spool:" + spool.string(), "--erase",
+        ProcessOptions{{NEOTAPE_WRITE, "--source", "unix://" + socket.string(),
+                        "--target", "spool:" + spool.string(), "--erase",
                         "--recovery-bundle", bundle.string()}},
         30s);
     require_success(writer);
@@ -194,10 +201,10 @@ TEST_CASE("raw spool passes inspect and scan reporting",
     REQUIRE(read_binary(files.front()).size() == 4 * block_size);
     REQUIRE(read_binary(files.back()).size() == block_size);
 
-    ProcessResult const inspect = Process::run(
-        ProcessOptions{{NEOTAPE_INSPECT, "--source",
-                        "spool:" + spool.string()}},
-        30s);
+    ProcessResult const inspect =
+        Process::run(ProcessOptions{{NEOTAPE_INSPECT, "--source",
+                                     "spool:" + spool.string()}},
+                     30s);
     require_success(inspect);
     require_contains(inspect, "Compliance: PASS");
     require_contains(inspect, "Total frames:     5");
@@ -217,10 +224,10 @@ TEST_CASE("raw spool passes inspect and scan reporting",
     require_contains(scan, "archive_label=\"inspect-test\"");
     require_contains(scan, "Tapefiles scanned: 2");
 
-    ProcessResult const verbose_scan = Process::run(
-        ProcessOptions{{NEOTAPE_SCAN, "--source", "spool:" + spool.string(),
-                        "--verbose"}},
-        30s);
+    ProcessResult const verbose_scan =
+        Process::run(ProcessOptions{{NEOTAPE_SCAN, "--source",
+                                     "spool:" + spool.string(), "--verbose"}},
+                     30s);
     require_success(verbose_scan);
     require_contains(verbose_scan,
                      "Tapefile #0: channel=CH_CONTENT global_frame_seq_num=0");

@@ -38,11 +38,10 @@ struct Options {
 }
 
 void usage(const char *prog) {
-    std::cerr << format(
-        "usage: {} -s|--source <tape:/dev/nst0> "
-        "-t|--target <spool:./dir>\n"
-        "       [-v|--verbose] [-h|--help]\n",
-        prog);
+    std::cerr << format("usage: {} -s|--source <tape:/dev/nst0> "
+                        "-t|--target <spool:./dir>\n"
+                        "       [-v|--verbose] [-h|--help]\n",
+                        prog);
 }
 
 string strip_locator(const string &value, const string &prefix,
@@ -185,8 +184,9 @@ int do_dump(const Options &opts) {
         }
     }
 
-    std::cout << format("Dumped {} records ({} bytes) into {} tape files\n",
-                        records, bytes, tape_files);
+    std::cerr << format(
+        "neotape-dump: dump complete: records={} bytes={} tape_files={}\n",
+        records, bytes, tape_files);
     return 0;
 }
 

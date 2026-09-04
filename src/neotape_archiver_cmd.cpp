@@ -31,7 +31,7 @@ struct Options {
 };
 
 [[noreturn]] void fail(const string &msg) {
-    std::cerr << format("neotape-archiver: {}\n", msg);
+    neotape::write_diagnostic(format("neotape-archiver: {}", msg));
     std::exit(1);
 }
 
@@ -212,8 +212,15 @@ int main(int argc, char **argv) {
                     : std::nullopt);
         }
 
-        uint64_t served = neotape::run_tcp_archiver(server_opts);
-        std::cerr << format("archiver served {} frames\n", served);
+        neotape::VolumeServerSummary const summary =
+            neotape::run_tcp_archiver(server_opts);
+        neotape::write_diagnostic(
+            format("neotape-archiver: archive complete: volumes={} "
+                   "committed_frames={} frame_transmissions={} connections={} "
+                   "uncommitted_disconnects={}",
+                   summary.committed_volumes, summary.committed_frames,
+                   summary.frame_transmissions, summary.connections,
+                   summary.uncommitted_disconnects));
         return 0;
     } catch (const std::exception &e) {
         fail(e.what());

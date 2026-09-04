@@ -47,14 +47,14 @@ PaxWriterCallbacks make_server_callbacks(ContentFrameBuilder &builder,
 
 } // namespace
 
-uint64_t run_tcp_archiver(const TcpArchiverOptions &opts) {
+VolumeServerSummary run_tcp_archiver(const TcpArchiverOptions &opts) {
     VolumeServerOptions server_opts;
     server_opts.listen_address = opts.listen_address;
     server_opts.volume_block_size = opts.volume_block_size;
     server_opts.archive_name = opts.archive_name;
     server_opts.initial_volume_seq_num = opts.initial_volume_seq_num;
     server_opts.retention_frame_count = opts.retention_frame_count;
-    server_opts.log_label = "archiver";
+    server_opts.log_label = "neotape-archiver";
     server_opts.frame_signer = opts.frame_signer;
 
     return run_volume_server(server_opts, [&](const string &archive_uuid,

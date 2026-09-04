@@ -3,14 +3,15 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
-#include <clocale>
 #include <climits>
+#include <clocale>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <iterator>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <sys/stat.h>
 #include <system_error>
@@ -19,10 +20,63 @@ namespace neotape {
 
 bool g_debug = false;
 
+namespace {
+
+std::mutex diagnostic_mutex;
+bool progress_active = false;
+
+} // namespace
+
 using std::format;
 using std::size;
 using std::string;
 using std::string_view;
+
+void write_diagnostic(string_view message) {
+    std::scoped_lock const lock(diagnostic_mutex);
+    if (progress_active) {
+        std::cerr << '\n';
+        progress_active = false;
+    }
+    std::cerr << message;
+    if (!message.empty() && message.back() != '\n') {
+        std::cerr << '\n';
+    }
+}
+
+void write_progress(string_view message) {
+    std::scoped_lock const lock(diagnostic_mutex);
+    std::cerr << '\r' << message;
+    progress_active = true;
+}
+
+void finish_progress() {
+    std::scoped_lock const lock(diagnostic_mutex);
+    if (progress_active) {
+        std::cerr << '\n';
+        progress_active = false;
+    }
+}
+
+string escape_bytes_for_diagnostic(string_view bytes) {
+    string escaped;
+    escaped.reserve(bytes.size());
+    constexpr char hex[] = "0123456789abcdef";
+    for (unsigned char const byte : bytes) {
+        if (byte >= 0x20 && byte <= 0x7e && byte != '\\') {
+            escaped.push_back(static_cast<char>(byte));
+            continue;
+        }
+        if (byte == '\\') {
+            escaped += "\\\\";
+            continue;
+        }
+        escaped += "\\x";
+        escaped.push_back(hex[byte >> 4]);
+        escaped.push_back(hex[byte & 0x0f]);
+    }
+    return escaped;
+}
 
 bool locale_name_is_utf8(const char *name) {
     if (name == nullptr) {

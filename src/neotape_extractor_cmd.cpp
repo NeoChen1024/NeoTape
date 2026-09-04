@@ -26,11 +26,12 @@ using std::string;
 }
 
 void usage(const char *prog) {
-    std::cerr << format("usage: {} -l|--listen <tcp://host:port|unix://path>\n"
-                        "       [-o|--output <file>] [-v|--verbose]\n"
-                        "       [-k|--verify-pubkey <file.pub>]...\n"
-                        "       [-S|--require-signed] [-s|--salvage] [-v] [-h]\n",
-                        prog);
+    std::cerr << format(
+        "usage: {} -l|--listen <tcp://host:port|unix://path>\n"
+        "       [-o|--output <file>] [-v|--verbose]\n"
+        "       [-k|--verify-pubkey <file.pub>]...\n"
+        "       [-S|--require-signed] [-s|--salvage] [-v] [-h]\n",
+        prog);
 }
 
 struct Options {
@@ -124,7 +125,9 @@ int main(int argc, char **argv) {
         }
 
         uint64_t const frames = neotape::run_tcp_extractor(ex_opts);
-        std::cerr << format("extractor validated {} frames\n", frames);
+        std::cerr << format(
+            "neotape-extractor: archive complete: validated_frames={}\n",
+            frames);
         return 0;
     } catch (const std::exception &e) {
         fail(e.what());

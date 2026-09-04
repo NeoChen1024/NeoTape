@@ -43,7 +43,6 @@ namespace {
 
 namespace fs = std::filesystem;
 using neotape::BoundedBuffer;
-using std::cerr;
 using std::format;
 using std::size_t;
 using std::string;
@@ -178,14 +177,9 @@ class PaxOutputSession {
                         }
                         owned_ = true;
                     },
-                .write_chunk =
-                    [&](PaxChunk chunk) {
-                        write_chunk(chunk);
-                    },
+                .write_chunk = [&](PaxChunk chunk) { write_chunk(chunk); },
                 .end_slice =
-                    [&](uint64_t) {
-                        close_file("close slice output");
-                    },
+                    [&](uint64_t) { close_file("close slice output"); },
             };
         }
 
@@ -201,10 +195,7 @@ class PaxOutputSession {
         }
 
         return PaxWriterCallbacks{
-            .write_chunk =
-                [&](PaxChunk chunk) {
-                    write_chunk(chunk);
-                },
+            .write_chunk = [&](PaxChunk chunk) { write_chunk(chunk); },
         };
     }
 
@@ -321,14 +312,13 @@ string stat_count_rate(uint64_t items_per_second) {
 void print_pax_progress(uint64_t in_rate, uint64_t out_rate, uint64_t file_rate,
                         uint64_t current_slice, uint64_t current_out,
                         size_t buffer_percent) {
-    // carridge return to overwrite the previous line, but only if we're
-    // not on the first line
-    cerr << format("\rin @ {:>6}/s, out @ {:>6}/s, files @ {:>6}/s, "
-                   "slice {:>6}, {:>6} total, buffer {:3}% full  ",
-                   stat_rate(in_rate), stat_rate(out_rate),
-                   stat_count_rate(file_rate), current_slice,
-                   neotape::humanize_number(static_cast<size_t>(current_out)),
-                   buffer_percent);
+    write_progress(
+        format("in @ {:>6}/s, out @ {:>6}/s, files @ {:>6}/s, "
+               "slice {:>6}, {:>6} total, buffer {:3}% full  ",
+               stat_rate(in_rate), stat_rate(out_rate),
+               stat_count_rate(file_rate), current_slice,
+               neotape::humanize_number(static_cast<size_t>(current_out)),
+               buffer_percent));
 }
 
 // ====================== Diagnostics ==========================
@@ -350,8 +340,9 @@ void check_archive_throw(int r, archive *a, const char *context) {
     }
     if (r == ARCHIVE_WARN) {
         const char *msg = archive_error_string(a);
-        cerr << format("pax: warning: {}{}\n", context,
-                       msg != nullptr ? format(": {}", msg) : string());
+        write_diagnostic(
+            format("pax: warning: {}{}", context,
+                   msg != nullptr ? format(": {}", msg) : string()));
         return;
     }
     throw_archive(context, a);
@@ -359,8 +350,8 @@ void check_archive_throw(int r, archive *a, const char *context) {
 
 void warn_archive(const char *context, archive *a) {
     const char *msg = archive_error_string(a);
-    cerr << format("pax: warning: {}{}\n", context,
-                   msg != nullptr ? format(": {}", msg) : string());
+    write_diagnostic(format("pax: warning: {}{}", context,
+                            msg != nullptr ? format(": {}", msg) : string()));
 }
 
 uint64_t parse_u64_field(const string &field, const fs::path &path,
@@ -498,7 +489,7 @@ string entry_display_path(archive_entry *entry) {
         p.back() != '/') {
         p += '/';
     }
-    return p;
+    return escape_bytes_for_diagnostic(p);
 }
 
 string entry_size_display(archive_entry *entry) {
@@ -533,8 +524,9 @@ int open_entry_file(archive_entry *entry) {
     }
     int const fd = open(src, O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
-        cerr << format("pax: warning: open {}: {}\n", src,
-                       std::strerror(errno));
+        write_diagnostic(format("pax: warning: open {}: {}",
+                                escape_bytes_for_diagnostic(src),
+                                std::strerror(errno)));
     }
     return fd;
 }
@@ -833,9 +825,8 @@ void pipeline_serializer_main(ClosableQueue<PipelineWorkItem> &work_queue,
                     keep_running = false;
                     break;
                 }
-                keep_running = emit_bytes_to_bb1(bb1_sink,
-                                                 std::move(result->bytes),
-                                                 true);
+                keep_running =
+                    emit_bytes_to_bb1(bb1_sink, std::move(result->bytes), true);
                 break;
             }
             case PipelineOrderKind::LargeEntry: {
@@ -1066,17 +1057,16 @@ void dispatch_entry_to_pipeline(const Options &opts, ArchiveStats &stats,
         return;
     }
     stats.walked_entries.fetch_add(1, std::memory_order_relaxed);
-    stats.walked_entries_since_status.fetch_add(1,
-                                                std::memory_order_relaxed);
+    stats.walked_entries_since_status.fetch_add(1, std::memory_order_relaxed);
 
     bool const is_reg = (archive_entry_filetype(entry.get()) == AE_IFREG);
     la_int64_t const size = archive_entry_size(entry.get());
     bool const has_data = (is_reg && size > 0);
 
     if (opts.verbose > 1) {
-        cerr << format("\n{}", verbose_line(entry.get()));
+        write_diagnostic(verbose_line(entry.get()));
     } else if (opts.verbose > 0) {
-        cerr << format("\na {}", entry_display_path(entry.get()));
+        write_diagnostic(format("a {}", entry_display_path(entry.get())));
     }
 
     if (!has_data) {
@@ -1153,9 +1143,8 @@ class PlannedSlicePipeline {
         if (pipeline_ == nullptr) {
             throw std::runtime_error("planned slice pipeline is not available");
         }
-        if (!pipeline_->enqueue_inline(next_seq_++,
-                                       vector<std::byte>(1024, std::byte{0}),
-                                       false)) {
+        if (!pipeline_->enqueue_inline(
+                next_seq_++, vector<std::byte>(1024, std::byte{0}), false)) {
             pipeline_->rethrow_if_failed();
             throw std::runtime_error(
                 "pax pipeline closed while enqueueing end-of-archive marker");
@@ -1276,9 +1265,8 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
                 static_cast<uint64_t>((current_in - last_in) / seconds);
             auto const out_rate =
                 static_cast<uint64_t>((current_out - last_out) / seconds);
-            auto const file_rate =
-                stats.walked_entries_since_status.exchange(
-                    0, std::memory_order_relaxed);
+            auto const file_rate = stats.walked_entries_since_status.exchange(
+                0, std::memory_order_relaxed);
             size_t const buffered = slice_output.buffered_bytes();
             size_t const capacity = slice_output.buffer_capacity();
             size_t const percent =
@@ -1399,15 +1387,14 @@ PaxWriteResult write_planned_pax_archive(const Options &opts,
         std::rethrow_exception(failure);
     }
 
-    print_pax_progress(0, 0, 0,
-                       current_slice_seq.load(std::memory_order_relaxed),
-                       stats.output_bytes.load(std::memory_order_relaxed),
-                       slice_output.buffer_capacity() == 0
-                           ? 0
-                           : std::min<size_t>(
-                                 100, slice_output.buffered_bytes() * 100 /
-                                          slice_output.buffer_capacity()));
-    cerr << "\n";
+    print_pax_progress(
+        0, 0, 0, current_slice_seq.load(std::memory_order_relaxed),
+        stats.output_bytes.load(std::memory_order_relaxed),
+        slice_output.buffer_capacity() == 0
+            ? 0
+            : std::min<size_t>(100, slice_output.buffered_bytes() * 100 /
+                                        slice_output.buffer_capacity()));
+    finish_progress();
 
     std::array<uint8_t, BLAKE3_OUT_LEN> hash{};
     blake3_hasher_finalize(&hasher, hash.data(), hash.size());
@@ -1472,9 +1459,8 @@ PaxWriteResult write_pax_archive(const Options &opts,
                 static_cast<uint64_t>((current_in - last_in) / seconds);
             auto const out_rate =
                 static_cast<uint64_t>((current_out - last_out) / seconds);
-            auto const file_rate =
-                stats.walked_entries_since_status.exchange(
-                    0, std::memory_order_relaxed);
+            auto const file_rate = stats.walked_entries_since_status.exchange(
+                0, std::memory_order_relaxed);
             size_t buffered = pipeline.buffered_bytes();
             size_t capacity = pipeline.buffer_capacity();
             size_t percent =

@@ -55,7 +55,8 @@ struct PaxLocalOutputResult {
 
 PaxWriteResult write_pax(const PaxWriterOptions &opts,
                          PaxWriterCallbacks callbacks);
-PaxLocalOutputResult write_pax_to_local_output(
-    const PaxWriterOptions &writer_opts, const PaxLocalOutputOptions &out_opts);
+PaxLocalOutputResult
+write_pax_to_local_output(const PaxWriterOptions &writer_opts,
+                          const PaxLocalOutputOptions &out_opts);
 
 } // namespace neotape

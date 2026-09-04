@@ -86,12 +86,16 @@ struct ScanTotals {
 // ====================== Diagnostics & CLI ========================
 
 [[noreturn]] void fail(const string &message) {
-    std::cerr << format("neotape plan: {}\n", message);
+    std::cerr << format("neotape-plan: {}\n", message);
     std::exit(1);
 }
 
 void warn(const string &message) {
-    std::cerr << format("neotape plan: warning: {}\n", message);
+    std::cerr << format("neotape-plan: warning: {}\n", message);
+}
+
+string display_path(const fs::path &path) {
+    return neotape::escape_bytes_for_diagnostic(path.string());
 }
 
 void usage(const char *prog) {
@@ -217,7 +221,8 @@ uint64_t apparent_bytes_from_stat(const struct stat &st) {
 vector<fs::path> sorted_children(const fs::path &path) {
     DIR *dir = opendir(path.c_str());
     if (dir == nullptr) {
-        warn(format("opendir {}: {}", path.string(), std::strerror(errno)));
+        warn(
+            format("opendir {}: {}", display_path(path), std::strerror(errno)));
         return {};
     }
 
@@ -235,10 +240,12 @@ vector<fs::path> sorted_children(const fs::path &path) {
         children.push_back(path / string(name));
     }
     if (errno != 0) {
-        warn(format("readdir {}: {}", path.string(), std::strerror(errno)));
+        warn(
+            format("readdir {}: {}", display_path(path), std::strerror(errno)));
     }
     if (closedir(dir) != 0) {
-        warn(format("closedir {}: {}", path.string(), std::strerror(errno)));
+        warn(format("closedir {}: {}", display_path(path),
+                    std::strerror(errno)));
     }
 
     std::ranges::sort(children);
@@ -273,7 +280,7 @@ class WorkerPool {
             if (lstat(w.path.c_str(), &st) != 0) {
                 LstatResult r{};
                 r.index = w.index;
-                r.warning = format("lstat {}: {}", w.path.string(),
+                r.warning = format("lstat {}: {}", display_path(w.path),
                                    std::strerror(errno));
                 return r;
             }
@@ -496,16 +503,15 @@ void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num,
                 vector<uint64_t> &slice_sizes) {
     for (size_t i = 0; i < slice.entries.size(); ++i) {
         const EntryMeta &e = slice.entries[i];
-        string line =
-            format("/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}", slice_num, i, e.kind,
-                   e.apparent_bytes, e.mtime, e.uid, e.uname, e.gid, e.gname,
-                   e.archive_path);
+        string line = format("/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}", slice_num, i,
+                             e.kind, e.apparent_bytes, e.mtime, e.uid, e.uname,
+                             e.gid, e.gname, e.archive_path);
         fwrite(line.data(), 1, line.size(), opts.meta_out);
         fputc('\0', opts.meta_out);
         fputc('\n', opts.meta_out);
     }
-    std::cerr << format("slice {}: entries={} size={}\n", slice_num,
-                        slice.entries.size(),
+    std::cerr << format("neotape-plan: slice: id={} entries={} size={}\n",
+                        slice_num, slice.entries.size(),
                         neotape::humanize_number(slice.apparent_bytes));
     slice_sizes.push_back(slice.apparent_bytes);
 
@@ -513,10 +519,12 @@ void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num,
         return;
     }
     for (const EntryMeta &entry : slice.entries) {
-        std::cerr << format("  {} size={} {}:{} {}:{} {}\n", entry.kind,
-                            neotape::humanize_number(entry.apparent_bytes),
-                            entry.uid, entry.uname, entry.gid, entry.gname,
-                            entry.source_path.generic_string());
+        std::cerr << format(
+            "neotape-plan: entry: kind={} size={} uid={} user={} gid={} "
+            "group={} path={}\n",
+            entry.kind, neotape::humanize_number(entry.apparent_bytes),
+            entry.uid, entry.uname, entry.gid, entry.gname,
+            display_path(entry.source_path));
     }
 }
 
@@ -609,8 +617,8 @@ class PlannerScanner {
         if (lstat(path.c_str(), &st) != 0) {
             LstatResult r{};
             r.index = index;
-            r.warning =
-                format("lstat {}: {}", path.string(), std::strerror(errno));
+            r.warning = format("lstat {}: {}", display_path(path),
+                               std::strerror(errno));
             return r;
         }
 
@@ -707,7 +715,7 @@ class PlannerScanner {
     void scan_source(const neotape::SourceSpec &spec) {
         struct stat st{};
         if (lstat(spec.open_path.c_str(), &st) != 0) {
-            fail(format("lstat {}: {}", spec.open_path.string(),
+            fail(format("lstat {}: {}", display_path(spec.open_path),
                         std::strerror(errno)));
         }
 
@@ -748,7 +756,9 @@ void run_plan(Options &opts) {
     } else {
         opts.meta_out = fopen(opts.output_path.c_str(), "wb");
         if (opts.meta_out == nullptr) {
-            fail(format("open {}: {}", opts.output_path, std::strerror(errno)));
+            fail(format("open {}: {}",
+                        neotape::escape_bytes_for_diagnostic(opts.output_path),
+                        std::strerror(errno)));
         }
     }
 
@@ -793,8 +803,8 @@ void run_plan(Options &opts) {
         fclose(opts.meta_out);
     }
 
-    std::cerr << format("scanned entries={} total_size={} "
-                        "target_slice={} buffer_size={}\n",
+    std::cerr << format("neotape-plan: scan complete: entries={} "
+                        "total_size={} target_slice={} buffer_size={}\n",
                         totals.entries,
                         neotape::humanize_number(totals.apparent_bytes),
                         neotape::humanize_number(opts.slice_size),
@@ -817,7 +827,7 @@ void run_plan(Options &opts) {
         }
         double const stddev = std::sqrt(var_sum / slice_sizes.size());
         std::cerr << format(
-            "slice_sizes: slices={} min={} avg={} max={} "
+            "neotape-plan: slice summary: slices={} min={} avg={} max={} "
             "stddev={}\n",
             slice_sizes.size(), neotape::humanize_number(min_sz),
             neotape::humanize_number(static_cast<uint64_t>(avg)),

@@ -34,8 +34,11 @@ TEST_CASE("mt-pax defers file opens under descriptor pressure",
     fs::path const fifo = temporary.path() / "archive.pipe";
     fs::create_directory(source);
     for (int index = 0; index < 60; ++index) {
-        fs::path const file = source / ("file-" + std::to_string(index) + ".bin");
-        { std::ofstream stream(file); }
+        fs::path const file =
+            source / ("file-" + std::to_string(index) + ".bin");
+        {
+            std::ofstream stream(file);
+        }
         fs::resize_file(file, 5 * 1024 * 1024);
     }
     REQUIRE(::mkfifo(fifo.c_str(), 0600) == 0);
@@ -49,7 +52,8 @@ TEST_CASE("mt-pax defers file opens under descriptor pressure",
     Process writer(std::move(writer_options));
     ProcessResult const writer_result = writer.wait(30s);
     require_success(writer_result);
-    REQUIRE(writer_result.standard_error.find("Can't open") == std::string::npos);
+    REQUIRE(writer_result.standard_error.find("Can't open") ==
+            std::string::npos);
     require_success(slow_reader.wait(10s));
 }
 
@@ -68,7 +72,8 @@ TEST_CASE("multi-threaded mt-pax preserves files and symlinks",
     fs::create_directory(output);
 
     for (int index = 0; index < 80; ++index) {
-        fs::path const directory = directories / ("dir-" + std::to_string(index));
+        fs::path const directory =
+            directories / ("dir-" + std::to_string(index));
         fs::create_directory(directory);
         std::ofstream(small / ("file-" + std::to_string(index) + ".txt"))
             << "small file " << index << '\n';
@@ -88,10 +93,10 @@ TEST_CASE("multi-threaded mt-pax preserves files and symlinks",
     require_success(archive_result);
     REQUIRE(fs::file_size(archive) > 0);
 
-    ProcessResult const extract_result = Process::run(
-        ProcessOptions{{NEOTAPE_BSDTAR, "-xpf", archive.string(), "-C",
-                        output.string()}},
-        30s);
+    ProcessResult const extract_result =
+        Process::run(ProcessOptions{{NEOTAPE_BSDTAR, "-xpf", archive.string(),
+                                     "-C", output.string()}},
+                     30s);
     require_success(extract_result);
 
     std::ifstream expected(small / "file-17.txt");
@@ -116,15 +121,19 @@ TEST_CASE("mt-pax preserves opaque pathname and symlink target bytes",
     fs::create_symlink(fs::path(opaque_name), source / "opaque-link");
 
     ProcessResult const archive_result = Process::run(
-        ProcessOptions{{NEOTAPE_MT_PAX, "-f", archive.string(), "-C",
+        ProcessOptions{{NEOTAPE_MT_PAX, "-v", "-f", archive.string(), "-C",
                         temporary.path().string(), "src"}},
         30s);
     require_success(archive_result);
+    REQUIRE(archive_result.standard_error.find("opaque-\\x82\\xe7.bin") !=
+            std::string::npos);
+    REQUIRE(archive_result.standard_error.find(opaque_name) ==
+            std::string::npos);
 
-    ProcessResult const extract_result = Process::run(
-        ProcessOptions{{NEOTAPE_BSDTAR, "-xpf", archive.string(), "-C",
-                        output.string()}},
-        30s);
+    ProcessResult const extract_result =
+        Process::run(ProcessOptions{{NEOTAPE_BSDTAR, "-xpf", archive.string(),
+                                     "-C", output.string()}},
+                     30s);
     require_success(extract_result);
 
     fs::path const extracted_file = output / "src" / fs::path(opaque_name);
