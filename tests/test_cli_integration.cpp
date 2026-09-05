@@ -56,3 +56,29 @@ TEST_CASE("short CLI options create plan and pax output",
     REQUIRE(fs::file_size(plan) > 0);
     REQUIRE(fs::file_size(archive) > 0);
 }
+
+TEST_CASE("invalid numeric CLI arguments exit before starting work",
+          "[integration][cli]") {
+    for (const char *program :
+         {NEOTAPE_MT_PAX, NEOTAPE_PLAN, NEOTAPE_ARCHIVER}) {
+        for (const char *value :
+             {"-1", "4294967296", "18446744073709551616", "1x"}) {
+            CAPTURE(program, value);
+            auto result = run({program, "-j", value, "-h"});
+            REQUIRE_FALSE(result.timed_out);
+            REQUIRE(result.exit_code == 2);
+        }
+    }
+    for (const char *program : {NEOTAPE_ARCHIVER, NEOTAPE_RAW_STORE}) {
+        auto result = run({program, "-b", "4G", "-h"});
+        CAPTURE(program);
+        REQUIRE_FALSE(result.timed_out);
+        REQUIRE(result.exit_code == 2);
+    }
+    for (const char *program : {NEOTAPE_MT_PAX, NEOTAPE_WRITE}) {
+        auto result = run({program, "-B", "-1", "-h"});
+        CAPTURE(program);
+        REQUIRE_FALSE(result.timed_out);
+        REQUIRE(result.exit_code == 2);
+    }
+}

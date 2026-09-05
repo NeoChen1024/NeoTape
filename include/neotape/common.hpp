@@ -5,6 +5,8 @@
 #include <filesystem>
 #include <format>
 #include <iostream>
+#include <limits>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -26,7 +28,12 @@ std::string escape_bytes_for_diagnostic(std::string_view bytes);
             neotape::write_diagnostic(std::format(__VA_ARGS__));               \
     } while (0)
 
-uint64_t parse_size(std::string_view text, std::string_view name);
+uint64_t parse_uint(std::string_view text, std::string_view name,
+                    uint64_t minimum = 0,
+                    uint64_t maximum = std::numeric_limits<uint64_t>::max());
+uint64_t parse_size(std::string_view text, std::string_view name,
+                    uint64_t maximum = std::numeric_limits<uint64_t>::max());
+std::string hex_encode(std::span<const uint8_t> bytes);
 std::string humanize_number(std::size_t number);
 void ensure_utf8_ctype_locale();
 

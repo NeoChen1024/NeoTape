@@ -1,13 +1,14 @@
+#include "neotape/socket_util.hpp"
+#include "neotape/tcp_protocol.hpp"
 #include "support/checks.hpp"
 #include "support/process.hpp"
 #include "support/temp_directory.hpp"
+#include <poll.h>
 
 #include <catch2/catch_test_macros.hpp>
 
-#include <array>
 #include <chrono>
 #include <cstdint>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -18,7 +19,6 @@
 #include <vector>
 
 #include <sys/socket.h>
-#include <sys/un.h>
 #include <unistd.h>
 
 namespace {
@@ -33,79 +33,45 @@ using neotape::test::wait_for_unix_socket;
 
 using neotape::test::require_success;
 
-std::string output(const ProcessResult &result) {
-    return result.standard_output + result.standard_error;
-}
-
-void require_contains(const ProcessResult &result, std::string_view text) {
-    INFO("output:\n" << output(result));
-    REQUIRE(output(result).find(text) != std::string::npos);
-}
+using neotape::test::output;
+using neotape::test::require_contains;
 
 using neotape::test::read_file;
 
-fs::path first_content_file(const fs::path &spool) {
-    for (const fs::directory_entry &entry : fs::directory_iterator(spool)) {
-        if (entry.path().filename().string().find(".slice-") !=
-            std::string::npos) {
-            return entry.path();
-        }
-    }
-    throw std::runtime_error("signed content spool file not found");
-}
-
-bool transfer_exact(int fd, void *buffer, std::size_t size, bool send_data) {
-    auto *bytes = static_cast<char *>(buffer);
-    while (size > 0) {
-        ssize_t const count = send_data ? ::send(fd, bytes, size, MSG_NOSIGNAL)
-                                        : ::recv(fd, bytes, size, 0);
-        if (count <= 0) {
-            return false;
-        }
-        bytes += count;
-        size -= static_cast<std::size_t>(count);
-    }
-    return true;
-}
+using neotape::test::content_file;
 
 int serve_corrupt_record(const fs::path &socket_path, std::vector<char> record,
                          std::promise<void> ready) {
-    int server = ::socket(AF_UNIX, SOCK_STREAM, 0);
-    if (server < 0) {
+    try {
+        neotape::FdGuard server(
+            neotape::create_listener("unix://" + socket_path.string()));
+        ready.set_value();
+        pollfd event{server.fd, POLLIN, 0};
+        if (::poll(&event, 1, 5000) != 1)
+            return 1;
+        neotape::FdGuard client(::accept(server.fd, nullptr, nullptr));
+        if (client.fd < 0)
+            return 1;
+        timeval timeout{5, 0};
+        if (::setsockopt(client.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                         sizeof(timeout)) ||
+            ::setsockopt(client.fd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
+                         sizeof(timeout)))
+            return 1;
+        auto request = neotape::tcp::read_message(client.fd);
+        if (!request || request->type != neotape::tcp::MessageType::next_frame)
+            return 1;
+        std::vector<std::byte> payload;
+        payload.reserve(record.size());
+        for (unsigned char byte : record)
+            payload.push_back(static_cast<std::byte>(byte));
+        neotape::tcp::write_message(
+            client.fd,
+            {neotape::tcp::MessageType::frame_record, std::move(payload)});
+        return 0;
+    } catch (...) {
         return 1;
     }
-    sockaddr_un address{};
-    address.sun_family = AF_UNIX;
-    if (socket_path.string().size() >= sizeof(address.sun_path)) {
-        ::close(server);
-        return 2;
-    }
-    std::strcpy(address.sun_path, socket_path.c_str());
-    if (::bind(server, reinterpret_cast<sockaddr *>(&address),
-               sizeof(address)) != 0 ||
-        ::listen(server, 1) != 0) {
-        ::close(server);
-        return 3;
-    }
-    ready.set_value();
-    int client = ::accept(server, nullptr, nullptr);
-    if (client < 0) {
-        ::close(server);
-        return 4;
-    }
-    char request[9];
-    bool ok = transfer_exact(client, request, sizeof(request), false);
-    std::array<unsigned char, 9> response{};
-    response[0] = 0x02;
-    std::uint64_t length = record.size();
-    for (int index = 0; index < 8; ++index) {
-        response[1 + index] = static_cast<unsigned char>(length >> (8 * index));
-    }
-    ok = ok && transfer_exact(client, response.data(), response.size(), true) &&
-         transfer_exact(client, record.data(), record.size(), true);
-    ::close(client);
-    ::close(server);
-    return ok ? 0 : 5;
 }
 
 } // namespace
@@ -203,7 +169,7 @@ TEST_CASE("signed archive is authenticated and restored",
     require_contains(unverified_result, "signed frames are not authenticated");
     REQUIRE(read_file(output_file) == read_file(unverified_output));
 
-    std::string record_text = read_file(first_content_file(spool));
+    std::string record_text = read_file(content_file(spool));
     REQUIRE(record_text.size() >= 512);
     std::size_t const record_size =
         (static_cast<unsigned char>(record_text[10]) |

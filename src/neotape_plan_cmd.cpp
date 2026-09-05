@@ -126,43 +126,44 @@ Options parse_args(int argc, char **argv) {
     optind = 1;
     while ((c = getopt_long(argc, argv, "C:o:s:m:j:xvh", long_opts, nullptr)) !=
            -1) {
-        switch (c) {
-        case 's':
-            opts.slice_size = neotape::parse_size(optarg, "slice size");
-            break;
-        case 'm':
-            opts.metadata_buffer_size =
-                neotape::parse_size(optarg, "metadata buffer size");
-            break;
-        case 'o':
-            opts.output_path = optarg;
-            break;
-        case 'C':
-            if (saw_chdir) {
-                fail("-C may be specified at most once");
+        try {
+            switch (c) {
+            case 's':
+                opts.slice_size = neotape::parse_size(optarg, "slice size");
+                break;
+            case 'm':
+                opts.metadata_buffer_size =
+                    neotape::parse_size(optarg, "metadata buffer size");
+                break;
+            case 'o':
+                opts.output_path = optarg;
+                break;
+            case 'C':
+                if (saw_chdir) {
+                    fail("-C may be specified at most once");
+                }
+                saw_chdir = true;
+                opts.chdir_dir = optarg;
+                break;
+            case 'x':
+                opts.one_file_system = true;
+                break;
+            case 'v':
+                opts.verbose = true;
+                break;
+            case 'j':
+                opts.io_threads = static_cast<unsigned>(
+                    neotape::parse_uint(optarg, "I/O threads", 0,
+                                        std::numeric_limits<unsigned>::max()));
+                break;
+            case 'h':
+                usage(argv[0]);
+                std::exit(0);
+            case '?':
+                std::exit(2);
             }
-            saw_chdir = true;
-            opts.chdir_dir = optarg;
-            break;
-        case 'x':
-            opts.one_file_system = true;
-            break;
-        case 'v':
-            opts.verbose = true;
-            break;
-        case 'j': {
-            char *end = nullptr;
-            unsigned long const n = std::strtoul(optarg, &end, 10);
-            if (end == optarg || *end != '\0') {
-                fail("--io-threads requires a number");
-            }
-            opts.io_threads = static_cast<unsigned>(n);
-            break;
-        }
-        case 'h':
-            usage(argv[0]);
-            std::exit(0);
-        case '?':
+        } catch (const std::exception &e) {
+            std::cerr << format("neotape-plan: {}\n", e.what());
             std::exit(2);
         }
     }

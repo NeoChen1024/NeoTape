@@ -1,3 +1,4 @@
+#include "neotape/common.hpp"
 #include "neotape/signature.hpp"
 
 extern "C" {
@@ -202,15 +203,6 @@ void verify_algorithms(const string &path, string_view expected,
     }
 }
 
-string key_id_hex_impl(std::span<const uint8_t> key_id) {
-    string hex;
-    hex.reserve(key_id.size() * 2);
-    for (uint8_t byte : key_id) {
-        hex += format("{:02x}", static_cast<unsigned>(byte));
-    }
-    return hex;
-}
-
 } // namespace
 
 string read_signify_passphrase_file(const string &path) {
@@ -337,7 +329,7 @@ KeyIdBytes signature_key_id(const SignatureBytes &signature) {
 }
 
 std::string key_id_hex(std::span<const uint8_t> key_id) {
-    return key_id_hex_impl(key_id);
+    return hex_encode(key_id);
 }
 
 SignatureBytes sign_frame_hash(const SignifySecretKey &key, const Hash &hash) {
@@ -420,8 +412,7 @@ validate_frame_signature(const FrameHeader &header,
             return {FrameSignatureStatus::invalid,
                     format("require-signed validation has no configured public "
                            "key for signed frame at global_seq={} (key_id={})",
-                           header.global_frame_seq_num,
-                           key_id_hex_impl(key_id))};
+                           header.global_frame_seq_num, hex_encode(key_id))};
         }
         return {FrameSignatureStatus::signed_unverified, std::nullopt};
     }
@@ -432,14 +423,14 @@ validate_frame_signature(const FrameHeader &header,
     if (it == keys.end()) {
         return {FrameSignatureStatus::invalid,
                 format("no public key for key_id={} at global_seq={}",
-                       key_id_hex_impl(key_id), header.global_frame_seq_num)};
+                       hex_encode(key_id), header.global_frame_seq_num)};
     }
     if (!verify_frame_hash_signature(header.signature, header.frame_hash,
                                      *it)) {
         return {FrameSignatureStatus::invalid,
                 format("signature verification failed for key_id={} at "
                        "global_seq={}",
-                       key_id_hex_impl(key_id), header.global_frame_seq_num)};
+                       hex_encode(key_id), header.global_frame_seq_num)};
     }
     return {FrameSignatureStatus::verified, std::nullopt};
 }

@@ -1256,11 +1256,8 @@ PaxWriteResult write_pax_archive(const Options &opts,
     }
     std::array<uint8_t, BLAKE3_OUT_LEN> hash{};
     blake3_hasher_finalize(&hasher, hash.data(), hash.size());
-    string hex;
-    for (uint8_t byte : hash)
-        hex += format("{:02x}", byte);
     return {stats.input_bytes.load(), stats.output_bytes.load(),
-            stats.walked_entries.load(), slice_count.load(), hex};
+            stats.walked_entries.load(), slice_count.load(), hex_encode(hash)};
 }
 
 } // namespace

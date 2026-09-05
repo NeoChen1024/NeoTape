@@ -27,31 +27,24 @@ using neotape::test::require_success;
 
 using neotape::test::write_pattern;
 
-std::vector<char> read_binary(const fs::path &path) {
-    std::ifstream input(path, std::ios::binary);
-    return {std::istreambuf_iterator<char>(input), {}};
-}
+using neotape::test::read_file;
 
-fs::path content_file(const fs::path &spool) {
-    for (const fs::directory_entry &entry : fs::directory_iterator(spool)) {
-        if (entry.path().filename().string().find(".slice-") !=
-            std::string::npos) {
-            return entry.path();
-        }
-    }
-    throw std::runtime_error("content spool file not found");
-}
+using neotape::test::content_file;
 
 void flip_payload_byte(const fs::path &path, std::size_t record_index) {
     std::fstream stream(path, std::ios::in | std::ios::out | std::ios::binary);
     std::streamoff const offset =
         static_cast<std::streamoff>(record_index * 4096 + 512);
+    REQUIRE(stream.is_open());
     stream.seekg(offset);
     char byte = 0;
     stream.read(&byte, 1);
+    REQUIRE(stream.good());
     byte ^= 1;
     stream.seekp(offset);
     stream.write(&byte, 1);
+    stream.flush();
+    REQUIRE(stream.good());
 }
 
 void create_raw_spool(const fs::path &input, const fs::path &socket,
@@ -122,14 +115,14 @@ TEST_CASE("FEC restores a corrupt protected content shard",
     fs::path const first_output = temporary.path() / "first.bin";
     require_success(
         extract(temporary.path() / "extract.sock", spool, first_output));
-    REQUIRE(read_binary(input) == read_binary(first_output));
+    REQUIRE(read_file(input) == read_file(first_output));
 
     flip_payload_byte(content_file(spool), 1);
     fs::path const repaired = temporary.path() / "repaired.bin";
     ProcessResult const recovery =
         extract(temporary.path() / "repair.sock", spool, repaired);
     require_success(recovery);
-    REQUIRE(read_binary(input) == read_binary(repaired));
+    REQUIRE(read_file(input) == read_file(repaired));
     REQUIRE(recovery.standard_error.find(
                 "FEC repaired 1 unavailable content shard(s)") !=
             std::string::npos);
@@ -139,7 +132,7 @@ TEST_CASE("FEC restores a corrupt protected content shard",
     ProcessResult const two_erasure_recovery =
         extract(temporary.path() / "repair-two.sock", spool, repaired_twice);
     require_success(two_erasure_recovery);
-    REQUIRE(read_binary(input) == read_binary(repaired_twice));
+    REQUIRE(read_file(input) == read_file(repaired_twice));
     REQUIRE(two_erasure_recovery.standard_error.find(
                 "FEC repair unavailable") != std::string::npos);
 
@@ -171,13 +164,13 @@ TEST_CASE("salvage skips a corrupt unprotected frame with warnings",
     ProcessResult const result =
         extract(temporary.path() / "extract.sock", spool, output, true);
     require_success(result);
-    std::vector<char> const original = read_binary(input);
-    std::vector<char> expected;
+    std::string const original = read_file(input);
+    std::string expected;
     expected.insert(expected.end(), original.begin(),
                     original.begin() + capacity);
     expected.insert(expected.end(), original.begin() + 2 * capacity,
                     original.end());
-    REQUIRE(expected == read_binary(output));
+    REQUIRE(expected == read_file(output));
     REQUIRE(result.standard_error.find(
                 "SALVAGE MODE: output is not fully verified") !=
             std::string::npos);

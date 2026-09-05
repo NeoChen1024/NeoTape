@@ -61,60 +61,50 @@ CliOptions parse_args(int argc, char **argv) {
     int c = 0;
     while ((c = getopt_long(argc, argv, "C:f:P:j:B:p:S:vxh", long_opts,
                             nullptr)) != -1) {
-        switch (c) {
-        case 'C':
-            opts.writer.chdir_dir = optarg;
-            break;
-        case 'f':
-            opts.output = optarg;
-            opts.writer.output_name = optarg;
-            break;
-        case 'P': {
-            char *end = nullptr;
-            unsigned long const n = std::strtoul(optarg, &end, 10);
-            if (end == optarg || *end != '\0' || n > 100) {
-                std::cerr << "mt-pax: -P requires a percent from 0 to 100\n";
-                std::exit(2);
-            }
-            opts.writer.buffer_percent = static_cast<unsigned>(n);
-            break;
-        }
-        case 'v':
-            opts.writer.verbose = std::min(opts.writer.verbose + 1, 2);
-            break;
-        case 'x':
-            opts.writer.one_file_system = true;
-            break;
-        case 'B':
-            try {
+        try {
+            switch (c) {
+            case 'C':
+                opts.writer.chdir_dir = optarg;
+                break;
+            case 'f':
+                opts.output = optarg;
+                opts.writer.output_name = optarg;
+                break;
+            case 'P':
+                opts.writer.buffer_percent = static_cast<unsigned>(
+                    neotape::parse_uint(optarg, "buffer percent", 0, 100));
+                break;
+            case 'v':
+                opts.writer.verbose = std::min(opts.writer.verbose + 1, 2);
+                break;
+            case 'x':
+                opts.writer.one_file_system = true;
+                break;
+            case 'B':
                 opts.writer.output_buf_size = static_cast<size_t>(
-                    neotape::parse_size(optarg, "output buffer size"));
-            } catch (const std::exception &e) {
-                std::cerr << format("mt-pax: {}\n", e.what());
+                    neotape::parse_size(optarg, "output buffer size",
+                                        std::numeric_limits<size_t>::max()));
+                break;
+            case 'j':
+                opts.writer.io_thread = static_cast<unsigned>(
+                    neotape::parse_uint(optarg, "I/O threads", 0,
+                                        std::numeric_limits<unsigned>::max()));
+                break;
+            case 'p':
+                opts.plan_path = fs::path(optarg);
+                opts.writer.plan_path = opts.plan_path;
+                break;
+            case 'S':
+                opts.slice_output_prefix = optarg;
+                break;
+            case 'h':
+                usage(argv[0]);
+                std::exit(0);
+            case '?':
                 std::exit(2);
             }
-            break;
-        case 'j': {
-            char *end = nullptr;
-            unsigned long const n = std::strtoul(optarg, &end, 10);
-            if (end == optarg || *end != '\0') {
-                std::cerr << "mt-pax: --io-thread requires a number\n";
-                std::exit(2);
-            }
-            opts.writer.io_thread = static_cast<unsigned>(n);
-            break;
-        }
-        case 'p':
-            opts.plan_path = fs::path(optarg);
-            opts.writer.plan_path = opts.plan_path;
-            break;
-        case 'S':
-            opts.slice_output_prefix = optarg;
-            break;
-        case 'h':
-            usage(argv[0]);
-            std::exit(0);
-        case '?':
+        } catch (const std::exception &e) {
+            std::cerr << format("mt-pax: {}\n", e.what());
             std::exit(2);
         }
     }

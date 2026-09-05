@@ -7,6 +7,9 @@ This appendix documents the current NeoTape tools and their CLI usage.
 Every long option has a short alias listed by each command's `-h` output.
 Byte-size arguments accept case-insensitive binary `K`, `M`, `G`, and `T`
 suffixes (for example `4M` or `16G`); an unsuffixed value is bytes.
+Numeric arguments use unsigned decimal digits without signs or whitespace.
+Byte sizes must be positive; each option checks its range before narrowing or
+allocating. Invalid numeric arguments exit with usage status 2.
 
 ## TCP archive pipeline
 

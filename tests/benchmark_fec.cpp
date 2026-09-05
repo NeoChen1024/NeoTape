@@ -59,17 +59,13 @@ Options parse_args(int argc, char **argv) {
            -1) {
         switch (option) {
         case 's':
-            options.shard_size = static_cast<std::size_t>(
-                neotape::parse_size(optarg, "shard size"));
+            options.shard_size = static_cast<std::size_t>(neotape::parse_size(
+                optarg, "shard size", std::numeric_limits<std::size_t>::max()));
             break;
         case 'n': {
-            char *end = nullptr;
-            unsigned long long const value = std::strtoull(optarg, &end, 10);
-            if (end == optarg || *end != '\0' || value == 0 ||
-                value > std::numeric_limits<std::size_t>::max()) {
-                fail("iterations must be a positive integer");
-            }
-            options.iterations = static_cast<std::size_t>(value);
+            options.iterations = static_cast<std::size_t>(
+                neotape::parse_uint(optarg, "iterations", 1,
+                                    std::numeric_limits<std::size_t>::max()));
             break;
         }
         case 'h':

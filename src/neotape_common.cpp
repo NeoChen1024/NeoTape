@@ -1,4 +1,5 @@
 #include "neotape/common.hpp"
+#include <charconv>
 
 #include <algorithm>
 #include <cctype>
@@ -90,7 +91,36 @@ bool locale_name_is_utf8(const char *name) {
            locale_name.find("utf8") != string::npos;
 }
 
-uint64_t parse_size(string_view text, string_view name) {
+string hex_encode(std::span<const uint8_t> bytes) {
+    constexpr char digits[] = "0123456789abcdef";
+    string result;
+    result.reserve(bytes.size() * 2);
+    for (uint8_t byte : bytes) {
+        result.push_back(digits[byte >> 4]);
+        result.push_back(digits[byte & 15]);
+    }
+    return result;
+}
+
+uint64_t parse_uint(string_view text, string_view name, uint64_t minimum,
+                    uint64_t maximum) {
+    uint64_t value = 0;
+    if (text.empty()) {
+        throw std::invalid_argument(format("{} is empty", name));
+    }
+    auto [end, error] =
+        std::from_chars(text.data(), text.data() + text.size(), value);
+    if (error != std::errc{} || end != text.data() + text.size()) {
+        throw std::invalid_argument(format("invalid {}: {}", name, text));
+    }
+    if (value < minimum || value > maximum) {
+        throw std::out_of_range(
+            format("{} must be from {} to {}", name, minimum, maximum));
+    }
+    return value;
+}
+
+uint64_t parse_size(string_view text, string_view name, uint64_t maximum) {
     if (text.empty()) {
         throw std::invalid_argument(format("{} is empty", name));
     }
@@ -120,21 +150,7 @@ uint64_t parse_size(string_view text, string_view name) {
         }
     }
 
-    string owned(text);
-    char *end = nullptr;
-    errno = 0;
-    unsigned long long const value = std::strtoull(owned.c_str(), &end, 10);
-    if (errno != 0 || end == nullptr || *end != '\0') {
-        throw std::invalid_argument(format("invalid {}: {}", name, text));
-    }
-    if (value == 0) {
-        throw std::invalid_argument(
-            format("{} must be greater than zero", name));
-    }
-    if (value > std::numeric_limits<uint64_t>::max() / multiplier) {
-        throw std::overflow_error(format("{} is too large", name));
-    }
-    return static_cast<uint64_t>(value) * multiplier;
+    return parse_uint(text, name, 1, maximum / multiplier) * multiplier;
 }
 
 string humanize_number(std::size_t number) {

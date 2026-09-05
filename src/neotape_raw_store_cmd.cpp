@@ -79,53 +79,54 @@ Options parse_args(int argc, char **argv) {
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "l:i:b:n:r:dk:K:Fh", long_opts,
-                            nullptr)) != -1) {
-        switch (c) {
-        case 'l':
-            opts.listen_address = optarg;
-            break;
-        case 'i':
-            opts.input_name = optarg;
-            break;
-        case 'b':
-            opts.volume_block_size = static_cast<uint32_t>(
-                neotape::parse_size(optarg, "volume block size"));
-            break;
-        case 'n':
-            opts.archive_name = optarg;
-            break;
-        case 'r': {
-            char *end = nullptr;
-            unsigned long const n = std::strtoul(optarg, &end, 10);
-            if (end == optarg || *end != '\0' || n == 0 || n > 1000000) {
-                std::cerr << "neotape-raw-store: --retention-frame-count "
-                             "requires a number from 1 to 1000000\n";
+    try {
+        while ((c = getopt_long(argc, argv, "l:i:b:n:r:dk:K:Fh", long_opts,
+                                nullptr)) != -1) {
+            switch (c) {
+            case 'l':
+                opts.listen_address = optarg;
+                break;
+            case 'i':
+                opts.input_name = optarg;
+                break;
+            case 'b':
+                opts.volume_block_size = static_cast<uint32_t>(
+                    neotape::parse_size(optarg, "volume block size",
+                                        std::numeric_limits<uint32_t>::max()));
+                break;
+            case 'n':
+                opts.archive_name = optarg;
+                break;
+            case 'r':
+                opts.retention_frame_count =
+                    static_cast<uint64_t>(neotape::parse_uint(
+                        optarg, "retention frame count", 1, 1000000));
+                break;
+            case 'd':
+                opts.debug = true;
+                break;
+            case 'k':
+                opts.sign_secret_key_file = optarg;
+                break;
+            case 'K':
+                opts.sign_passphrase_file = optarg;
+                break;
+            case 'F':
+                opts.fec_enabled = true;
+                break;
+            case 'h':
+                usage(argv[0]);
+                std::exit(0);
+            case '?':
                 std::exit(2);
+            default:
+                usage_error(format("unexpected option code {}", c));
             }
-            opts.retention_frame_count = static_cast<uint64_t>(n);
-            break;
         }
-        case 'd':
-            opts.debug = true;
-            break;
-        case 'k':
-            opts.sign_secret_key_file = optarg;
-            break;
-        case 'K':
-            opts.sign_passphrase_file = optarg;
-            break;
-        case 'F':
-            opts.fec_enabled = true;
-            break;
-        case 'h':
-            usage(argv[0]);
-            std::exit(0);
-        case '?':
-            std::exit(2);
-        default:
-            usage_error(format("unexpected option code {}", c));
-        }
+
+    } catch (const std::exception &e) {
+        std::cerr << format("neotape-raw-store: {}\n", e.what());
+        std::exit(2);
     }
 
     if (opts.listen_address.empty()) {

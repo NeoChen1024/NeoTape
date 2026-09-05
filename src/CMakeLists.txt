@@ -18,7 +18,7 @@ neotape_library(neotape_plan_codec neotape_plan.cpp)
 neotape_library(neotape_bounded_buffer neotape_bounded_buffer.cpp)
 
 neotape_library(neotape_format neotape_format.cpp)
-target_link_libraries(neotape_format PRIVATE NeoTape::Blake3)
+target_link_libraries(neotape_format PRIVATE NeoTape::Blake3 neotape_common)
 
 neotape_library(neotape_socket neotape_socket_util.cpp)
 target_link_libraries(neotape_socket PUBLIC neotape_protocol)
@@ -34,7 +34,7 @@ target_link_libraries(neotape_fec
 neotape_library(neotape_signature neotape_signature.cpp)
 target_link_libraries(neotape_signature
     PUBLIC neotape_format
-    PRIVATE NeoTape::Signify
+    PRIVATE NeoTape::Signify neotape_common
 )
 
 neotape_library(neotape_frame_builder neotape_frame_builder.cpp)

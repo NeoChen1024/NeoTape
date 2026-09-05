@@ -155,7 +155,8 @@ Options parse_args(int argc, char **argv) {
         case 'B': {
             try {
                 opts.output_buffer_size = static_cast<size_t>(
-                    neotape::parse_size(optarg, "output buffer size"));
+                    neotape::parse_size(optarg, "output buffer size",
+                                        std::numeric_limits<size_t>::max()));
             } catch (const std::exception &e) {
                 std::cerr << format("neotape-write: {}\n", e.what());
                 std::exit(2);

@@ -74,87 +74,70 @@ Options parse_args(int argc, char **argv) {
     int c = 0;
     while ((c = getopt_long(argc, argv, "l:b:n:C:P:j:B:p:r:dk:K:Fvxh",
                             long_opts, nullptr)) != -1) {
-        switch (c) {
-        case 'l':
-            opts.listen_address = optarg;
-            break;
-        case 'b':
-            opts.volume_block_size = static_cast<uint32_t>(
-                neotape::parse_size(optarg, "volume block size"));
-            break;
-        case 'n':
-            opts.archive_name = optarg;
-            break;
-        case 'C':
-            opts.pax.chdir_dir = optarg;
-            break;
-        case 'P': {
-            char *end = nullptr;
-            unsigned long const n = std::strtoul(optarg, &end, 10);
-            if (end == optarg || *end != '\0' || n > 100) {
-                std::cerr << "neotape-archiver: -P requires a percent from 0 "
-                             "to 100\n";
-                std::exit(2);
-            }
-            opts.pax.buffer_percent = static_cast<unsigned>(n);
-            break;
-        }
-        case 'v':
-            opts.pax.verbose = std::min(opts.pax.verbose + 1, 2);
-            break;
-        case 'x':
-            opts.pax.one_file_system = true;
-            break;
-        case 'B':
-            try {
+        try {
+            switch (c) {
+            case 'l':
+                opts.listen_address = optarg;
+                break;
+            case 'b':
+                opts.volume_block_size = static_cast<uint32_t>(
+                    neotape::parse_size(optarg, "volume block size",
+                                        std::numeric_limits<uint32_t>::max()));
+                break;
+            case 'n':
+                opts.archive_name = optarg;
+                break;
+            case 'C':
+                opts.pax.chdir_dir = optarg;
+                break;
+            case 'P':
+                opts.pax.buffer_percent = static_cast<unsigned>(
+                    neotape::parse_uint(optarg, "buffer percent", 0, 100));
+                break;
+            case 'v':
+                opts.pax.verbose = std::min(opts.pax.verbose + 1, 2);
+                break;
+            case 'x':
+                opts.pax.one_file_system = true;
+                break;
+            case 'B':
                 opts.pax.output_buf_size = static_cast<size_t>(
-                    neotape::parse_size(optarg, "output buffer size"));
-            } catch (const std::exception &e) {
-                std::cerr << format("neotape-archiver: {}\n", e.what());
+                    neotape::parse_size(optarg, "output buffer size",
+                                        std::numeric_limits<size_t>::max()));
+                break;
+            case 'j':
+                opts.pax.io_thread = static_cast<unsigned>(
+                    neotape::parse_uint(optarg, "I/O threads", 0,
+                                        std::numeric_limits<unsigned>::max()));
+                break;
+            case 'p':
+                opts.pax.plan_path = optarg;
+                break;
+            case 'r':
+                opts.retention_frame_count =
+                    static_cast<uint64_t>(neotape::parse_uint(
+                        optarg, "retention frame count", 1, 1000000));
+                break;
+            case 'd':
+                opts.debug = true;
+                break;
+            case 'k':
+                opts.sign_secret_key_file = optarg;
+                break;
+            case 'K':
+                opts.sign_passphrase_file = optarg;
+                break;
+            case 'F':
+                opts.fec_enabled = true;
+                break;
+            case 'h':
+                usage(argv[0]);
+                std::exit(0);
+            case '?':
                 std::exit(2);
             }
-            break;
-        case 'j': {
-            char *end = nullptr;
-            unsigned long const n = std::strtoul(optarg, &end, 10);
-            if (end == optarg || *end != '\0') {
-                std::cerr
-                    << "neotape-archiver: --io-thread requires a number\n";
-                std::exit(2);
-            }
-            opts.pax.io_thread = static_cast<unsigned>(n);
-            break;
-        }
-        case 'p':
-            opts.pax.plan_path = optarg;
-            break;
-        case 'r': {
-            char *end = nullptr;
-            unsigned long const n = std::strtoul(optarg, &end, 10);
-            if (end == optarg || *end != '\0' || n == 0 || n > 1000000) {
-                std::cerr << "neotape-archiver: --retention-frame-count "
-                             "requires a number from 1 to 1000000\n";
-                std::exit(2);
-            }
-            opts.retention_frame_count = static_cast<uint64_t>(n);
-            break;
-        }
-        case 'd':
-            opts.debug = true;
-            break;
-        case 'k':
-            opts.sign_secret_key_file = optarg;
-            break;
-        case 'K':
-            opts.sign_passphrase_file = optarg;
-            break;
-        case 'F':
-            opts.fec_enabled = true;
-            break;
-        case 'h':
-            usage(argv[0]);
-            std::exit(0);
-        case '?':
+        } catch (const std::exception &e) {
+            std::cerr << format("neotape-archiver: {}\n", e.what());
             std::exit(2);
         }
     }

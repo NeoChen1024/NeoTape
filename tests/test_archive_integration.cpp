@@ -42,25 +42,11 @@ std::vector<fs::path> spool_files(const fs::path &directory) {
     return files;
 }
 
-std::vector<std::byte> read_binary(const fs::path &path) {
-    std::ifstream input(path, std::ios::binary);
-    std::vector<char> characters{std::istreambuf_iterator<char>(input), {}};
-    std::vector<std::byte> bytes;
-    bytes.reserve(characters.size());
-    std::ranges::transform(
-        characters, std::back_inserter(bytes), [](char value) {
-            return static_cast<std::byte>(static_cast<unsigned char>(value));
-        });
-    return bytes;
-}
+using neotape::test::read_bytes;
 
 using neotape::test::write_pattern;
 
-void require_contains(const ProcessResult &result, std::string_view text) {
-    std::string const output = result.standard_output + result.standard_error;
-    INFO("output:\n" << output);
-    REQUIRE(output.find(text) != std::string::npos);
-}
+using neotape::test::require_contains;
 
 } // namespace
 
@@ -93,8 +79,8 @@ TEST_CASE("archiver and writer create a valid spool",
 
     std::vector<fs::path> const files = spool_files(spool);
     REQUIRE(files.size() == 2);
-    std::vector<std::byte> const content = read_binary(files.front());
-    std::vector<std::byte> const archive_end = read_binary(files.back());
+    std::vector<std::byte> const content = read_bytes(files.front());
+    std::vector<std::byte> const archive_end = read_bytes(files.back());
     REQUIRE(content.size() >= 4096);
     REQUIRE(archive_end.size() == 4096);
     REQUIRE(std::to_integer<unsigned char>(content[9]) == 1);
@@ -225,12 +211,12 @@ TEST_CASE("raw spool passes inspect and scan reporting",
         30s);
     require_success(writer);
     require_success(raw_store.wait(30s));
-    REQUIRE(read_binary(bundle) == read_binary(spool / "recovery-bundle.tar"));
+    REQUIRE(read_bytes(bundle) == read_bytes(spool / "recovery-bundle.tar"));
 
     std::vector<fs::path> const files = spool_files(spool);
     REQUIRE(files.size() == 2);
-    REQUIRE(read_binary(files.front()).size() == 4 * block_size);
-    REQUIRE(read_binary(files.back()).size() == block_size);
+    REQUIRE(read_bytes(files.front()).size() == 4 * block_size);
+    REQUIRE(read_bytes(files.back()).size() == block_size);
 
     ProcessResult const inspect =
         Process::run(ProcessOptions{{NEOTAPE_INSPECT, "--source",
@@ -245,7 +231,7 @@ TEST_CASE("raw spool passes inspect and scan reporting",
         ProcessOptions{{NEOTAPE_SCAN, "--source", "spool:" + spool.string()}},
         30s);
     require_success(scan);
-    auto first_record = read_binary(files.front());
+    auto first_record = read_bytes(files.front());
     auto header = neotape::parse_fixed_header(
         reinterpret_cast<const uint8_t *>(first_record.data()),
         first_record.size());

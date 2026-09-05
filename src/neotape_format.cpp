@@ -1,3 +1,4 @@
+#include "neotape/common.hpp"
 #include "neotape/format.hpp"
 
 #include <blake3.h>
@@ -229,13 +230,7 @@ std::string channel_type_name(ChannelType type) {
     return "unknown";
 }
 
-std::string hash_hex(const Hash &hash) {
-    std::string hex;
-    for (uint8_t byte : hash) {
-        hex += std::format("{:02x}", static_cast<unsigned>(byte));
-    }
-    return hex;
-}
+std::string hash_hex(const Hash &hash) { return hex_encode(hash); }
 
 Hash blake3_hash(const uint8_t *data, std::size_t size) {
     Hash hash{};
