@@ -1,4 +1,5 @@
 #include "neotape/format.hpp"
+#include "neotape/media.hpp"
 #include "neotape/tape.hpp"
 
 #include <cerrno>
@@ -96,13 +97,6 @@ Options parse_args(int argc, char **argv) {
     return opts;
 }
 
-void clear_nonblocking(int fd) {
-    int const flags = ::fcntl(fd, F_GETFL, 0);
-    if (flags < 0 || ::fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) < 0) {
-        throw std::runtime_error(format("fcntl: {}", std::strerror(errno)));
-    }
-}
-
 fs::path dump_path(const fs::path &target, uint64_t file_num) {
     // The dump intentionally does not parse records to invent a semantic
     // slice/archive-end suffix. Spool readers order files by the numeric
@@ -130,11 +124,7 @@ int do_dump(const Options &opts) {
             format("target directory is not empty: {}", opts.target.string()));
     }
 
-    mt::TapeDevice tape(opts.source, false);
-    clear_nonblocking(tape.fd());
-    tape.rewind();
-
-    std::vector<std::byte> buffer(neotape::max_block_size);
+    neotape::RecordReader reader({neotape::MediaLocator::tape, opts.source});
     uint64_t file_num = 0;
     uint64_t tape_files = 0;
     uint64_t records = 0;
@@ -146,23 +136,17 @@ int do_dump(const Options &opts) {
     }
 
     for (;;) {
-        ssize_t const count = ::read(tape.fd(), buffer.data(), buffer.size());
-        if (count > 0) {
-            write_record(output, buffer.data(), static_cast<std::size_t>(count),
+        auto record = reader.next();
+        if (record.event == neotape::RecordEvent::record) {
+            write_record(output, record.record.data(), record.record.size(),
                          current_path);
             ++records;
-            bytes += static_cast<uint64_t>(count);
+            bytes += record.record.size();
             continue;
         }
 
-        bool const at_filemark = count == 0 || (count < 0 && errno == EIO);
-        if (!at_filemark) {
-            throw std::runtime_error(
-                format("read {}: {}", opts.source, std::strerror(errno)));
-        }
-
         output.close();
-        if (tape.status().eod()) {
+        if (record.event == neotape::RecordEvent::end) {
             if (fs::file_size(current_path) == 0) {
                 fs::remove(current_path);
             } else {

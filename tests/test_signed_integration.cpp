@@ -1,3 +1,4 @@
+#include "support/checks.hpp"
 #include "support/process.hpp"
 #include "support/temp_directory.hpp"
 
@@ -30,12 +31,7 @@ using neotape::test::ProcessResult;
 using neotape::test::TemporaryDirectory;
 using neotape::test::wait_for_unix_socket;
 
-void require_success(const ProcessResult &result) {
-    INFO("stdout:\n" << result.standard_output);
-    INFO("stderr:\n" << result.standard_error);
-    REQUIRE_FALSE(result.timed_out);
-    REQUIRE(result.exit_code == 0);
-}
+using neotape::test::require_success;
 
 std::string output(const ProcessResult &result) {
     return result.standard_output + result.standard_error;
@@ -46,10 +42,7 @@ void require_contains(const ProcessResult &result, std::string_view text) {
     REQUIRE(output(result).find(text) != std::string::npos);
 }
 
-std::string read_file(const fs::path &path) {
-    std::ifstream input(path, std::ios::binary);
-    return {std::istreambuf_iterator<char>(input), {}};
-}
+using neotape::test::read_file;
 
 fs::path first_content_file(const fs::path &spool) {
     for (const fs::directory_entry &entry : fs::directory_iterator(spool)) {
@@ -64,9 +57,8 @@ fs::path first_content_file(const fs::path &spool) {
 bool transfer_exact(int fd, void *buffer, std::size_t size, bool send_data) {
     auto *bytes = static_cast<char *>(buffer);
     while (size > 0) {
-        ssize_t const count = send_data
-                                  ? ::send(fd, bytes, size, MSG_NOSIGNAL)
-                                  : ::recv(fd, bytes, size, 0);
+        ssize_t const count = send_data ? ::send(fd, bytes, size, MSG_NOSIGNAL)
+                                        : ::recv(fd, bytes, size, 0);
         if (count <= 0) {
             return false;
         }
@@ -76,8 +68,7 @@ bool transfer_exact(int fd, void *buffer, std::size_t size, bool send_data) {
     return true;
 }
 
-int serve_corrupt_record(const fs::path &socket_path,
-                         std::vector<char> record,
+int serve_corrupt_record(const fs::path &socket_path, std::vector<char> record,
                          std::promise<void> ready) {
     int server = ::socket(AF_UNIX, SOCK_STREAM, 0);
     if (server < 0) {
@@ -90,8 +81,8 @@ int serve_corrupt_record(const fs::path &socket_path,
         return 2;
     }
     std::strcpy(address.sun_path, socket_path.c_str());
-    if (::bind(server, reinterpret_cast<sockaddr *>(&address), sizeof(address)) !=
-            0 ||
+    if (::bind(server, reinterpret_cast<sockaddr *>(&address),
+               sizeof(address)) != 0 ||
         ::listen(server, 1) != 0) {
         ::close(server);
         return 3;
@@ -147,9 +138,9 @@ TEST_CASE("signed archive is authenticated and restored",
     require_success(archiver.wait(30s));
 
     ProcessResult const trusted_inspect = Process::run(
-        ProcessOptions{{NEOTAPE_INSPECT, "--source",
-                        "spool:" + spool.string(), "--verify-pubkey",
-                        public_key.string(), "--require-signed"}},
+        ProcessOptions{{NEOTAPE_INSPECT, "--source", "spool:" + spool.string(),
+                        "--verify-pubkey", public_key.string(),
+                        "--require-signed"}},
         30s);
     require_success(trusted_inspect);
     require_contains(trusted_inspect, "Compliance: PASS");
@@ -157,10 +148,10 @@ TEST_CASE("signed archive is authenticated and restored",
     REQUIRE(output(trusted_inspect).find("Signatures valid: 0") ==
             std::string::npos);
 
-    ProcessResult const unverified_inspect = Process::run(
-        ProcessOptions{{NEOTAPE_INSPECT, "--source",
-                        "spool:" + spool.string()}},
-        30s);
+    ProcessResult const unverified_inspect =
+        Process::run(ProcessOptions{{NEOTAPE_INSPECT, "--source",
+                                     "spool:" + spool.string()}},
+                     30s);
     require_success(unverified_inspect);
     require_contains(unverified_inspect, "Compliance: PASS");
     require_contains(unverified_inspect, "Signatures valid: 0");
@@ -168,17 +159,18 @@ TEST_CASE("signed archive is authenticated and restored",
             std::string::npos);
 
     ProcessResult const inspect_without_key = Process::run(
-        ProcessOptions{{NEOTAPE_INSPECT, "--source",
-                        "spool:" + spool.string(), "--require-signed"}},
+        ProcessOptions{{NEOTAPE_INSPECT, "--source", "spool:" + spool.string(),
+                        "--require-signed"}},
         10s);
     REQUIRE(inspect_without_key.exit_code == 2);
     require_contains(inspect_without_key,
                      "--require-signed requires at least one --verify-pubkey");
 
     ProcessResult const extractor_without_key = Process::run(
-        ProcessOptions{{NEOTAPE_EXTRACTOR, "--listen",
-                        "unix://" + (temporary.path() / "invalid.sock").string(),
-                        "--require-signed"}},
+        ProcessOptions{
+            {NEOTAPE_EXTRACTOR, "--listen",
+             "unix://" + (temporary.path() / "invalid.sock").string(),
+             "--require-signed"}},
         10s);
     REQUIRE(extractor_without_key.exit_code == 2);
     require_contains(extractor_without_key,
@@ -215,27 +207,27 @@ TEST_CASE("signed archive is authenticated and restored",
     REQUIRE(record_text.size() >= 512);
     std::size_t const record_size =
         (static_cast<unsigned char>(record_text[10]) |
-         (static_cast<std::size_t>(
-              static_cast<unsigned char>(record_text[11]))
+         (static_cast<std::size_t>(static_cast<unsigned char>(record_text[11]))
           << 8)) *
         1024;
     REQUIRE(record_text.size() >= record_size);
-    std::vector<char> corrupt_record(record_text.begin(),
-                                     record_text.begin() +
-                                         static_cast<std::ptrdiff_t>(record_size));
+    std::vector<char> corrupt_record(
+        record_text.begin(),
+        record_text.begin() + static_cast<std::ptrdiff_t>(record_size));
     corrupt_record[512] ^= 1;
     fs::path const corrupt_socket = temporary.path() / "corrupt.sock";
     std::promise<void> ready;
     std::future<void> ready_future = ready.get_future();
-    std::future<int> server_result = std::async(
-        std::launch::async, serve_corrupt_record, corrupt_socket,
-        std::move(corrupt_record), std::move(ready));
+    std::future<int> server_result =
+        std::async(std::launch::async, serve_corrupt_record, corrupt_socket,
+                   std::move(corrupt_record), std::move(ready));
     REQUIRE(ready_future.wait_for(5s) == std::future_status::ready);
     ProcessResult const corrupt_writer = Process::run(
-        ProcessOptions{{NEOTAPE_WRITE, "--source",
-                        "unix://" + corrupt_socket.string(), "--target",
-                        "spool:" + (temporary.path() / "corrupt-spool").string(),
-                        "--erase"}},
+        ProcessOptions{
+            {NEOTAPE_WRITE, "--source", "unix://" + corrupt_socket.string(),
+             "--target",
+             "spool:" + (temporary.path() / "corrupt-spool").string(),
+             "--erase"}},
         30s);
     REQUIRE_FALSE(corrupt_writer.timed_out);
     REQUIRE(corrupt_writer.exit_code != 0);

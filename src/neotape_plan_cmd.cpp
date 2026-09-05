@@ -1,5 +1,6 @@
 #include "neotape/closable_queue.hpp"
 #include "neotape/common.hpp"
+#include "neotape/plan.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -503,12 +504,12 @@ void emit_slice(const SlicePlan &slice, const Options &opts, uint64_t slice_num,
                 vector<uint64_t> &slice_sizes) {
     for (size_t i = 0; i < slice.entries.size(); ++i) {
         const EntryMeta &e = slice.entries[i];
-        string line = format("/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}", slice_num, i,
-                             e.kind, e.apparent_bytes, e.mtime, e.uid, e.uname,
-                             e.gid, e.gname, e.archive_path);
-        fwrite(line.data(), 1, line.size(), opts.meta_out);
-        fputc('\0', opts.meta_out);
-        fputc('\n', opts.meta_out);
+        neotape::write_plan_record(
+            opts.meta_out,
+            {{},
+             neotape::PlannedEntry{slice_num, i, e.kind, e.apparent_bytes,
+                                   e.mtime, e.uid, e.uname, e.gid, e.gname,
+                                   e.archive_path}});
     }
     std::cerr << format("neotape-plan: slice: id={} entries={} size={}\n",
                         slice_num, slice.entries.size(),
@@ -766,10 +767,7 @@ void run_plan(Options &opts) {
         if (chdir(opts.chdir_dir.c_str()) != 0) {
             fail(format("chdir {}: {}", opts.chdir_dir, std::strerror(errno)));
         }
-        string line = format("/chdir/{}", opts.chdir_dir);
-        fwrite(line.data(), 1, line.size(), opts.meta_out);
-        fputc('\0', opts.meta_out);
-        fputc('\n', opts.meta_out);
+        neotape::write_plan_record(opts.meta_out, {opts.chdir_dir, {}});
     }
 
     vector<neotape::SourceSpec> sources;

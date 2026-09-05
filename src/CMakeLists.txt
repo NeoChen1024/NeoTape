@@ -10,13 +10,18 @@ function(neotape_executable target output source)
     target_link_libraries(${target} PRIVATE neotape_build_options ${ARGN})
 endfunction()
 
-neotape_library(neotape_common neotape_common.cpp)
+neotape_library(neotape_common neotape_common.cpp neotape_progress.cpp)
+target_link_libraries(neotape_common PUBLIC Threads::Threads)
+
+neotape_library(neotape_plan_codec neotape_plan.cpp)
+
 neotape_library(neotape_bounded_buffer neotape_bounded_buffer.cpp)
 
 neotape_library(neotape_format neotape_format.cpp)
 target_link_libraries(neotape_format PRIVATE NeoTape::Blake3)
 
 neotape_library(neotape_socket neotape_socket_util.cpp)
+target_link_libraries(neotape_socket PUBLIC neotape_protocol)
 
 neotape_library(neotape_protocol neotape_tcp_protocol.cpp)
 
@@ -45,14 +50,25 @@ target_link_libraries(neotape_validation PUBLIC
     neotape_format
 )
 
-neotape_library(neotape_tape neotape_tape.cpp)
+neotape_library(neotape_tape neotape_tape.cpp neotape_media.cpp)
 target_link_libraries(neotape_tape PUBLIC
     neotape_common
     neotape_format
 )
 
+neotape_library(neotape_writer neotape_writer.cpp)
+target_link_libraries(neotape_writer PUBLIC
+    neotape_common
+    neotape_tape
+    neotape_validation
+    neotape_signature
+    neotape_socket
+    neotape_protocol
+)
+
 neotape_library(neotape_pax neotape_pax_writer.cpp)
 target_link_libraries(neotape_pax PUBLIC
+    neotape_plan_codec
     neotape_bounded_buffer
     neotape_common
     NeoTape::Blake3
@@ -97,6 +113,7 @@ neotape_executable(mt_pax mt-pax mt-pax.cpp
     neotape_pax
 )
 neotape_executable(neotape_plan neotape-plan neotape_plan_cmd.cpp
+    neotape_plan_codec
     neotape_common
     neotape_format
 )
@@ -107,6 +124,7 @@ neotape_executable(neotape_raw_store neotape-raw-store neotape_raw_store_cmd.cpp
     neotape_volume_server
 )
 neotape_executable(neotape_write neotape-write neotape_write_cmd.cpp
+    neotape_writer
     neotape_common
     neotape_fec
     neotape_format

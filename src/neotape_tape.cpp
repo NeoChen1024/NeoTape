@@ -1,5 +1,6 @@
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
+#include "neotape/media.hpp"
 #include "neotape/tape.hpp"
 #include "neotape/tape_ioctl.hpp"
 
@@ -50,51 +51,8 @@ const char *density_name_for_code(int code) noexcept {
     return it->second.c_str();
 }
 
-bool parse_spool_file_name(const fs::path &path, uint64_t &file_num) {
-    string name = path.filename().string();
-    if (name.size() <= spool_prefix.size() + spool_ext.size() ||
-        !name.starts_with(spool_prefix) ||
-        name.substr(name.size() - spool_ext.size()) != spool_ext) {
-        return false;
-    }
-
-    size_t const number_begin = spool_prefix.size();
-    size_t const number_end = name.find('.', number_begin);
-    if (number_end == string::npos || number_end == number_begin) {
-        return false;
-    }
-    string_view middle(name.c_str() + number_begin, number_end - number_begin);
-    char *end = nullptr;
-    file_num = std::strtoull(middle.data(), &end, 10);
-    return end != nullptr && end == middle.data() + middle.size();
-}
-
-std::vector<fs::path> scan_spool_files(const fs::path &root) {
-    std::vector<fs::path> files;
-    if (!fs::exists(root)) {
-        return files;
-    }
-
-    for (const auto &entry : fs::directory_iterator(root)) {
-        if (!entry.is_regular_file()) {
-            continue;
-        }
-        uint64_t file_num = 0;
-        if (!parse_spool_file_name(entry.path(), file_num)) {
-            continue;
-        }
-        files.push_back(entry.path());
-    }
-
-    std::ranges::sort(files, [](const fs::path &a, const fs::path &b) {
-        uint64_t an = 0;
-        uint64_t bn = 0;
-        parse_spool_file_name(a, an);
-        parse_spool_file_name(b, bn);
-        return an < bn;
-    });
-    return files;
-}
+using neotape::parse_spool_file_name;
+using neotape::scan_spool_files;
 
 std::string spool_suffix_for_header(const neotape::FrameHeader &header) {
     switch (header.channel_type) {

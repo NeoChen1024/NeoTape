@@ -1,4 +1,5 @@
 #include "neotape/format.hpp"
+#include "neotape/media.hpp"
 #include "neotape/tape.hpp"
 
 #include <algorithm>
@@ -28,20 +29,8 @@ using std::vector;
 
 namespace fs = std::filesystem;
 
-struct SourceLocator {
-    enum Kind { none, tape, spool } kind = none;
-    std::string path;
-};
-
-SourceLocator parse_source(const std::string &s) {
-    if (s.starts_with("tape:")) {
-        return {SourceLocator::tape, s.substr(5)};
-    }
-    if (s.starts_with("spool:")) {
-        return {SourceLocator::spool, s.substr(6)};
-    }
-    throw std::runtime_error("source must be tape:<device> or spool:<dir>");
-}
+using SourceLocator = neotape::MediaLocator;
+using neotape::parse_media;
 
 string source_display(const SourceLocator &source) {
     switch (source.kind) {
@@ -49,6 +38,7 @@ string source_display(const SourceLocator &source) {
         return format("tape:{}", source.path);
     case SourceLocator::spool:
         return format("spool:{}", source.path);
+    case SourceLocator::null_sink:
     case SourceLocator::none:
         break;
     }
@@ -99,7 +89,7 @@ Options parse_args(int argc, char **argv) {
     while ((c = getopt_long(argc, argv, "s:vh", long_opts, nullptr)) != -1) {
         switch (c) {
         case 's':
-            opts.source = parse_source(optarg);
+            opts.source = parse_media(optarg);
             break;
         case 'v':
             opts.verbose = true;
@@ -123,57 +113,6 @@ Options parse_args(int argc, char **argv) {
     return opts;
 }
 
-bool parse_spool_file_name(const fs::path &path, uint64_t &tapefile_num) {
-    constexpr string_view prefix = "neotape-";
-    constexpr string_view ext = ".nts";
-
-    string const name = path.filename().string();
-    if (!name.starts_with(prefix) || !name.ends_with(ext) ||
-        name.size() <= prefix.size() + ext.size()) {
-        return false;
-    }
-
-    size_t const number_end = name.find('.', prefix.size());
-    if (number_end == string::npos || number_end == prefix.size()) {
-        return false;
-    }
-
-    string_view digits(name.c_str() + prefix.size(),
-                       number_end - prefix.size());
-    char *end = nullptr;
-    tapefile_num = std::strtoull(digits.data(), &end, 10);
-    return end != nullptr && end == digits.data() + digits.size();
-}
-
-struct SpoolFile {
-    fs::path path;
-    uint64_t tapefile_num = 0;
-};
-
-vector<SpoolFile> list_spool_files(const fs::path &root) {
-    if (!fs::exists(root)) {
-        throw std::runtime_error(
-            format("spool directory does not exist: {}", root.string()));
-    }
-
-    vector<SpoolFile> files;
-    for (const auto &entry : fs::directory_iterator(root)) {
-        if (!entry.is_regular_file()) {
-            continue;
-        }
-        uint64_t tapefile_num = 0;
-        if (!parse_spool_file_name(entry.path(), tapefile_num)) {
-            continue;
-        }
-        files.push_back({entry.path(), tapefile_num});
-    }
-
-    std::ranges::sort(files, [](const SpoolFile &a, const SpoolFile &b) {
-        return a.tapefile_num < b.tapefile_num;
-    });
-    return files;
-}
-
 FrameHeader read_first_spool_frame(const fs::path &path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
@@ -183,8 +122,8 @@ FrameHeader read_first_spool_frame(const fs::path &path) {
     std::array<uint8_t, neotape::fixed_header_size> bytes{};
     if (!in.read(reinterpret_cast<char *>(bytes.data()),
                  static_cast<std::streamsize>(bytes.size()))) {
-        throw std::runtime_error(format("short header read from {}",
-                                        path.filename().string()));
+        throw std::runtime_error(
+            format("short header read from {}", path.filename().string()));
     }
 
     return neotape::parse_fixed_header(bytes.data(), bytes.size());
@@ -206,74 +145,39 @@ void record_first_frame(vector<string> &issues, uint64_t tapefile_num,
 template <typename Handler>
 vector<string> scan_spool_source(const fs::path &root, Handler &&handle) {
     vector<string> issues;
-    for (const SpoolFile &file : list_spool_files(root)) {
+    if (!fs::exists(root))
+        throw std::runtime_error("spool directory does not exist: " +
+                                 root.string());
+    for (const auto &file : neotape::scan_spool_files(root)) {
+        uint64_t file_num = 0;
+        neotape::parse_spool_file_name(file, file_num);
         try {
-            FrameHeader const header = read_first_spool_frame(file.path);
-            handle(FirstFrame{file.tapefile_num, header});
+            FrameHeader const header = read_first_spool_frame(file);
+            handle(FirstFrame{file_num, header});
         } catch (const std::exception &e) {
-            issues.push_back(
-                format("tapefile #{} ({}): {}", file.tapefile_num,
-                       file.path.filename().string(), e.what()));
+            issues.push_back(format("tapefile #{} ({}): {}", file_num,
+                                    file.filename().string(), e.what()));
         }
     }
     return issues;
 }
 
-void clear_nonblocking(int fd) {
-    int const flags = ::fcntl(fd, F_GETFL, 0);
-    if (flags >= 0) {
-        ::fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
-    }
-}
-
 template <typename Handler>
 vector<string> scan_tape_source(const string &path, Handler &&handle) {
     vector<string> issues;
-    mt::TapeDevice dev(path, false);
-    clear_nonblocking(dev.fd());
-    dev.rewind();
-
-    vector<std::byte> buffer(neotape::max_block_size);
-    uint64_t tapefile_num = 0;
-
+    neotape::RecordReader reader({SourceLocator::tape, path});
     for (;;) {
-        ssize_t const n = ::read(dev.fd(), buffer.data(), buffer.size());
-        if (n < 0) {
-            if (errno == EIO) {
-                ++tapefile_num;
-                continue;
-            }
-            throw std::runtime_error(
-                format("read {}: {}", dev.device_path(), std::strerror(errno)));
-        }
-
-        if (n == 0) {
-            if (dev.status().eod()) {
-                break;
-            }
-            ++tapefile_num;
+        auto record = reader.next();
+        if (record.event == neotape::RecordEvent::end)
+            break;
+        if (record.event == neotape::RecordEvent::filemark)
             continue;
-        }
-
-        record_first_frame(issues, tapefile_num,
-                           reinterpret_cast<const uint8_t *>(buffer.data()),
-                           static_cast<std::size_t>(n), dev.device_path(),
-                           handle);
-
-        try {
-            // MTFSF lands on the first record of the next tape file. MTFSFM
-            // lands before the filemark and would make the following read
-            // count that same boundary a second time.
-            dev.space_fwd(1);
-            ++tapefile_num;
-        } catch (const mt::Error &) {
-            if (dev.status().eod()) {
-                break;
-            }
-            throw;
-        }
+        record_first_frame(
+            issues, record.file_num,
+            reinterpret_cast<const uint8_t *>(record.record.data()),
+            record.record.size(), record.source_name, handle);
+        reader.skip_file();
     }
-
     return issues;
 }
 
@@ -290,11 +194,10 @@ ArchiveEntry *find_archive(vector<ArchiveEntry> &archives,
 }
 
 void print_new_archive(const FirstFrame &frame) {
-    std::cout << format(
-        "Archive first seen at tapefile #{}: archive_uuid={} "
-        "archive_label=\"{}\"\n",
-        frame.tapefile_num, frame.header.archive_uuid,
-        frame.header.archive_label);
+    std::cout << format("Archive first seen at tapefile #{}: archive_uuid={} "
+                        "archive_label=\"{}\"\n",
+                        frame.tapefile_num, frame.header.archive_uuid,
+                        frame.header.archive_label);
 }
 
 void print_verbose_first_frame(const FirstFrame &frame, bool is_new_archive) {
@@ -302,7 +205,8 @@ void print_verbose_first_frame(const FirstFrame &frame, bool is_new_archive) {
         "Tapefile #{}: channel={} global_frame_seq_num={} "
         "slice_seq_num={} channel_frame_seq_num={} archive_uuid={} "
         "archive_label=\"{}\" new_archive={}\n",
-        frame.tapefile_num, neotape::channel_type_name(frame.header.channel_type),
+        frame.tapefile_num,
+        neotape::channel_type_name(frame.header.channel_type),
         frame.header.global_frame_seq_num, frame.header.slice_seq_num,
         frame.header.channel_frame_seq_num, frame.header.archive_uuid,
         frame.header.archive_label, is_new_archive ? "yes" : "no");
@@ -314,7 +218,8 @@ int do_scan(const Options &opts) {
 
     auto handle_first_frame = [&](const FirstFrame &frame) {
         ++tapefiles_scanned;
-        bool const is_new_archive = find_archive(archives, frame.header) == nullptr;
+        bool const is_new_archive =
+            find_archive(archives, frame.header) == nullptr;
         if (is_new_archive) {
             archives.push_back({frame.header.archive_uuid,
                                 frame.header.archive_label,
@@ -334,7 +239,8 @@ int do_scan(const Options &opts) {
 
     std::cout << format("Source: {}\n", source_display(opts.source));
     if (opts.source.kind == SourceLocator::spool) {
-        issues = scan_spool_source(fs::path(opts.source.path), handle_first_frame);
+        issues =
+            scan_spool_source(fs::path(opts.source.path), handle_first_frame);
     } else {
         issues = scan_tape_source(opts.source.path, handle_first_frame);
     }

@@ -39,6 +39,9 @@ if(BUILD_TESTING)
         Threads::Threads
     )
 
+    neotape_unit_test(test_stream_io test_stream_io.cpp
+        neotape_tape neotape_plan_codec neotape_test_support)
+
     function(neotape_integration_test target source)
         add_executable(${target} "${source}")
         target_link_libraries(${target} PRIVATE
@@ -80,11 +83,14 @@ if(BUILD_TESTING)
 
     neotape_integration_test(test_cli_integration test_cli_integration.cpp)
     neotape_integration_test(test_archive_integration test_archive_integration.cpp)
+    target_link_libraries(test_archive_integration PRIVATE
+        neotape_socket neotape_protocol neotape_format)
     target_compile_definitions(test_archive_integration PRIVATE
         NEOTAPE_BSDTAR="${NEOTAPE_BSDTAR_EXECUTABLE}"
     )
 
     neotape_integration_test(test_mt_pax_integration test_mt_pax_integration.cpp)
+    target_link_libraries(test_mt_pax_integration PRIVATE neotape_pax)
     target_compile_definitions(test_mt_pax_integration PRIVATE
         NEOTAPE_BSDTAR="${NEOTAPE_BSDTAR_EXECUTABLE}"
         NEOTAPE_DD="${NEOTAPE_DD_EXECUTABLE}"

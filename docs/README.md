@@ -33,6 +33,7 @@ docs/
     12-future-extensions.md         Reserved extension space and ideas
 
   implementation/                   Implementation-specific notes
+    2026-09-refactor.md             CLI/streaming refactor plan and progress
     cli-tooling.md                  CLI reference and workflow examples
     fec-restore-behavior.md         FEC producer, normal restore, and salvage policy
     lto-behavior-notes.md           Empirical LTO EOT/EOM observations

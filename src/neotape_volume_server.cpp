@@ -164,7 +164,8 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
             if (archive_end_seq.has_value() &&
                 req->type != MessageType::ack_frame) {
                 send_error(client, "unexpected request after archive end");
-                return VolumeServeResult{true, volume_committed, frames_served};
+                return VolumeServeResult{false, volume_committed,
+                                         frames_served};
             }
 
             switch (req->type) {

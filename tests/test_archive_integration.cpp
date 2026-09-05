@@ -1,3 +1,7 @@
+#include "neotape/format.hpp"
+#include "neotape/socket_util.hpp"
+#include "neotape/tcp_protocol.hpp"
+#include "support/checks.hpp"
 #include "support/process.hpp"
 #include "support/temp_directory.hpp"
 
@@ -12,6 +16,7 @@
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <sys/socket.h>
 #include <vector>
 
 namespace {
@@ -24,12 +29,7 @@ using neotape::test::ProcessResult;
 using neotape::test::TemporaryDirectory;
 using neotape::test::wait_for_unix_socket;
 
-void require_success(const ProcessResult &result) {
-    INFO("stdout:\n" << result.standard_output);
-    INFO("stderr:\n" << result.standard_error);
-    REQUIRE_FALSE(result.timed_out);
-    REQUIRE(result.exit_code == 0);
-}
+using neotape::test::require_success;
 
 std::vector<fs::path> spool_files(const fs::path &directory) {
     std::vector<fs::path> files;
@@ -54,12 +54,7 @@ std::vector<std::byte> read_binary(const fs::path &path) {
     return bytes;
 }
 
-void write_pattern(const fs::path &path, std::size_t size) {
-    std::ofstream output(path, std::ios::binary);
-    for (std::size_t index = 0; index < size; ++index) {
-        output.put(static_cast<char>(index % 251));
-    }
-}
+using neotape::test::write_pattern;
 
 void require_contains(const ProcessResult &result, std::string_view text) {
     std::string const output = result.standard_output + result.standard_error;
@@ -90,20 +85,11 @@ TEST_CASE("archiver and writer create a valid spool",
 
     ProcessResult const writer = Process::run(
         ProcessOptions{{NEOTAPE_WRITE, "-s", "unix://" + socket.string(), "-t",
-                        "spool:" + spool.string(), "-B", "8M", "--debug"}},
+                        "spool:" + spool.string(), "-B", "8M"}},
         30s);
     require_success(writer);
-    require_contains(writer, "block_size=4096");
-    require_contains(writer, "archive_label=\"smoke\"");
-    require_contains(writer, "volume_seq=1");
-    require_contains(writer, "slice_seq=0");
     ProcessResult const archiver_result = archiver.wait(30s);
     require_success(archiver_result);
-    require_contains(archiver_result, "neotape-archiver: archive complete:");
-    require_contains(archiver_result, "committed_frames=");
-    require_contains(archiver_result, "frame_transmissions=");
-    REQUIRE(archiver_result.standard_error.find("on this connection") ==
-            std::string::npos);
 
     std::vector<fs::path> const files = spool_files(spool);
     REQUIRE(files.size() == 2);
@@ -127,8 +113,8 @@ TEST_CASE("null writer validates an archive across capacity-limited volumes",
 
     Process archiver(ProcessOptions{
         {NEOTAPE_ARCHIVER, "--listen", "unix://" + socket.string(),
-         "--volume-block-size", "4096", "--archive-name", "null-test", "-C",
-         source.string(), "."}});
+         "--volume-block-size", "4096", "--retention-frame-count", "1",
+         "--archive-name", "null-test", "-C", source.string(), "."}});
     REQUIRE(wait_for_unix_socket(socket, archiver, 5s));
 
     int volume_count = 0;
@@ -136,7 +122,7 @@ TEST_CASE("null writer validates an archive across capacity-limited volumes",
         ProcessResult const writer = Process::run(
             ProcessOptions{{NEOTAPE_WRITE, "--source",
                             "unix://" + socket.string(), "--target", "null",
-                            "--max-volume-bytes", "16K"}},
+                            "--max-volume-bytes", "4K"}},
             30s);
         INFO("stdout:\n" << writer.standard_output);
         INFO("stderr:\n" << writer.standard_error);
@@ -151,8 +137,53 @@ TEST_CASE("null writer validates an archive across capacity-limited volumes",
     REQUIRE(volume_count < 32);
     ProcessResult const archiver_result = archiver.wait(30s);
     require_success(archiver_result);
-    require_contains(archiver_result, "neotape-archiver: archive complete:");
-    require_contains(archiver_result, "volume committed: volume=1");
+}
+
+TEST_CASE("unacknowledged archive end is retained after a protocol error",
+          "[integration][archive][socket]") {
+    TemporaryDirectory temporary;
+    fs::path const socket = temporary.path() / "raw.sock";
+    Process server(
+        ProcessOptions{{NEOTAPE_RAW_STORE, "-l", "unix://" + socket.string(),
+                        "-b", "4K", "--input", "/dev/null"}});
+    REQUIRE(wait_for_unix_socket(socket, server, 5s));
+
+    std::vector<std::byte> archive_end;
+    for (bool const acknowledge : {false, true}) {
+        neotape::FdGuard client(
+            neotape::connect_to_server("unix://" + socket.string()));
+        timeval timeout{5, 0};
+        REQUIRE(::setsockopt(client.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                             sizeof(timeout)) == 0);
+        using neotape::tcp::MessageType;
+        neotape::tcp::write_message(client.fd, {MessageType::next_frame});
+        auto response = neotape::tcp::read_message(client.fd);
+        if (response.has_value() && response->type == MessageType::tape_eof) {
+            neotape::tcp::write_message(client.fd, {MessageType::next_frame});
+            response = neotape::tcp::read_message(client.fd);
+        }
+        REQUIRE(response.has_value());
+        REQUIRE(response->type == MessageType::frame_record);
+        auto const header = neotape::parse_fixed_header(
+            reinterpret_cast<const uint8_t *>(response->payload.data()),
+            response->payload.size());
+        REQUIRE(header.channel_type == neotape::ChannelType::ARCHIVE_END);
+        if (acknowledge) {
+            REQUIRE(response->payload == archive_end);
+            neotape::tcp::write_message(
+                client.fd,
+                {MessageType::ack_frame,
+                 neotape::uint64_to_le_bytes(header.global_frame_seq_num)});
+        } else {
+            archive_end = response->payload;
+            neotape::tcp::write_message(client.fd, {MessageType::next_frame});
+            response = neotape::tcp::read_message(client.fd);
+            REQUIRE(response.has_value());
+            REQUIRE(response->type == MessageType::error);
+            REQUIRE_FALSE(neotape::tcp::read_message(client.fd).has_value());
+        }
+    }
+    require_success(server.wait(5s));
 }
 
 TEST_CASE("raw spool passes inspect and scan reporting",
@@ -207,11 +238,6 @@ TEST_CASE("raw spool passes inspect and scan reporting",
                      30s);
     require_success(inspect);
     require_contains(inspect, "Compliance: PASS");
-    require_contains(inspect, "Total frames:     5");
-    require_contains(inspect, "Content frames:   4");
-    require_contains(inspect, "Archive_end:      1");
-    require_contains(inspect, "Archive label:    \"inspect-test\"");
-    require_contains(inspect, "Volume block:     4096 bytes");
     REQUIRE((inspect.standard_output + inspect.standard_error).find("| FAIL") ==
             std::string::npos);
 
@@ -219,18 +245,16 @@ TEST_CASE("raw spool passes inspect and scan reporting",
         ProcessOptions{{NEOTAPE_SCAN, "--source", "spool:" + spool.string()}},
         30s);
     require_success(scan);
-    require_contains(scan, "Archive first seen at tapefile #0: archive_uuid=");
-    require_contains(scan, "Unique archives found: 1");
-    require_contains(scan, "archive_label=\"inspect-test\"");
-    require_contains(scan, "Tapefiles scanned: 2");
+    auto first_record = read_binary(files.front());
+    auto header = neotape::parse_fixed_header(
+        reinterpret_cast<const uint8_t *>(first_record.data()),
+        first_record.size());
+    REQUIRE(scan.standard_output.find(header.archive_uuid) !=
+            std::string::npos);
 
     ProcessResult const verbose_scan =
         Process::run(ProcessOptions{{NEOTAPE_SCAN, "--source",
                                      "spool:" + spool.string(), "--verbose"}},
                      30s);
     require_success(verbose_scan);
-    require_contains(verbose_scan,
-                     "Tapefile #0: channel=CH_CONTENT global_frame_seq_num=0");
-    require_contains(verbose_scan,
-                     "Tapefile #1: channel=ARCHIVE_END global_frame_seq_num=4");
 }

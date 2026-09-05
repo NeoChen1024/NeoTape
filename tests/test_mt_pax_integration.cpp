@@ -1,5 +1,12 @@
+#include "neotape/pax_writer.hpp"
+#include "support/checks.hpp"
 #include "support/process.hpp"
 #include "support/temp_directory.hpp"
+
+#include <archive.h>
+#include <archive_entry.h>
+#include <memory>
+#include <thread>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -20,11 +27,55 @@ using neotape::test::ProcessOptions;
 using neotape::test::ProcessResult;
 using neotape::test::TemporaryDirectory;
 
-void require_success(const ProcessResult &result) {
-    INFO("stdout:\n" << result.standard_output);
-    INFO("stderr:\n" << result.standard_error);
-    REQUIRE_FALSE(result.timed_out);
-    REQUIRE(result.exit_code == 0);
+using neotape::test::require_success;
+
+TEST_CASE(
+    "planned pax preserves contents while progress samples slice turnover",
+    "[integration][pax][plan]") {
+    TemporaryDirectory temporary;
+    fs::path const plan_path = temporary.path() / "plan";
+    std::ofstream plan(plan_path, std::ios::binary);
+    constexpr unsigned slice_count = 64;
+    for (unsigned i = 0; i < slice_count; ++i) {
+        fs::path const source = temporary.path() / std::to_string(i);
+        std::string const contents = "slice contents " + std::to_string(i);
+        std::ofstream(source) << contents;
+        plan << '/' << i << "/0/f/" << contents.size() << "/0/0/root/0/root/"
+             << source.string() << '\0' << '\n';
+    }
+    plan.close();
+
+    neotape::PaxWriterOptions options;
+    options.plan_path = plan_path;
+    options.output_buf_size = 4096;
+    options.io_thread = 4;
+    std::vector<std::byte> bytes;
+    neotape::PaxWriterCallbacks callbacks;
+    callbacks.write_chunk = [&](neotape::PaxChunk chunk) {
+        bytes.insert(bytes.end(), chunk.bytes.begin(), chunk.bytes.end());
+        // Keep slice turnover active across several periodic stats samples.
+        std::this_thread::sleep_for(25ms);
+    };
+    auto const result = neotape::write_pax(options, std::move(callbacks));
+    REQUIRE(result.slices == slice_count);
+
+    std::unique_ptr<archive, decltype(&archive_read_free)> reader(
+        archive_read_new(), archive_read_free);
+    REQUIRE(reader != nullptr);
+    REQUIRE(archive_read_support_format_tar(reader.get()) == ARCHIVE_OK);
+    REQUIRE(archive_read_open_memory(reader.get(), bytes.data(),
+                                     bytes.size()) == ARCHIVE_OK);
+    archive_entry *entry = nullptr;
+    for (unsigned i = 0; i < slice_count; ++i) {
+        REQUIRE(archive_read_next_header(reader.get(), &entry) == ARCHIVE_OK);
+        std::string const expected = "slice contents " + std::to_string(i);
+        std::string restored(expected.size(), '\0');
+        REQUIRE(
+            archive_read_data(reader.get(), restored.data(), restored.size()) ==
+            static_cast<la_ssize_t>(expected.size()));
+        REQUIRE(restored == expected);
+    }
+    REQUIRE(archive_read_next_header(reader.get(), &entry) == ARCHIVE_EOF);
 }
 
 TEST_CASE("mt-pax defers file opens under descriptor pressure",
@@ -110,22 +161,28 @@ TEST_CASE("mt-pax preserves opaque pathname and symlink target bytes",
           "[integration][pax][filename]") {
     TemporaryDirectory temporary;
     fs::path const source = temporary.path() / "src";
-    fs::path const archive = temporary.path() / "archive.tar";
+    fs::path const archive = temporary.path() / "planned-000000.pax";
     fs::path const output = temporary.path() / "out";
     fs::create_directory(source);
     fs::create_directory(output);
 
-    std::string const opaque_name = "opaque-\x82\xe7.bin";
+    std::string const opaque_name = "opaque-\x82\xe7\n.bin";
     fs::path const opaque_path = source / fs::path(opaque_name);
     std::ofstream(opaque_path) << "opaque filename payload\n";
     fs::create_symlink(fs::path(opaque_name), source / "opaque-link");
 
+    fs::path const plan = temporary.path() / "plan";
+    require_success(Process::run(
+        ProcessOptions{{NEOTAPE_PLAN, "-C", temporary.path().string(), "-o",
+                        plan.string(), "src"}},
+        30s));
     ProcessResult const archive_result = Process::run(
-        ProcessOptions{{NEOTAPE_MT_PAX, "-v", "-f", archive.string(), "-C",
-                        temporary.path().string(), "src"}},
+        ProcessOptions{{NEOTAPE_MT_PAX, "-v", "--slice-output-prefix",
+                        (temporary.path() / "planned-").string(), "--plan",
+                        plan.string()}},
         30s);
     require_success(archive_result);
-    REQUIRE(archive_result.standard_error.find("opaque-\\x82\\xe7.bin") !=
+    REQUIRE(archive_result.standard_error.find("opaque-\\x82\\xe7\\x0a.bin") !=
             std::string::npos);
     REQUIRE(archive_result.standard_error.find(opaque_name) ==
             std::string::npos);

@@ -13,10 +13,15 @@ The implementation lives in `src/neotape_pax_writer.cpp` and is exposed through
 command-line output modes onto library callbacks.
 
 The library emits slice lifecycle events and pax byte chunks. Unplanned source
-walking emits one logical slice. Planned mode consumes `neotape plan` metadata,
+walking emits one logical slice. Planned mode consumes `neotape-plan` metadata
+incrementally through the shared `PlanReader` codec,
 honors `/chdir/<path>` directives, and opens/closes slices according to the
 plan's slice numbers. The debug slice files written by the CLI contain raw pax
-payload bytes and intentionally omit pax End-of-Archive markers.
+payload bytes; only the final slice includes the pax End-of-Archive marker.
+
+Both input modes use the same archive session and `SlicePipeline` owner for
+hardlink resolution, ordered emission, cancellation, hashing and end markers.
+See [the refactor tracker](2026-09-refactor.md) for the shared I/O boundaries.
 
 ## Thread types
 
@@ -97,10 +102,11 @@ Responsibilities:
 
 **One instance.**  Prints a live progress line to stderr every second.
 
-Reads `ArchiveStats` counters (`input_bytes`, `output_bytes`,
-`walked_entries`) and `bb1` fill-level through `PaxPipeline::buffered_bytes()`
-and `PaxPipeline::buffer_capacity()`, computes rates, and overwrites the
-previous line with `\r`.
+A shared `PeriodicProgress` owns the timer and promptly joins on stop.
+`RateSampler` computes elapsed-time rates from cumulative `ArchiveStats`
+counters. The pax renderer retains the mbuffer-style line and overwrites it
+with `\r`. Buffer sampling holds the slice-owner lifetime lock; joins and
+slow output callbacks run outside that lock.
 
 ## Data flow diagram
 

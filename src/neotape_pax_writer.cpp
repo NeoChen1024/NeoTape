@@ -2,6 +2,8 @@
 #include "neotape/closable_queue.hpp"
 #include "neotape/common.hpp"
 #include "neotape/pax_writer.hpp"
+#include "neotape/plan.hpp"
+#include "neotape/progress.hpp"
 #include "neotape/result_store.hpp"
 
 #include <archive.h>
@@ -61,8 +63,6 @@ struct ArchiveStats {
     std::atomic<uint64_t> input_bytes{0};
     std::atomic<uint64_t> output_bytes{0};
     std::atomic<uint64_t> walked_entries{0};
-    std::atomic<uint64_t> walked_entries_since_status{0};
-    std::atomic<bool> done{false};
 };
 
 struct Result {
@@ -125,24 +125,6 @@ struct PipelineOrderItem {
     bool count_input = true;
     vector<std::byte> bytes;
     EntryHandle entry;
-};
-
-struct PlannedEntry {
-    uint64_t slice = 0;
-    uint64_t file_num = 0;
-    char kind = '?';
-    uint64_t size = 0;
-    int64_t mtime = 0;
-    uid_t uid = 0;
-    string uname;
-    gid_t gid = 0;
-    string gname;
-    string path;
-};
-
-struct PlanRecord {
-    std::optional<string> chdir_dir;
-    std::optional<PlannedEntry> entry;
 };
 
 [[noreturn]] void throw_pax_output_errno(const string &context) {
@@ -297,26 +279,14 @@ string stat_rate(uint64_t bytes_per_second) {
     return neotape::humanize_number(static_cast<size_t>(bytes_per_second));
 }
 
-string stat_count_rate(uint64_t items_per_second) {
-    if (items_per_second < 1000) {
-        return format("{}", items_per_second);
-    }
-    if (items_per_second < 1000UL * 1000) {
-        return format("{:.1f}k",
-                      static_cast<double>(items_per_second) / 1000.0);
-    }
-    return format("{:.1f}M",
-                  static_cast<double>(items_per_second) / (1000.0 * 1000.0));
-}
-
 void print_pax_progress(uint64_t in_rate, uint64_t out_rate, uint64_t file_rate,
                         uint64_t current_slice, uint64_t current_out,
                         size_t buffer_percent) {
     write_progress(
         format("in @ {:>6}/s, out @ {:>6}/s, files @ {:>6}/s, "
                "slice {:>6}, {:>6} total, buffer {:3}% full  ",
-               stat_rate(in_rate), stat_rate(out_rate),
-               stat_count_rate(file_rate), current_slice,
+               stat_rate(in_rate), stat_rate(out_rate), count_rate(file_rate),
+               current_slice,
                neotape::humanize_number(static_cast<size_t>(current_out)),
                buffer_percent));
 }
@@ -352,100 +322,6 @@ void warn_archive(const char *context, archive *a) {
     const char *msg = archive_error_string(a);
     write_diagnostic(format("pax: warning: {}{}", context,
                             msg != nullptr ? format(": {}", msg) : string()));
-}
-
-uint64_t parse_u64_field(const string &field, const fs::path &path,
-                         uint64_t record_num) {
-    char *end = nullptr;
-    unsigned long long const value = std::strtoull(field.c_str(), &end, 10);
-    if (end == field.c_str() || *end != '\0') {
-        throw std::runtime_error(
-            format("{}:{}: invalid numeric field", path.string(), record_num));
-    }
-    return static_cast<uint64_t>(value);
-}
-
-PlanRecord parse_plan_record(string_view text, const fs::path &path,
-                             uint64_t record_num) {
-    if (text.starts_with("/chdir/")) {
-        return PlanRecord{
-            .chdir_dir = string(text.substr(7)),
-            .entry = std::nullopt,
-        };
-    }
-    if (text.empty() || text.front() != '/') {
-        throw std::runtime_error(
-            format("{}:{}: invalid plan record", path.string(), record_num));
-    }
-
-    // 9 slash-delimited fields: slice/file_num/kind/size/mtime/uid/
-    // uname/gid/gname — then the remainder is the path.
-    vector<string> fields;
-    size_t start = 1;
-    for (size_t i = 1; i <= text.size() && fields.size() < 9; ++i) {
-        if (i == text.size() || text[i] == '/') {
-            fields.emplace_back(text.substr(start, i - start));
-            start = i + 1;
-        }
-    }
-    if (fields.size() != 9 || start > text.size()) {
-        throw std::runtime_error(
-            format("{}:{}: invalid entry record", path.string(), record_num));
-    }
-
-    string entry_path(text.substr(start));
-    if (entry_path.empty() || fields[2].size() != 1) {
-        throw std::runtime_error(
-            format("{}:{}: invalid entry record", path.string(), record_num));
-    }
-
-    char const kind = fields[2][0];
-
-    return PlanRecord{
-        .chdir_dir = std::nullopt,
-        .entry =
-            PlannedEntry{
-                .slice = parse_u64_field(fields[0], path, record_num),
-                .file_num = parse_u64_field(fields[1], path, record_num),
-                .kind = kind,
-                .size = parse_u64_field(fields[3], path, record_num),
-                .mtime = static_cast<int64_t>(
-                    parse_u64_field(fields[4], path, record_num)),
-                .uid = static_cast<uid_t>(
-                    parse_u64_field(fields[5], path, record_num)),
-                .uname = fields[6],
-                .gid = static_cast<gid_t>(
-                    parse_u64_field(fields[7], path, record_num)),
-                .gname = fields[8],
-                .path = std::move(entry_path),
-            },
-    };
-}
-
-vector<PlanRecord> read_plan_records(const fs::path &path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error(
-            format("open {}: {}", path.string(), std::strerror(errno)));
-    }
-    string data((std::istreambuf_iterator<char>(in)),
-                std::istreambuf_iterator<char>());
-
-    vector<PlanRecord> records;
-    uint64_t record_num = 1;
-    size_t pos = 0;
-    while (pos < data.size()) {
-        size_t end = data.find("\0\n", pos, 2);
-        if (end == string::npos) {
-            throw std::runtime_error(format("{}:{}: unterminated plan record",
-                                            path.string(), record_num));
-        }
-        records.push_back(parse_plan_record(
-            string_view(data.data() + pos, end - pos), path, record_num));
-        pos = end + 2;
-        ++record_num;
-    }
-    return records;
 }
 
 // ====================== Entry Formatting =====================
@@ -1057,7 +933,6 @@ void dispatch_entry_to_pipeline(const Options &opts, ArchiveStats &stats,
         return;
     }
     stats.walked_entries.fetch_add(1, std::memory_order_relaxed);
-    stats.walked_entries_since_status.fetch_add(1, std::memory_order_relaxed);
 
     bool const is_reg = (archive_entry_filetype(entry.get()) == AE_IFREG);
     la_int64_t const size = archive_entry_size(entry.get());
@@ -1096,13 +971,13 @@ void dispatch_entry_to_pipeline(const Options &opts, ArchiveStats &stats,
     }
 }
 
-class PlannedSlicePipeline {
+class SlicePipeline {
   public:
-    PlannedSlicePipeline(const Options &opts, PaxWriterCallbacks &callbacks,
-                         ArchiveStats &stats, blake3_hasher &hasher)
+    SlicePipeline(const Options &opts, PaxWriterCallbacks &callbacks,
+                  ArchiveStats &stats, blake3_hasher &hasher)
         : opts_(opts), callbacks_(callbacks), stats_(stats), hasher_(hasher) {}
 
-    ~PlannedSlicePipeline() noexcept {
+    ~SlicePipeline() noexcept {
         try {
             abort();
         } catch (...) {
@@ -1111,17 +986,21 @@ class PlannedSlicePipeline {
 
     void begin_slice(uint64_t slice) {
         if (active_slice_.has_value()) {
-            throw std::runtime_error("planned slice output already active");
+            throw std::runtime_error("slice output already active");
         }
 
         callbacks_.begin_slice(slice);
         active_slice_ = slice;
         next_seq_ = 0;
-        pipeline_ = std::make_unique<PaxPipeline>(opts_, callbacks_, stats_,
-                                                  hasher_, slice);
+        {
+            std::scoped_lock lock(pipeline_mtx_);
+            pipeline_ = std::make_unique<PaxPipeline>(opts_, callbacks_, stats_,
+                                                      hasher_, slice);
+        }
         try {
             pipeline_->start();
         } catch (...) {
+            std::scoped_lock lock(pipeline_mtx_);
             pipeline_.reset();
             active_slice_.reset();
             throw;
@@ -1130,10 +1009,10 @@ class PlannedSlicePipeline {
 
     void emit_entry(EntryHandle entry) {
         if (!active_slice_.has_value()) {
-            throw std::runtime_error("planned slice pipeline is not active");
+            throw std::runtime_error("slice pipeline is not active");
         }
         if (pipeline_ == nullptr) {
-            throw std::runtime_error("planned slice pipeline is not available");
+            throw std::runtime_error("slice pipeline is not available");
         }
         dispatch_entry_to_pipeline(opts_, stats_, *pipeline_, next_seq_,
                                    std::move(entry));
@@ -1141,7 +1020,7 @@ class PlannedSlicePipeline {
 
     void emit_eoa() {
         if (pipeline_ == nullptr) {
-            throw std::runtime_error("planned slice pipeline is not available");
+            throw std::runtime_error("slice pipeline is not available");
         }
         if (!pipeline_->enqueue_inline(
                 next_seq_++, vector<std::byte>(1024, std::byte{0}), false)) {
@@ -1156,13 +1035,16 @@ class PlannedSlicePipeline {
             return;
         }
         if (pipeline_ == nullptr) {
-            throw std::runtime_error("planned slice pipeline is not available");
+            throw std::runtime_error("slice pipeline is not available");
         }
         pipeline_->finish_input();
         pipeline_->join();
 
         uint64_t const slice = *active_slice_;
-        pipeline_.reset();
+        {
+            std::scoped_lock lock(pipeline_mtx_);
+            pipeline_.reset();
+        }
         active_slice_.reset();
         next_seq_ = 0;
         callbacks_.end_slice(slice);
@@ -1171,18 +1053,22 @@ class PlannedSlicePipeline {
     void abort() {
         if (pipeline_ != nullptr) {
             pipeline_->request_cancel(std::make_exception_ptr(
-                std::runtime_error("planned slice pipeline aborted")));
+                std::runtime_error("slice pipeline aborted")));
             try {
                 pipeline_->join();
             } catch (...) {
             }
         }
-        pipeline_.reset();
+        {
+            std::scoped_lock lock(pipeline_mtx_);
+            pipeline_.reset();
+        }
         active_slice_.reset();
         next_seq_ = 0;
     }
 
     size_t buffered_bytes() const {
+        std::scoped_lock lock(pipeline_mtx_);
         if (pipeline_ == nullptr) {
             return 0;
         }
@@ -1190,6 +1076,7 @@ class PlannedSlicePipeline {
     }
 
     size_t buffer_capacity() const {
+        std::scoped_lock lock(pipeline_mtx_);
         if (pipeline_ == nullptr) {
             return 0;
         }
@@ -1202,461 +1089,178 @@ class PlannedSlicePipeline {
     ArchiveStats &stats_;
     blake3_hasher &hasher_;
     std::optional<uint64_t> active_slice_;
+    // Protect lifetime while the stats thread samples the active buffer.
+    mutable std::mutex pipeline_mtx_;
     std::unique_ptr<PaxPipeline> pipeline_;
     uint64_t next_seq_ = 0;
 };
 
 // ====================== Archive Emission =====================
 
-PaxWriteResult write_planned_pax_archive(const Options &opts,
-                                         PaxWriterCallbacks callbacks) {
-    ensure_utf8_ctype_locale();
+using DiskHandle = std::unique_ptr<archive, decltype(&archive_read_free)>;
+using ResolverHandle =
+    std::unique_ptr<archive_entry_linkresolver,
+                    decltype(&archive_entry_linkresolver_free)>;
 
-    if (!callbacks.write_chunk) {
-        callbacks.write_chunk = [](PaxChunk) {};
-    }
+DiskHandle open_disk_reader(bool one_file_system) {
+    DiskHandle disk(archive_read_disk_new(), archive_read_free);
+    if (!disk)
+        throw std::runtime_error("cannot allocate disk reader");
+    check_archive_throw(archive_read_disk_set_symlink_physical(disk.get()),
+                        disk.get(), "set physical symlink");
+    check_archive_throw(archive_read_disk_set_standard_lookup(disk.get()),
+                        disk.get(), "set uid/gid name lookup");
+    if (one_file_system)
+        check_archive_throw(
+            archive_read_disk_set_behavior(disk.get(),
+                                           ARCHIVE_READDISK_NO_TRAVERSE_MOUNTS),
+            disk.get(), "set one-file-system");
+    return disk;
+}
 
-    if (!opts.plan_path.has_value()) {
-        throw std::runtime_error("planned pax archive requires a plan path");
-    }
-    if (opts.chdir_dir.has_value() && chdir(opts.chdir_dir->c_str()) != 0) {
-        throw_errno(string("chdir ") + *opts.chdir_dir);
-    }
-
-    vector<PlanRecord> const records = read_plan_records(*opts.plan_path);
-    ArchiveStats stats;
-    blake3_hasher hasher;
-    blake3_hasher_init(&hasher);
-    PlannedSlicePipeline slice_output(opts, callbacks, stats, hasher);
-
-    std::optional<uint64_t> current_slice;
-    std::atomic<uint64_t> emitted_slices{0};
-    std::atomic<uint64_t> current_slice_seq{0};
-    std::exception_ptr failure;
-    archive *disk = nullptr;
-    archive_entry_linkresolver *resolver = nullptr;
-
-    std::thread stats_thread([&] {
-        using clock = std::chrono::steady_clock;
-        uint64_t last_in = 0;
-        uint64_t last_out = 0;
-        auto last_time = clock::now();
-
-        while (!stats.done.load(std::memory_order_relaxed)) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-            if (stats.done.load(std::memory_order_relaxed)) {
-                break;
-            }
-            if (callbacks.progress_paused()) {
-                continue;
-            }
-            auto now = clock::now();
-            double seconds =
-                std::chrono::duration<double>(now - last_time).count();
-            if (seconds <= 0.0) {
-                seconds = 1.0;
-            }
-
-            uint64_t const current_in =
-                stats.input_bytes.load(std::memory_order_relaxed);
-            uint64_t const current_out =
-                stats.output_bytes.load(std::memory_order_relaxed);
-            auto const in_rate =
-                static_cast<uint64_t>((current_in - last_in) / seconds);
-            auto const out_rate =
-                static_cast<uint64_t>((current_out - last_out) / seconds);
-            auto const file_rate = stats.walked_entries_since_status.exchange(
-                0, std::memory_order_relaxed);
-            size_t const buffered = slice_output.buffered_bytes();
-            size_t const capacity = slice_output.buffer_capacity();
-            size_t const percent =
-                capacity == 0
-                    ? 0
-                    : std::min<size_t>(100, buffered * 100 / capacity);
-
-            print_pax_progress(
-                in_rate, out_rate, file_rate,
-                current_slice_seq.load(std::memory_order_relaxed), current_out,
-                percent);
-
-            last_in = current_in;
-            last_out = current_out;
-            last_time = now;
-        }
-    });
-
-    auto emit_entry = [&](EntryHandle entry) {
-        if (!entry) {
-            return;
-        }
-        slice_output.emit_entry(std::move(entry));
-    };
-
-    try {
-        disk = archive_read_disk_new();
-        if (disk == nullptr) {
-            throw std::runtime_error("cannot allocate disk reader");
-        }
-        check_archive_throw(archive_read_disk_set_symlink_physical(disk), disk,
-                            "set physical symlink");
-        check_archive_throw(archive_read_disk_set_standard_lookup(disk), disk,
-                            "set uid/gid name lookup");
-
-        resolver = archive_entry_linkresolver_new();
-        if (resolver == nullptr) {
-            throw std::runtime_error("cannot allocate hardlink resolver");
-        }
-        ArchiveWriteHandle const tmp(archive_write_new());
-        if (tmp.get() == nullptr) {
-            throw std::runtime_error("cannot allocate archive writer");
-        }
-        check_archive_throw(archive_write_add_filter_none(tmp.get()), tmp.get(),
-                            "set uncompressed");
-        check_archive_throw(archive_write_set_format_pax(tmp.get()), tmp.get(),
-                            "set pax format");
-        archive_entry_linkresolver_set_strategy(resolver,
-                                                archive_format(tmp.get()));
-
-        for (const PlanRecord &record : records) {
-            if (record.chdir_dir.has_value()) {
-                if (chdir(record.chdir_dir->c_str()) != 0) {
-                    throw_errno(string("chdir ") + *record.chdir_dir);
-                }
-                continue;
-            }
-            if (!record.entry.has_value()) {
-                continue;
-            }
-
-            const PlannedEntry &planned = *record.entry;
-            if (!current_slice.has_value() || *current_slice != planned.slice) {
-                if (current_slice.has_value()) {
-                    slice_output.finish_slice();
-                }
-                current_slice = planned.slice;
-                current_slice_seq.store(
-                    emitted_slices.fetch_add(1, std::memory_order_relaxed) + 1,
-                    std::memory_order_relaxed);
-                slice_output.begin_slice(*current_slice);
-            }
-
-            archive_entry *entry_raw =
-                planned_entry_from_path(disk, planned.path);
-            archive_entry *spare_raw = nullptr;
-            archive_entry_linkify(resolver, &entry_raw, &spare_raw);
-            EntryHandle entry(entry_raw);
-            EntryHandle spare(spare_raw);
-            emit_entry(std::move(entry));
-            emit_entry(std::move(spare));
-        }
-
-        for (;;) {
-            archive_entry *entry_raw = nullptr;
-            archive_entry *spare_raw = nullptr;
-            archive_entry_linkify(resolver, &entry_raw, &spare_raw);
-            if ((entry_raw == nullptr) && (spare_raw == nullptr)) {
-                break;
-            }
-            EntryHandle entry(entry_raw);
-            EntryHandle spare(spare_raw);
-            emit_entry(std::move(entry));
-            emit_entry(std::move(spare));
-        }
-
-        if (current_slice.has_value()) {
-            slice_output.emit_eoa();
-            slice_output.finish_slice();
-        }
-    } catch (...) {
-        failure = std::current_exception();
-        slice_output.abort();
-    }
-
-    if (resolver != nullptr) {
-        archive_entry_linkresolver_free(resolver);
-    }
-    if (disk != nullptr) {
-        archive_read_free(disk);
-    }
-    stats.done.store(true, std::memory_order_relaxed);
-    if (stats_thread.joinable()) {
-        stats_thread.join();
-    }
-
-    if (failure) {
-        std::rethrow_exception(failure);
-    }
-
-    print_pax_progress(
-        0, 0, 0, current_slice_seq.load(std::memory_order_relaxed),
-        stats.output_bytes.load(std::memory_order_relaxed),
-        slice_output.buffer_capacity() == 0
-            ? 0
-            : std::min<size_t>(100, slice_output.buffered_bytes() * 100 /
-                                        slice_output.buffer_capacity()));
-    finish_progress();
-
-    std::array<uint8_t, BLAKE3_OUT_LEN> hash{};
-    blake3_hasher_finalize(&hasher, hash.data(), hash.size());
-    string hex;
-    for (uint8_t b : hash) {
-        hex += format("{:02x}", static_cast<unsigned>(b));
-    }
-    return PaxWriteResult{
-        .input_bytes = stats.input_bytes.load(std::memory_order_relaxed),
-        .output_bytes = stats.output_bytes.load(std::memory_order_relaxed),
-        .walked_entries = stats.walked_entries.load(std::memory_order_relaxed),
-        .slices = emitted_slices.load(std::memory_order_relaxed),
-        .blake3_hex = hex,
-    };
+ResolverHandle make_link_resolver() {
+    ResolverHandle resolver(archive_entry_linkresolver_new(),
+                            archive_entry_linkresolver_free);
+    if (!resolver)
+        throw std::runtime_error("cannot allocate hardlink resolver");
+    ArchiveWriteHandle writer(archive_write_new());
+    if (!writer.get())
+        throw std::runtime_error("cannot allocate archive writer");
+    check_archive_throw(archive_write_set_format_pax(writer.get()),
+                        writer.get(), "set pax format");
+    archive_entry_linkresolver_set_strategy(resolver.get(),
+                                            archive_format(writer.get()));
+    return resolver;
 }
 
 PaxWriteResult write_pax_archive(const Options &opts,
                                  PaxWriterCallbacks callbacks) {
     ensure_utf8_ctype_locale();
-
-    if (opts.plan_path.has_value()) {
-        return write_planned_pax_archive(opts, std::move(callbacks));
-    }
-
-    if (!callbacks.write_chunk) {
+    if (!callbacks.write_chunk)
         callbacks.write_chunk = [](PaxChunk) {};
-    }
-    callbacks.begin_slice(0);
-    uint64_t emitted_slice_count = 1;
+    if (opts.chdir_dir && chdir(opts.chdir_dir->c_str()) != 0)
+        throw_errno(string("chdir ") + *opts.chdir_dir);
+
+    auto resolver = make_link_resolver();
     ArchiveStats stats;
     blake3_hasher hasher;
     blake3_hasher_init(&hasher);
-    PaxPipeline pipeline(opts, callbacks, stats, hasher);
-    pipeline.start();
-
-    std::thread stats_thread([&] {
-        using clock = std::chrono::steady_clock;
-        uint64_t last_in = 0;
-        uint64_t last_out = 0;
-        auto last_time = clock::now();
-
-        while (!stats.done.load(std::memory_order_relaxed)) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-            if (stats.done.load(std::memory_order_relaxed)) {
-                break;
-            }
-            if (callbacks.progress_paused()) {
-                continue;
-            }
-            auto now = clock::now();
-            double seconds =
-                std::chrono::duration<double>(now - last_time).count();
-            if (seconds <= 0.0) {
-                seconds = 1.0;
-            }
-
-            uint64_t const current_in =
-                stats.input_bytes.load(std::memory_order_relaxed);
-            uint64_t const current_out =
-                stats.output_bytes.load(std::memory_order_relaxed);
-            auto const in_rate =
-                static_cast<uint64_t>((current_in - last_in) / seconds);
-            auto const out_rate =
-                static_cast<uint64_t>((current_out - last_out) / seconds);
-            auto const file_rate = stats.walked_entries_since_status.exchange(
-                0, std::memory_order_relaxed);
-            size_t buffered = pipeline.buffered_bytes();
-            size_t capacity = pipeline.buffer_capacity();
-            size_t percent =
-                capacity == 0
-                    ? 0
-                    : std::min<size_t>(100, buffered * 100 / capacity);
-
-            print_pax_progress(in_rate, out_rate, file_rate,
-                               emitted_slice_count, current_out, percent);
-
-            last_in = current_in;
-            last_out = current_out;
-            last_time = now;
-        }
+    SlicePipeline slices(opts, callbacks, stats, hasher);
+    std::optional<uint64_t> active_slice;
+    std::atomic<uint64_t> slice_count{0};
+    RateSampler rates;
+    PeriodicProgress progress([&] {
+        if (callbacks.progress_paused())
+            return;
+        auto input = stats.input_bytes.load();
+        auto output = stats.output_bytes.load();
+        auto rate = rates.sample(input, output, stats.walked_entries.load());
+        print_pax_progress(
+            rate.input, rate.output, rate.items, slice_count.load(), output,
+            buffer_percent(slices.buffered_bytes(), slices.buffer_capacity()));
     });
 
-    auto abort_setup = [&](std::exception_ptr setup_failure) {
-        pipeline.request_cancel(setup_failure);
-        try {
-            pipeline.join();
-        } catch (...) {
-            if (!setup_failure) {
-                setup_failure = std::current_exception();
-            }
-        }
-        stats.done.store(true, std::memory_order_relaxed);
-        if (stats_thread.joinable()) {
-            stats_thread.join();
-        }
-        std::rethrow_exception(setup_failure);
+    auto begin_slice = [&](uint64_t number) {
+        if (active_slice && *active_slice == number)
+            return;
+        if (active_slice)
+            slices.finish_slice();
+        slices.begin_slice(number);
+        active_slice = number;
+        ++slice_count;
+    };
+    auto emit_linked = [&](archive_entry *raw) {
+        archive_entry *spare = nullptr;
+        archive_entry_linkify(resolver.get(), &raw, &spare);
+        EntryHandle entry(raw), other(spare);
+        if (entry)
+            slices.emit_entry(std::move(entry));
+        if (other)
+            slices.emit_entry(std::move(other));
     };
 
-    archive_entry_linkresolver *resolver = archive_entry_linkresolver_new();
-    if (resolver == nullptr) {
-        abort_setup(std::make_exception_ptr(
-            std::runtime_error("pax: cannot allocate hardlink resolver")));
-    }
-    archive *tmp = archive_write_new();
-    if (tmp == nullptr) {
-        archive_entry_linkresolver_free(resolver);
-        abort_setup(std::make_exception_ptr(
-            std::runtime_error("pax: cannot allocate archive writer")));
-    }
-    archive_write_add_filter_none(tmp);
-    archive_write_set_format_pax(tmp);
-    archive_entry_linkresolver_set_strategy(resolver, archive_format(tmp));
-    archive_write_free(tmp);
-
-    // ── Dispatch lambda ──
-    uint64_t next_seq = 0;
-
-    auto dispatch_entry = [&](archive_entry *raw_entry) {
-        dispatch_entry_to_pipeline(opts, stats, pipeline, next_seq,
-                                   EntryHandle(raw_entry));
-    };
-
-    std::exception_ptr failure;
     try {
-        if (opts.chdir_dir.has_value() && chdir(opts.chdir_dir->c_str()) != 0) {
-            throw_errno(string("chdir ") + *opts.chdir_dir);
-        }
-
-        for (const string &source_arg : opts.sources) {
-            neotape::SourceSpec const spec =
-                neotape::make_source_spec(source_arg);
-
-            archive *disk = archive_read_disk_new();
-            if (disk == nullptr) {
-                throw std::runtime_error("pax: cannot allocate disk reader");
-            }
-            try {
-                check_archive_throw(
-                    archive_read_disk_set_symlink_physical(disk), disk,
-                    "set physical symlink");
-                if (opts.one_file_system) {
-                    check_archive_throw(
-                        archive_read_disk_set_behavior(
-                            disk, ARCHIVE_READDISK_NO_TRAVERSE_MOUNTS),
-                        disk, "set one-file-system");
+        if (opts.plan_path) {
+            PlanReader records(*opts.plan_path);
+            auto disk = open_disk_reader(false);
+            while (auto record = records.next()) {
+                if (record->chdir_dir) {
+                    if (chdir(record->chdir_dir->c_str()) != 0)
+                        throw_errno(string("chdir ") + *record->chdir_dir);
+                    continue;
                 }
-                check_archive_throw(archive_read_disk_set_standard_lookup(disk),
-                                    disk, "set uid/gid name lookup");
+                const auto &entry = *record->entry;
+                begin_slice(entry.slice);
+                emit_linked(planned_entry_from_path(disk.get(), entry.path));
+            }
+        } else {
+            begin_slice(0);
+            for (const string &source : opts.sources) {
+                auto spec = make_source_spec(source);
+                auto disk = open_disk_reader(opts.one_file_system);
                 check_archive_throw(
-                    archive_read_disk_open(disk, spec.open_path.c_str()), disk,
-                    "open source path");
-
+                    archive_read_disk_open(disk.get(), spec.open_path.c_str()),
+                    disk.get(), "open source path");
                 for (;;) {
                     EntryHandle entry(archive_entry_new());
-                    if (!entry) {
-                        throw std::runtime_error("pax: cannot allocate entry");
-                    }
-
-                    int r = archive_read_next_header2(disk, entry.get());
-                    if (r == ARCHIVE_EOF) {
+                    if (!entry)
+                        throw std::runtime_error("cannot allocate entry");
+                    int r = archive_read_next_header2(disk.get(), entry.get());
+                    if (r == ARCHIVE_EOF)
                         break;
-                    }
-                    if (r == ARCHIVE_FATAL) {
-                        throw_archive("read filesystem", disk);
-                    }
+                    if (r == ARCHIVE_FATAL)
+                        throw_archive("read filesystem", disk.get());
                     if (r < ARCHIVE_OK) {
-                        warn_archive("read filesystem", disk);
+                        warn_archive("read filesystem", disk.get());
                         continue;
                     }
-
-                    if (archive_read_disk_can_descend(disk) != 0) {
-                        r = archive_read_disk_descend(disk);
-                        if (r == ARCHIVE_FATAL) {
-                            throw_archive("descend", disk);
-                        }
-                        if (r < ARCHIVE_OK) {
-                            warn_archive("descend", disk);
-                        }
+                    if (archive_read_disk_can_descend(disk.get())) {
+                        r = archive_read_disk_descend(disk.get());
+                        if (r == ARCHIVE_FATAL)
+                            throw_archive("descend", disk.get());
+                        if (r < ARCHIVE_OK)
+                            warn_archive("descend", disk.get());
                     }
-
-                    const char *src = archive_entry_sourcepath(entry.get());
-                    if (src != nullptr) {
-                        string ap = neotape::archive_path_for_source(spec, src);
-                        copy_pathname(entry.get(), ap);
-                    }
-                    archive_entry *raw_entry = entry.release();
-                    archive_entry *spare_raw = nullptr;
-                    archive_entry_linkify(resolver, &raw_entry, &spare_raw);
-                    EntryHandle linked_entry(raw_entry);
-                    EntryHandle spare(spare_raw);
-                    dispatch_entry(linked_entry.release());
-                    dispatch_entry(spare.release());
+                    if (const char *path =
+                            archive_entry_sourcepath(entry.get()))
+                        copy_pathname(entry.get(),
+                                      archive_path_for_source(spec, path));
+                    emit_linked(entry.release());
                 }
-            } catch (...) {
-                archive_read_close(disk);
-                archive_read_free(disk);
-                throw;
             }
-            archive_read_close(disk);
-            archive_read_free(disk);
         }
-
         for (;;) {
-            archive_entry *entry_raw = nullptr;
-            archive_entry *spare_raw = nullptr;
-            archive_entry_linkify(resolver, &entry_raw, &spare_raw);
-            if ((entry_raw == nullptr) && (spare_raw == nullptr)) {
+            archive_entry *entry = nullptr, *spare = nullptr;
+            archive_entry_linkify(resolver.get(), &entry, &spare);
+            if (!entry && !spare)
                 break;
-            }
-            EntryHandle entry(entry_raw);
-            EntryHandle spare(spare_raw);
-            dispatch_entry(entry.release());
-            dispatch_entry(spare.release());
+            EntryHandle linked(entry), other(spare);
+            if (linked)
+                slices.emit_entry(std::move(linked));
+            if (other)
+                slices.emit_entry(std::move(other));
         }
-
-        pipeline.finish_input();
-    } catch (...) {
-        failure = std::current_exception();
-        pipeline.request_cancel(failure);
-    }
-
-    try {
-        pipeline.join();
-    } catch (...) {
-        if (!failure) {
-            failure = std::current_exception();
+        if (active_slice) {
+            slices.emit_eoa();
+            slices.finish_slice();
         }
+    } catch (...) {
+        slices.abort();
+        throw;
     }
-
-    archive_entry_linkresolver_free(resolver);
-    stats.done.store(true, std::memory_order_relaxed);
-    if (stats_thread.joinable()) {
-        stats_thread.join();
+    progress.stop();
+    if (opts.plan_path) {
+        print_pax_progress(0, 0, 0, slice_count.load(),
+                           stats.output_bytes.load(), 0);
+        finish_progress();
     }
-
-    if (failure) {
-        std::rethrow_exception(failure);
-    }
-
-    // Write pax end-of-archive marker (two 512-byte blocks of zeros)
-    // so that tools like bsdtar / GNU tar can detect the archive end.
-    {
-        std::array<std::byte, 1024> eoa{};
-        callbacks.write_chunk(PaxChunk{.slice = 0, .bytes = std::span(eoa)});
-        blake3_hasher_update(&hasher, eoa.data(), eoa.size());
-        stats.output_bytes.fetch_add(eoa.size(), std::memory_order_relaxed);
-    }
-
     std::array<uint8_t, BLAKE3_OUT_LEN> hash{};
     blake3_hasher_finalize(&hasher, hash.data(), hash.size());
     string hex;
-    for (uint8_t b : hash) {
-        hex += format("{:02x}", static_cast<unsigned>(b));
-    }
-    callbacks.end_slice(0);
-    return PaxWriteResult{
-        .input_bytes = stats.input_bytes.load(std::memory_order_relaxed),
-        .output_bytes = stats.output_bytes.load(std::memory_order_relaxed),
-        .walked_entries = stats.walked_entries.load(std::memory_order_relaxed),
-        .slices = emitted_slice_count,
-        .blake3_hex = hex,
-    };
+    for (uint8_t byte : hash)
+        hex += format("{:02x}", byte);
+    return {stats.input_bytes.load(), stats.output_bytes.load(),
+            stats.walked_entries.load(), slice_count.load(), hex};
 }
 
 } // namespace

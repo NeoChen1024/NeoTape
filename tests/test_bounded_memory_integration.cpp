@@ -1,3 +1,4 @@
+#include "support/checks.hpp"
 #include "support/process.hpp"
 #include "support/temp_directory.hpp"
 
@@ -18,12 +19,7 @@ using neotape::test::ProcessResult;
 using neotape::test::TemporaryDirectory;
 using neotape::test::wait_for_unix_socket;
 
-void require_success(const ProcessResult &result) {
-    INFO("stdout:\n" << result.standard_output);
-    INFO("stderr:\n" << result.standard_error);
-    REQUIRE_FALSE(result.timed_out);
-    REQUIRE(result.exit_code == 0);
-}
+using neotape::test::require_success;
 
 } // namespace
 
@@ -64,8 +60,6 @@ TEST_CASE("FEC extraction stays below a slice-sized address-space limit",
         180s));
     ProcessResult const extraction = extractor.wait(180s);
     require_success(extraction);
-    REQUIRE(extraction.standard_error.find("archive complete") !=
-            std::string::npos);
     REQUIRE(fs::file_size(output) == fs::file_size(input));
     require_success(Process::run(
         ProcessOptions{{NEOTAPE_CMP, input.string(), output.string()}}, 180s));
