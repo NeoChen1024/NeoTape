@@ -484,30 +484,15 @@ la_ssize_t drop_write(archive * /*unused*/, void *client, const void *data,
 
 int drop_close(archive * /*unused*/, void * /*unused*/) { return ARCHIVE_OK; }
 
-struct ArchiveWriteHandle {
-    archive *ptr = nullptr;
+using ArchiveWriteHandle = std::unique_ptr<archive, decltype(&archive_write_free)>;
 
-    explicit ArchiveWriteHandle(archive *writer) : ptr(writer) {}
-    ~ArchiveWriteHandle() {
-        if (ptr != nullptr) {
-            archive_write_free(ptr);
-        }
-    }
-
-    ArchiveWriteHandle(const ArchiveWriteHandle &) = delete;
-    ArchiveWriteHandle &operator=(const ArchiveWriteHandle &) = delete;
-
-    [[nodiscard]] archive *get() const { return ptr; }
-};
-
-vector<std::byte> serialize_entry(archive_entry *entry, int fd) {
-    ArchiveWriteHandle const writer(archive_write_new());
+ArchiveWriteHandle make_pax_writer() {
+    ArchiveWriteHandle writer(archive_write_new(), archive_write_free);
     archive *a = writer.get();
     if (a == nullptr) {
         throw std::runtime_error("pax: cannot allocate archive writer");
     }
-    check_archive_throw(archive_write_add_filter_none(a), a,
-                        "set uncompressed");
+    check_archive_throw(archive_write_add_filter_none(a), a, "set uncompressed");
     check_archive_throw(archive_write_set_format_pax(a), a, "set pax format");
     check_archive_throw(
         archive_write_set_options(a, "xattrheader=ALL,hdrcharset=BINARY"), a,
@@ -516,6 +501,12 @@ vector<std::byte> serialize_entry(archive_entry *entry, int fd) {
                         "set block size");
     check_archive_throw(archive_write_set_bytes_in_last_block(a, 1), a,
                         "set last block");
+    return writer;
+}
+
+vector<std::byte> serialize_entry(archive_entry *entry, int fd) {
+    auto const writer = make_pax_writer();
+    archive *a = writer.get();
 
     BufCtx ctx;
     la_int64_t const entry_size = archive_entry_size(entry);
@@ -553,21 +544,8 @@ vector<std::byte> serialize_entry(archive_entry *entry, int fd) {
 
 void stream_large_entry(BBSink &sink, archive_entry *entry, int fd) {
     sink.drop_mode = false;
-    ArchiveWriteHandle const writer(archive_write_new());
+    auto const writer = make_pax_writer();
     archive *a = writer.get();
-    if (a == nullptr) {
-        throw std::runtime_error("pax: cannot allocate archive writer");
-    }
-    check_archive_throw(archive_write_add_filter_none(a), a,
-                        "set uncompressed");
-    check_archive_throw(archive_write_set_format_pax(a), a, "set pax format");
-    check_archive_throw(
-        archive_write_set_options(a, "xattrheader=ALL,hdrcharset=BINARY"), a,
-        "set options");
-    check_archive_throw(archive_write_set_bytes_per_block(a, 512), a,
-                        "set block size");
-    check_archive_throw(archive_write_set_bytes_in_last_block(a, 1), a,
-                        "set last block");
     check_archive_throw(
         archive_write_open(a, &sink, drop_open, bb_sink_write, bb_sink_close),
         a, "open streaming writer");
@@ -1123,7 +1101,7 @@ ResolverHandle make_link_resolver() {
                             archive_entry_linkresolver_free);
     if (!resolver)
         throw std::runtime_error("cannot allocate hardlink resolver");
-    ArchiveWriteHandle writer(archive_write_new());
+    ArchiveWriteHandle writer(archive_write_new(), archive_write_free);
     if (!writer.get())
         throw std::runtime_error("cannot allocate archive writer");
     check_archive_throw(archive_write_set_format_pax(writer.get()),

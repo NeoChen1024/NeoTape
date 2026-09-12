@@ -18,7 +18,11 @@ if(BUILD_TESTING)
     endfunction()
 
     neotape_unit_test(test_common test_common.cpp neotape_common)
-    neotape_unit_test(test_pax_pipeline test_pax_pipeline.cpp Threads::Threads)
+    neotape_unit_test(test_pax_pipeline test_pax_pipeline.cpp
+        Threads::Threads neotape_test_support)
+    target_compile_definitions(test_pax_pipeline PRIVATE
+        NEOTAPE_PAX_PIPELINE_TEST="$<TARGET_FILE:test_pax_pipeline>"
+    )
     neotape_unit_test(test_tcp_protocol test_tcp_protocol.cpp neotape_protocol)
     neotape_unit_test(test_format test_format.cpp neotape_format)
     neotape_unit_test(test_validate test_validate.cpp neotape_validation)
@@ -68,14 +72,10 @@ if(BUILD_TESTING)
             neotape_write neotape_read neotape_extractor neotape_inspect
             neotape_scan neotape_dump
         )
-        set(_label integration)
-        if(ARGC GREATER 2)
-            set(_label "${ARGV2}")
-        endif()
         catch_discover_tests(${target}
             TEST_PREFIX "integration."
             DISCOVERY_MODE PRE_TEST
-            PROPERTIES LABELS "${_label}" TIMEOUT 240
+            PROPERTIES LABELS integration TIMEOUT 240
         )
     endfunction()
 
@@ -105,7 +105,15 @@ if(BUILD_TESTING)
     target_link_libraries(test_signed_integration PRIVATE neotape_socket neotape_protocol)
     find_program(NEOTAPE_CMP_EXECUTABLE NAMES cmp REQUIRED)
     neotape_integration_test(test_bounded_memory_integration
-        test_bounded_memory_integration.cpp "integration,large")
+        test_bounded_memory_integration.cpp)
+    # Catch2's discovery helper flattens list-valued PROPERTIES. Apply the
+    # additional label after discovery, using its exported test list.
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/large_test_labels.cmake" [=[
+set_tests_properties(${test_bounded_memory_integration_TESTS}
+    PROPERTIES LABELS "integration;large")
+]=])
+    set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/large_test_labels.cmake")
     target_compile_definitions(test_bounded_memory_integration PRIVATE
         NEOTAPE_CMP="${NEOTAPE_CMP_EXECUTABLE}"
     )

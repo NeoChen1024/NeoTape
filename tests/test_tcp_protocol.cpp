@@ -1,259 +1,206 @@
 #include "neotape/tcp_protocol.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_range.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+#include <fcntl.h>
 
-#include <cstdlib>
-#include <iostream>
+#include <array>
+#include <cstdint>
+#include <span>
+#include <stdexcept>
 #include <string>
 #include <unistd.h>
 
+namespace {
 using neotape::tcp::Message;
 using neotape::tcp::MessageType;
 
-static void fail(const std::string &msg) {
-    FAIL(msg);
+struct Pipe {
+    int fds[2];
+    Pipe() { REQUIRE(::pipe(fds) == 0); }
+    ~Pipe() {
+        ::close(fds[0]);
+        if (fds[1] >= 0)
+            ::close(fds[1]);
+    }
+    Pipe(const Pipe &) = delete;
+    Pipe &operator=(const Pipe &) = delete;
+    void finish() {
+        REQUIRE(::close(fds[1]) == 0);
+        fds[1] = -1;
+    }
+    void send(std::span<const uint8_t> bytes) {
+        // Fixtures fit in PIPE_BUF and use a blocking pipe with no other
+        // writer.
+        REQUIRE(::write(fds[1], bytes.data(), bytes.size()) ==
+                static_cast<ssize_t>(bytes.size()));
+    }
+};
+
+// Literal protocol assignments, independent of MessageType's numeric values.
+constexpr std::array wire_types{
+    std::pair{MessageType::next_frame, uint8_t{0x01}},
+    std::pair{MessageType::frame_record, uint8_t{0x02}},
+    std::pair{MessageType::tape_eof, uint8_t{0x03}},
+    std::pair{MessageType::error, uint8_t{0x04}},
+    std::pair{MessageType::ack_frame, uint8_t{0x05}},
+    std::pair{MessageType::auth_challenge, uint8_t{0x06}},
+    std::pair{MessageType::auth_response, uint8_t{0x07}}};
+} // namespace
+
+TEST_CASE("protocol message type bytes are stable", "[unit][protocol]") {
+    auto const [type, byte] = GENERATE(from_range(wire_types));
+    CAPTURE(byte);
+    Pipe pipe;
+    neotape::tcp::write_message(pipe.fds[1], Message{type});
+    pipe.finish();
+    std::array<uint8_t, 10> actual{};
+    REQUIRE(::read(pipe.fds[0], actual.data(), actual.size()) == 9);
+    std::array<uint8_t, 10> expected{byte, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    REQUIRE(actual == expected);
 }
 
-TEST_CASE("TCP protocol messages and addresses", "[unit][protocol]") {
-    int fds[2];
-    if (pipe(fds) != 0) {
-        fail("pipe failed");
+TEST_CASE("protocol reader accepts fixed message type bytes",
+          "[unit][protocol]") {
+    auto const [type, byte] = GENERATE(from_range(wire_types));
+    Pipe pipe;
+    pipe.send(std::array<uint8_t, 9>{byte, 0, 0, 0, 0, 0, 0, 0, 0});
+    pipe.finish();
+    auto const message = neotape::tcp::read_message(pipe.fds[0]);
+    REQUIRE(message.has_value());
+    REQUIRE(message->type == type);
+    REQUIRE(message->payload.empty());
+    REQUIRE_FALSE(neotape::tcp::read_message(pipe.fds[0]).has_value());
+}
+
+TEST_CASE("protocol length and payload match a fixed wire vector",
+          "[unit][protocol]") {
+    std::vector<std::byte> payload(256);
+    std::vector<uint8_t> wire{0x02, 0x00, 0x01, 0, 0, 0, 0, 0, 0};
+    for (unsigned i = 0; i < 256; ++i) {
+        payload[i] = static_cast<std::byte>(i);
+        wire.push_back(static_cast<uint8_t>(i));
     }
-
-    // Empty payload round-trip.
-    {
-        Message out{MessageType::next_frame, {}};
-        neotape::tcp::write_message(fds[1], out);
-
-        auto in = neotape::tcp::read_message(fds[0]);
-        if (!in.has_value()) {
-            fail("expected a message for empty payload");
-        }
-        if (in->type != MessageType::next_frame) {
-            fail("wrong message type for empty payload");
-        }
-        if (!in->payload.empty()) {
-            fail("expected empty payload");
-        }
+    SECTION("writer produces little-endian length and exact payload") {
+        Pipe pipe;
+        neotape::tcp::write_message(pipe.fds[1],
+                                    {MessageType::frame_record, payload});
+        pipe.finish();
+        std::vector<uint8_t> actual(wire.size() + 1);
+        REQUIRE(::read(pipe.fds[0], actual.data(), actual.size()) ==
+                static_cast<ssize_t>(wire.size()));
+        actual.resize(wire.size());
+        REQUIRE(actual == wire);
     }
-
-    // 256-byte payload round-trip.
-    {
-        std::vector<std::byte> payload;
-        payload.reserve(256);
-        for (int i = 0; i < 256; ++i) {
-            payload.push_back(static_cast<std::byte>(i));
-        }
-
-        Message out{MessageType::frame_record, std::move(payload)};
-        neotape::tcp::write_message(fds[1], out);
-
-        auto in = neotape::tcp::read_message(fds[0]);
-        if (!in.has_value()) {
-            fail("expected a message");
-        }
-        if (in->type != MessageType::frame_record) {
-            fail("wrong message type");
-        }
-        if (in->payload.size() != 256) {
-            fail("wrong payload size");
-        }
-        for (int i = 0; i < 256; ++i) {
-            if (static_cast<uint8_t>(in->payload[i]) !=
-                static_cast<uint8_t>(i)) {
-                fail("payload mismatch");
-            }
-        }
+    SECTION("reader consumes independent bytes") {
+        Pipe pipe;
+        pipe.send(wire);
+        pipe.finish();
+        auto const message = neotape::tcp::read_message(pipe.fds[0]);
+        REQUIRE(message.has_value());
+        REQUIRE(message->type == MessageType::frame_record);
+        REQUIRE(message->payload == payload);
     }
+}
 
-    // Multiple sequential messages.
-    {
-        for (int i = 0; i < 4; ++i) {
-            std::vector<std::byte> payload = {
-                static_cast<std::byte>(i),
-                static_cast<std::byte>(i + 1),
-            };
-            Message out{MessageType::next_frame, std::move(payload)};
-            neotape::tcp::write_message(fds[1], out);
-        }
+TEST_CASE("protocol preserves consecutive ACK and authentication payloads",
+          "[unit][protocol]") {
+    Pipe pipe;
+    std::array messages{
+        Message{MessageType::ack_frame,
+                {std::byte{0xf0}, std::byte{0xde}, std::byte{0xbc},
+                 std::byte{0x9a}, std::byte{0x78}, std::byte{0x56},
+                 std::byte{0x34}, std::byte{0x12}}},
+        Message{MessageType::auth_challenge,
+                std::vector<std::byte>(32, std::byte{0x5a})},
+        Message{MessageType::auth_response,
+                std::vector<std::byte>(64, std::byte{0xa5})}};
+    for (auto const &message : messages)
+        neotape::tcp::write_message(pipe.fds[1], message);
+    pipe.finish();
+    for (auto const &expected : messages) {
+        auto const actual = neotape::tcp::read_message(pipe.fds[0]);
+        REQUIRE(actual.has_value());
+        REQUIRE(actual->type == expected.type);
+        REQUIRE(actual->payload == expected.payload);
+    }
+    REQUIRE_FALSE(neotape::tcp::read_message(pipe.fds[0]).has_value());
+}
 
-        for (int i = 0; i < 4; ++i) {
-            auto in = neotape::tcp::read_message(fds[0]);
-            if (!in.has_value()) {
-                fail("expected sequential message");
-            }
-            if (in->type != MessageType::next_frame) {
-                fail("wrong sequential message type");
-            }
-            if (in->payload.size() != 2) {
-                fail("wrong sequential payload size");
-            }
-            if (static_cast<uint8_t>(in->payload[0]) !=
-                static_cast<uint8_t>(i)) {
-                fail("sequential payload[0] mismatch");
-            }
-            if (static_cast<uint8_t>(in->payload[1]) !=
-                static_cast<uint8_t>(i + 1)) {
-                fail("sequential payload[1] mismatch");
-            }
-        }
-    }
+TEST_CASE("protocol distinguishes clean EOF from a truncated header",
+          "[unit][protocol]") {
+    auto const size = GENERATE(0U, 1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U);
+    std::array<uint8_t, 9> header{0x02, 1, 0, 0, 0, 0, 0, 0, 0};
+    Pipe pipe;
+    pipe.send(std::span(header).first(size));
+    pipe.finish();
+    if (size == 0)
+        REQUIRE_FALSE(neotape::tcp::read_message(pipe.fds[0]).has_value());
+    else
+        REQUIRE_THROWS_AS(neotape::tcp::read_message(pipe.fds[0]),
+                          std::runtime_error);
+}
 
-    // ack_frame round-trip (8-byte little-endian uint64 payload).
-    {
-        uint64_t const seq = 0x123456789abcdef0u;
-        std::vector<std::byte> payload;
-        payload.reserve(8);
-        for (std::size_t i = 0; i < 8; ++i) {
-            payload.push_back(static_cast<std::byte>((seq >> (8 * i)) & 0xffu));
-        }
+TEST_CASE("protocol rejects truncated payload", "[unit][protocol]") {
+    Pipe pipe;
+    pipe.send(std::array<uint8_t, 10>{0x02, 2, 0, 0, 0, 0, 0, 0, 0, 0xab});
+    pipe.finish();
+    REQUIRE_THROWS_AS(neotape::tcp::read_message(pipe.fds[0]),
+                      std::runtime_error);
+}
 
-        Message out{MessageType::ack_frame, std::move(payload)};
-        neotape::tcp::write_message(fds[1], out);
+TEST_CASE("protocol rejects unknown type before reading payload",
+          "[unit][protocol]") {
+    auto const type = GENERATE(0x00, 0x08, 0xff);
+    Pipe pipe;
+    pipe.send(std::array<uint8_t, 9>{static_cast<uint8_t>(type), 0, 0, 0, 0, 0,
+                                     0, 0, 0});
+    pipe.finish();
+    REQUIRE_THROWS_AS(neotape::tcp::read_message(pipe.fds[0]),
+                      std::runtime_error);
+}
 
-        auto in = neotape::tcp::read_message(fds[0]);
-        if (!in.has_value()) {
-            fail("expected ack_frame message");
-        }
-        if (in->type != MessageType::ack_frame) {
-            fail("wrong message type for ack_frame");
-        }
-        if (in->payload.size() != 8) {
-            fail("wrong ack_frame payload size");
-        }
-        uint64_t decoded = 0;
-        for (std::size_t i = 0; i < 8; ++i) {
-            decoded |=
-                static_cast<uint64_t>(static_cast<uint8_t>(in->payload[i]))
-                << (8 * i);
-        }
-        if (decoded != seq) {
-            fail("ack_frame payload mismatch");
-        }
-    }
+TEST_CASE("protocol rejects oversized length before reading payload",
+          "[unit][protocol]") {
+    // 16 MiB + 1 and UINT64_MAX, encoded independently of the codec/limit
+    // constant.
+    auto const length = GENERATE(
+        (std::array<uint8_t, 8>{1, 0, 0, 1, 0, 0, 0, 0}),
+        (std::array<uint8_t, 8>{255, 255, 255, 255, 255, 255, 255, 255}));
+    Pipe pipe;
+    pipe.send(std::array<uint8_t, 1>{0x02});
+    pipe.send(length);
+    // Leave the writer open: accepting the length would block, not fail at EOF.
+    // A nonblocking read makes such a regression fail immediately with EAGAIN.
+    int const flags = ::fcntl(pipe.fds[0], F_GETFL);
+    REQUIRE(flags >= 0);
+    REQUIRE(::fcntl(pipe.fds[0], F_SETFL, flags | O_NONBLOCK) == 0);
+    REQUIRE_THROWS_WITH(neotape::tcp::read_message(pipe.fds[0]),
+                        Catch::Matchers::ContainsSubstring("exceeds maximum"));
+}
 
-    // auth_challenge / auth_response round-trip.
-    {
-        std::vector<std::byte> challenge(32, std::byte{0x5a});
-        Message out{MessageType::auth_challenge, challenge};
-        neotape::tcp::write_message(fds[1], out);
+TEST_CASE("protocol parses TCP addresses", "[unit][protocol]") {
+    auto const [text, host] =
+        GENERATE(std::pair{"tcp://127.0.0.1:9123", "127.0.0.1"},
+                 std::pair{"tcp://[::1]:9123", "::1"},
+                 std::pair{"tcp://::1:9123", "::1"},
+                 std::pair{"tcp://0.0.0.0:9123", "0.0.0.0"});
+    auto const address = neotape::tcp::parse_address(text);
+    REQUIRE_FALSE(address.is_unix);
+    REQUIRE(address.host == host);
+    REQUIRE(address.port == "9123");
+}
 
-        auto in = neotape::tcp::read_message(fds[0]);
-        if (!in.has_value()) {
-            fail("expected auth_challenge message");
-        }
-        if (in->type != MessageType::auth_challenge) {
-            fail("wrong message type for auth_challenge");
-        }
-        if (in->payload.size() != challenge.size()) {
-            fail("wrong auth_challenge payload size");
-        }
+TEST_CASE("protocol parses Unix addresses", "[unit][protocol]") {
+    auto const address =
+        neotape::tcp::parse_address("unix:///tmp/neotape.sock");
+    REQUIRE(address.is_unix);
+    REQUIRE(address.path == "/tmp/neotape.sock");
+}
 
-        std::vector<std::byte> response(64, std::byte{0xa5});
-        neotape::tcp::write_message(
-            fds[1], Message{MessageType::auth_response, response});
-        in = neotape::tcp::read_message(fds[0]);
-        if (!in.has_value()) {
-            fail("expected auth_response message");
-        }
-        if (in->type != MessageType::auth_response) {
-            fail("wrong message type for auth_response");
-        }
-        if (in->payload.size() != response.size()) {
-            fail("wrong auth_response payload size");
-        }
-    }
-
-    // Clean close returns nullopt.
-    close(fds[1]);
-    auto end = neotape::tcp::read_message(fds[0]);
-    if (end.has_value()) {
-        fail("expected nullopt on clean close");
-    }
-    close(fds[0]);
-
-    // --- Address parsing tests ---
-    {
-        // tcp://host:port
-        auto a = neotape::tcp::parse_address("tcp://127.0.0.1:9123");
-        if (a.is_unix)
-            fail("tcp address should not be unix");
-        if (a.host != "127.0.0.1")
-            fail("tcp host mismatch: " + a.host);
-        if (a.port != "9123")
-            fail("tcp port mismatch: " + a.port);
-    }
-    {
-        // tcp://ipv6 with brackets (recommended form)
-        auto a = neotape::tcp::parse_address("tcp://[::1]:9123");
-        if (a.is_unix)
-            fail("ipv6 brackets: should not be unix");
-        // Brackets are stripped for getaddrinfo() compatibility.
-        if (a.host != "::1")
-            fail("ipv6 brackets host: " + a.host);
-        if (a.port != "9123")
-            fail("ipv6 brackets port: " + a.port);
-    }
-    {
-        // tcp://ipv6 without brackets (rfind(':') on last colon)
-        auto a = neotape::tcp::parse_address("tcp://::1:9123");
-        if (a.is_unix)
-            fail("ipv6 no brackets: should not be unix");
-        if (a.host != "::1")
-            fail("ipv6 no brackets host: " + a.host);
-        if (a.port != "9123")
-            fail("ipv6 no brackets port: " + a.port);
-    }
-    {
-        // tcp:// wildcard bind
-        auto a = neotape::tcp::parse_address("tcp://0.0.0.0:9123");
-        if (a.is_unix)
-            fail("wildcard: should not be unix");
-        if (a.host != "0.0.0.0")
-            fail("wildcard host: " + a.host);
-        if (a.port != "9123")
-            fail("wildcard port: " + a.port);
-    }
-    {
-        // unix:// path
-        auto a = neotape::tcp::parse_address("unix:///tmp/neotape.sock");
-        if (!a.is_unix)
-            fail("unix: should be unix");
-        if (a.path != "/tmp/neotape.sock")
-            fail("unix path: " + a.path);
-    }
-    {
-        // Missing port throws
-        bool threw = false;
-        try {
-            neotape::tcp::parse_address("tcp://localhost");
-        } catch (const std::runtime_error &) {
-            threw = true;
-        }
-        if (!threw)
-            fail("missing port should throw");
-    }
-    {
-        // Unknown prefix throws
-        bool threw = false;
-        try {
-            neotape::tcp::parse_address("http://example.com:80");
-        } catch (const std::runtime_error &) {
-            threw = true;
-        }
-        if (!threw)
-            fail("unknown prefix should throw");
-    }
-    {
-        // Empty address throws
-        bool threw = false;
-        try {
-            neotape::tcp::parse_address("");
-        } catch (const std::runtime_error &) {
-            threw = true;
-        }
-        if (!threw)
-            fail("empty address should throw");
-    }
-
+TEST_CASE("protocol rejects unsupported addresses", "[unit][protocol]") {
+    auto const text = GENERATE("tcp://localhost", "http://example.com:80", "");
+    REQUIRE_THROWS_AS(neotape::tcp::parse_address(text), std::runtime_error);
 }

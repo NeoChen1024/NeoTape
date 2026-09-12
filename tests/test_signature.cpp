@@ -20,7 +20,6 @@ extern "C" {
 #include <cstdlib>
 #include <exception>
 #include <fstream>
-#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -40,25 +39,6 @@ const string regress_pubkey =
 const string regress_seckey =
     string(NEOTAPE_SOURCE_DIR) + "/3rdparty/signify/regress/regresskey.sec";
 
-void fail(const string &msg) {
-    FAIL(msg);
-}
-
-void expect(bool ok, const string &msg) {
-    if (!ok) {
-        fail(msg);
-    }
-}
-
-template <class Fn> void expect_throw(Fn fn, const string &msg) {
-    try {
-        fn();
-    } catch (const std::exception &) {
-        return;
-    }
-    fail(msg);
-}
-
 Hash sample_hash() {
     Hash hash{};
     for (size_t i = 0; i < hash.size(); ++i) {
@@ -70,22 +50,16 @@ Hash sample_hash() {
 string make_temp_path() {
     char path[] = "/tmp/neotape-signature-XXXXXX";
     int const fd = mkstemp(path);
-    if (fd < 0) {
-        fail("mkstemp failed");
-    }
+    REQUIRE(fd >= 0);
     close(fd);
     return path;
 }
 
 void write_text_file(const string &path, string_view text) {
     std::ofstream out(path, std::ios::binary);
-    if (!out) {
-        fail("failed to open temp file");
-    }
+    REQUIRE(out.good());
     out.write(text.data(), static_cast<std::streamsize>(text.size()));
-    if (!out) {
-        fail("failed to write temp file");
-    }
+    REQUIRE(out.good());
 }
 
 string armor_secret_key(const SignifySecretKey &key, string_view passphrase,
@@ -112,37 +86,32 @@ string armor_secret_key(const SignifySecretKey &key, string_view passphrase,
     std::copy(key.key_id.begin(), key.key_id.end(), blob.begin() + 32);
 
     array<uint8_t, 64> xor_key{};
-    if (bcrypt_pbkdf(passphrase.data(), passphrase.size(), blob.data() + 8, 16,
-                     xor_key.data(), xor_key.size(), rounds) == -1) {
-        fail("bcrypt_pbkdf failed");
-    }
+    REQUIRE(bcrypt_pbkdf(passphrase.data(), passphrase.size(), blob.data() + 8,
+                         16, xor_key.data(), xor_key.size(), rounds) == 0);
     for (size_t i = 0; i < key.secret_key.size(); ++i) {
         blob[40 + i] = static_cast<uint8_t>(key.secret_key[i] ^ xor_key[i]);
     }
     char base64[512];
-    if (neotape_b64_ntop(blob.data(), blob.size(), base64, sizeof(base64)) == -1) {
-        fail("b64_ntop failed");
-    }
+    REQUIRE(neotape_b64_ntop(blob.data(), blob.size(), base64,
+                             sizeof(base64)) >= 0);
     return "untrusted comment: signify secret key\n" + string(base64) + "\n";
 }
 
-void test_load_signify_keys_and_sign_verify() {
+TEST_CASE("signature: load signify keys and sign verify", "[unit][signature]") {
     SignifyPublicKey const pubkey =
         neotape::load_signify_public_key(regress_pubkey);
     SignifySecretKey const seckey =
         neotape::load_signify_secret_key(regress_seckey);
-    expect(pubkey.key_id == seckey.key_id, "key ids should match");
+    REQUIRE(pubkey.key_id == seckey.key_id);
 
     Hash const hash = sample_hash();
     neotape::SignatureBytes const signature =
         neotape::sign_frame_hash(seckey, hash);
-    expect(neotape::signature_key_id(signature) == pubkey.key_id,
-           "signature key id should match public key");
-    expect(neotape::verify_frame_hash_signature(signature, hash, pubkey),
-           "signature should verify");
+    REQUIRE(neotape::signature_key_id(signature) == pubkey.key_id);
+    REQUIRE(neotape::verify_frame_hash_signature(signature, hash, pubkey));
 }
 
-void test_load_encrypted_signify_secret_key() {
+TEST_CASE("signature: load encrypted signify secret key", "[unit][signature]") {
     SignifySecretKey const plain =
         neotape::load_signify_secret_key(string(regress_seckey));
     string const path = make_temp_path();
@@ -151,20 +120,17 @@ void test_load_encrypted_signify_secret_key() {
 
     SignifySecretKey const loaded =
         neotape::load_signify_secret_key(path, string(passphrase));
-    expect(loaded.key_id == plain.key_id, "encrypted key id should round-trip");
-    expect(loaded.secret_key == plain.secret_key,
-           "encrypted secret key should decrypt");
+    REQUIRE(loaded.key_id == plain.key_id);
+    REQUIRE(loaded.secret_key == plain.secret_key);
 
-    expect_throw(
-        [&] {
-            neotape::load_signify_secret_key(path, string("wrong-passphrase"));
-        },
-        "wrong passphrase should fail");
+    REQUIRE_THROWS_AS(
+        neotape::load_signify_secret_key(path, string("wrong-passphrase")),
+        std::exception);
 
     std::remove(path.c_str());
 }
 
-void test_validate_frame_signature() {
+TEST_CASE("signature: validate frame signature", "[unit][signature]") {
     SignifyPublicKey const pubkey =
         neotape::load_signify_public_key(regress_pubkey);
     SignifySecretKey const seckey =
@@ -181,50 +147,39 @@ void test_validate_frame_signature() {
     header.signature = neotape::sign_frame_hash(seckey, hash);
 
     auto validation = neotape::validate_frame_signature(header, {pubkey});
-    expect(!validation.error.has_value(), "signed frame should validate");
-    expect(validation.status == neotape::FrameSignatureStatus::verified,
-           "signed frame should report verified status");
+    REQUIRE(!validation.error.has_value());
+    REQUIRE(validation.status == neotape::FrameSignatureStatus::verified);
 
     validation = neotape::validate_frame_signature(header, {});
-    expect(!validation.error.has_value(),
-           "signed frame without key should remain usable");
-    expect(validation.status ==
-               neotape::FrameSignatureStatus::signed_unverified,
-           "signed frame without key should report unverified status");
+    REQUIRE(!validation.error.has_value());
+    REQUIRE(validation.status ==
+            neotape::FrameSignatureStatus::signed_unverified);
 
     validation = neotape::validate_frame_signature(header, {}, true);
-    expect(validation.error.has_value(),
-           "require-signed validation without keys should fail");
-    expect(validation.status == neotape::FrameSignatureStatus::invalid,
-           "invalid require-signed configuration should report invalid status");
+    REQUIRE(validation.error.has_value());
+    REQUIRE(validation.status == neotape::FrameSignatureStatus::invalid);
 
     header.signature.fill(0);
     validation = neotape::validate_frame_signature(header, {});
-    expect(validation.error.has_value(),
-           "SIGNED frame with an all-zero signature should fail");
-    expect(validation.status == neotape::FrameSignatureStatus::invalid,
-           "all-zero signed frame should report invalid status");
+    REQUIRE(validation.error.has_value());
+    REQUIRE(validation.status == neotape::FrameSignatureStatus::invalid);
 
     header.flags = 0;
     header.signature.fill(0);
     validation = neotape::validate_frame_signature(header, {pubkey});
-    expect(!validation.error.has_value(),
-           "unsigned frame should validate when signatures are optional");
-    expect(validation.status == neotape::FrameSignatureStatus::unsigned_frame,
-           "unsigned frame should report unsigned status");
+    REQUIRE(!validation.error.has_value());
+    REQUIRE(validation.status == neotape::FrameSignatureStatus::unsigned_frame);
 
     header.signature[0] = 1;
     validation = neotape::validate_frame_signature(header, {pubkey});
-    expect(validation.error.has_value(),
-           "unsigned frame with signature bytes should fail");
+    REQUIRE(validation.error.has_value());
     header.signature.fill(0);
 
     validation = neotape::validate_frame_signature(header, {pubkey}, true);
-    expect(validation.error.has_value(),
-           "unsigned frame should fail when signatures are required");
+    REQUIRE(validation.error.has_value());
 }
 
-void test_auth_nonce_sign_verify() {
+TEST_CASE("signature: auth nonce sign verify", "[unit][signature]") {
     SignifyPublicKey const pubkey =
         neotape::load_signify_public_key(regress_pubkey);
     SignifySecretKey const seckey =
@@ -237,15 +192,14 @@ void test_auth_nonce_sign_verify() {
 
     neotape::DetachedSignatureBytes const signature =
         neotape::sign_auth_nonce(seckey, nonce);
-    expect(neotape::verify_auth_nonce_signature(signature, nonce, pubkey),
-           "auth nonce signature should verify");
+    REQUIRE(neotape::verify_auth_nonce_signature(signature, nonce, pubkey));
 
     nonce[0] ^= 0x5aU;
-    expect(!neotape::verify_auth_nonce_signature(signature, nonce, pubkey),
-           "auth nonce signature should fail for wrong nonce");
+    REQUIRE(!neotape::verify_auth_nonce_signature(signature, nonce, pubkey));
 }
 
-void test_patch_volume_seq_num_finalizes_deferred_record() {
+TEST_CASE("signature: patch volume seq num finalizes deferred record",
+          "[unit][signature]") {
     SignifyPublicKey const pubkey =
         neotape::load_signify_public_key(regress_pubkey);
     SignifySecretKey const seckey =
@@ -261,50 +215,35 @@ void test_patch_volume_seq_num_finalizes_deferred_record() {
     }
 
     auto flushed = builder.flush();
-    expect(flushed.empty(),
-           "flush without pending data should return no frame");
+    REQUIRE(flushed.empty());
 
     auto frames = builder.feed(payload);
-    expect(frames.empty(), "small payload should stay pending");
+    REQUIRE(frames.empty());
 
     flushed = builder.flush();
-    expect(flushed.size() == 1, "flush should produce final frame");
+    REQUIRE(flushed.size() == 1);
     auto &final_frame = flushed.front();
 
     FrameHeader const deferred = neotape::parse_fixed_header(
         reinterpret_cast<const uint8_t *>(final_frame.record.data()),
         final_frame.record.size());
-    expect(deferred.volume_seq_num == 0,
-           "deferred frame should keep placeholder volume seq");
-    expect(std::all_of(deferred.frame_hash.begin(), deferred.frame_hash.end(),
-                       [](uint8_t byte) { return byte == 0; }),
-           "deferred frame hash should be zero until finalization");
-    expect(!neotape::has_frame_flag_signed(deferred.flags),
-           "deferred frame should not be marked signed");
+    REQUIRE(deferred.volume_seq_num == 0);
+    REQUIRE(std::all_of(deferred.frame_hash.begin(), deferred.frame_hash.end(),
+                        [](uint8_t byte) { return byte == 0; }));
+    REQUIRE(!neotape::has_frame_flag_signed(deferred.flags));
 
     neotape::patch_volume_seq_num(final_frame.record, 7, &seckey);
 
     FrameHeader const finalized = neotape::parse_fixed_header(
         reinterpret_cast<const uint8_t *>(final_frame.record.data()),
         final_frame.record.size());
-    expect(finalized.volume_seq_num == 7, "volume seq should be patched");
-    expect(neotape::has_frame_flag_signed(finalized.flags),
-           "finalized frame should be marked signed");
-    expect(neotape::compute_frame_hash(
-               reinterpret_cast<const uint8_t *>(final_frame.record.data()),
-               final_frame.record.size()) == finalized.frame_hash,
-           "finalized frame hash should match record bytes");
-    expect(neotape::verify_frame_hash_signature(finalized.signature,
-                                                finalized.frame_hash, pubkey),
-           "finalized deferred frame signature should verify");
+    REQUIRE(finalized.volume_seq_num == 7);
+    REQUIRE(neotape::has_frame_flag_signed(finalized.flags));
+    REQUIRE(neotape::compute_frame_hash(
+                reinterpret_cast<const uint8_t *>(final_frame.record.data()),
+                final_frame.record.size()) == finalized.frame_hash);
+    REQUIRE(neotape::verify_frame_hash_signature(finalized.signature,
+                                                 finalized.frame_hash, pubkey));
 }
 
 } // namespace
-
-TEST_CASE("signify-compatible signatures", "[unit][signature]") {
-    test_load_signify_keys_and_sign_verify();
-    test_load_encrypted_signify_secret_key();
-    test_validate_frame_signature();
-    test_auth_nonce_sign_verify();
-    test_patch_volume_seq_num_finalizes_deferred_record();
-}

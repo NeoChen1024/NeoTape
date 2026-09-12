@@ -6,6 +6,7 @@
 #include <archive.h>
 #include <archive_entry.h>
 #include <memory>
+#include <set>
 #include <thread>
 
 #include <catch2/catch_test_macros.hpp>
@@ -131,10 +132,8 @@ TEST_CASE("multi-threaded mt-pax preserves files and symlinks",
         fs::create_symlink("../../small/file-" + std::to_string(index) + ".txt",
                            directory / ("link-" + std::to_string(index)));
     }
-    std::ofstream(source / "large-a.bin");
-    std::ofstream(source / "large-b.bin");
-    fs::resize_file(source / "large-a.bin", 5 * 1024 * 1024);
-    fs::resize_file(source / "large-b.bin", 6 * 1024 * 1024);
+    neotape::test::write_pattern(source / "large-a.bin", 5 * 1024 * 1024);
+    neotape::test::write_pattern(source / "large-b.bin", 6 * 1024 * 1024);
 
     ProcessResult const archive_result = Process::run(
         ProcessOptions{{NEOTAPE_MT_PAX, "-f", archive.string(), "-C",
@@ -150,11 +149,25 @@ TEST_CASE("multi-threaded mt-pax preserves files and symlinks",
                      30s);
     require_success(extract_result);
 
-    std::ifstream expected(small / "file-17.txt");
-    std::ifstream actual(output / "src/small/file-17.txt");
-    REQUIRE(std::string(std::istreambuf_iterator<char>(expected), {}) ==
-            std::string(std::istreambuf_iterator<char>(actual), {}));
-    REQUIRE(fs::is_symlink(output / "src/dirs/dir-17/link-17"));
+    std::set<fs::path> expected_paths;
+    std::set<fs::path> actual_paths;
+    for (auto const &entry : fs::recursive_directory_iterator(source)) {
+        // lexically_relative preserves symlink names instead of resolving them.
+        auto const relative = entry.path().lexically_relative(source);
+        expected_paths.insert(relative);
+        auto const restored = output / "src" / relative;
+        CAPTURE(relative);
+        REQUIRE(fs::symlink_status(restored).type() == entry.symlink_status().type());
+        if (entry.is_symlink()) {
+            REQUIRE(fs::read_symlink(restored) == fs::read_symlink(entry.path()));
+        } else if (entry.is_regular_file()) {
+            REQUIRE(neotape::test::read_file(restored) ==
+                    neotape::test::read_file(entry.path()));
+        }
+    }
+    for (auto const &entry : fs::recursive_directory_iterator(output / "src"))
+        actual_paths.insert(entry.path().lexically_relative(output / "src"));
+    REQUIRE(actual_paths == expected_paths);
 }
 
 TEST_CASE("mt-pax preserves opaque pathname and symlink target bytes",

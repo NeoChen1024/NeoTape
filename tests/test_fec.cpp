@@ -4,9 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
-#include <cstdlib>
 #include <exception>
-#include <iostream>
 #include <string>
 #include <vector>
 
@@ -14,26 +12,6 @@ namespace {
 
 using neotape::FecShard;
 using std::string;
-
-void fail(const string &message) {
-    FAIL(message);
-}
-
-void expect(bool condition, const string &message) {
-    if (!condition) {
-        fail(message);
-    }
-}
-
-template <typename Function>
-void expect_throw(Function &&function, const string &message) {
-    try {
-        function();
-    } catch (const std::exception &) {
-        return;
-    }
-    fail(message);
-}
 
 std::vector<FecShard> make_sources(std::size_t count, std::size_t shard_size) {
     std::vector<FecShard> shards(count);
@@ -88,7 +66,7 @@ neotape::Hash source_hash(const std::vector<FecShard> &shards,
     return neotape::blake3_hash(stream.data(), stream.size());
 }
 
-void test_descriptor_round_trip() {
+TEST_CASE("fec: descriptor round trip", "[unit][fec]") {
     neotape::FecDescriptor descriptor;
     descriptor.source_content_frame_start = 81;
     descriptor.source_frame_count = 17;
@@ -99,28 +77,22 @@ void test_descriptor_round_trip() {
 
     neotape::SidebandBytes const bytes =
         neotape::serialize_fec_descriptor(descriptor);
-    expect(bytes[0] == 1 && bytes[1] == 1, "bad descriptor prefix");
-    expect(bytes[56] == 0 && bytes[127] == 0,
-           "descriptor reserved bytes must be zero");
+    REQUIRE((bytes[0] == 1 && bytes[1] == 1));
+    REQUIRE((bytes[56] == 0 && bytes[127] == 0));
 
     neotape::FecDescriptor const parsed = neotape::parse_fec_descriptor(bytes);
-    expect(parsed.source_content_frame_start == 81,
-           "source frame start did not round trip");
-    expect(parsed.source_frame_count == 17 && parsed.repair_index == 3,
-           "shard counts did not round trip");
-    expect(parsed.source_stream_size == descriptor.source_stream_size,
-           "source stream size did not round trip");
-    expect(parsed.fec_group_blake3 == descriptor.fec_group_blake3,
-           "group hash did not round trip");
+    REQUIRE(parsed.source_content_frame_start == 81);
+    REQUIRE((parsed.source_frame_count == 17 && parsed.repair_index == 3));
+    REQUIRE(parsed.source_stream_size == descriptor.source_stream_size);
+    REQUIRE(parsed.fec_group_blake3 == descriptor.fec_group_blake3);
     neotape::validate_fec_descriptor(parsed, 4096);
 
     neotape::SidebandBytes corrupt = bytes;
     corrupt[127] = 1;
-    expect_throw([&] { neotape::parse_fec_descriptor(corrupt); },
-                 "nonzero descriptor reserved byte should fail");
+    REQUIRE_THROWS_AS(neotape::parse_fec_descriptor(corrupt), std::exception);
 }
 
-void test_encode_coefficients() {
+TEST_CASE("fec: encode coefficients", "[unit][fec]") {
     constexpr std::size_t shard_size = 4096;
     std::vector<FecShard> sources = make_sources(2, shard_size);
     neotape::FecRepairShards const repair =
@@ -128,11 +100,9 @@ void test_encode_coefficients() {
 
     // Repair row 0 consists entirely of coefficient 1.
     for (std::size_t byte = 0; byte < shard_size; ++byte) {
-        expect(repair[0][byte] == (sources[0][byte] ^ sources[1][byte]),
-               "repair row zero does not match XOR coefficients");
+        REQUIRE(repair[0][byte] == (sources[0][byte] ^ sources[1][byte]));
     }
-    expect(repair[0].size() == shard_size && repair[3].size() == shard_size,
-           "repair shard size mismatch");
+    REQUIRE((repair[0].size() == shard_size && repair[3].size() == shard_size));
 
     for (std::size_t row = 0; row < neotape::fec_repair_shards; ++row) {
         for (std::size_t byte : {0U, 17U, 1023U, 4095U}) {
@@ -143,13 +113,12 @@ void test_encode_coefficients() {
                 expected ^= gf_multiply(
                     coefficient, static_cast<uint8_t>(sources[shard][byte]));
             }
-            expect(static_cast<uint8_t>(repair[row][byte]) == expected,
-                   "repair bytes do not match normative coefficients");
+            REQUIRE(static_cast<uint8_t>(repair[row][byte]) == expected);
         }
     }
 }
 
-void test_recover_four_missing_real_shards() {
+TEST_CASE("fec: recover four missing real shards", "[unit][fec]") {
     constexpr std::size_t shard_size = 4096;
     constexpr uint16_t source_count = 17;
     uint64_t const stream_size = 16 * shard_size + 777;
@@ -172,11 +141,10 @@ void test_recover_four_missing_real_shards() {
     std::vector<FecShard> const recovered = neotape::recover_rs_32_4(
         std::move(available), source_count, stream_size, shard_size,
         source_hash(sources, stream_size));
-    expect(recovered == sources,
-           "four missing source shards were not recovered");
+    REQUIRE(recovered == sources);
 }
 
-void test_recovery_rejects_wrong_commitment() {
+TEST_CASE("fec: recovery rejects wrong commitment", "[unit][fec]") {
     constexpr std::size_t shard_size = 4096;
     std::vector<FecShard> sources = make_sources(1, shard_size);
     neotape::FecRepairShards repair =
@@ -186,15 +154,13 @@ void test_recovery_rejects_wrong_commitment() {
         available[neotape::fec_data_shards + i] = std::move(repair[i]);
     }
     neotape::Hash wrong_hash{};
-    expect_throw(
-        [&] {
-            neotape::recover_rs_32_4(std::move(available), 1, shard_size,
-                                     shard_size, wrong_hash);
-        },
-        "recovery must reject a wrong group commitment");
+    REQUIRE_THROWS_AS(neotape::recover_rs_32_4(std::move(available), 1,
+                                               shard_size, shard_size,
+                                               wrong_hash),
+                      std::exception);
 }
 
-void test_fec_frame_builder_layout() {
+TEST_CASE("fec: fec frame builder layout", "[unit][fec]") {
     constexpr std::size_t block_size = 4096;
     constexpr std::size_t capacity = block_size - neotape::fixed_header_size;
     std::vector<std::byte> payload(capacity * 33 + 123);
@@ -206,40 +172,32 @@ void test_fec_frame_builder_layout() {
         block_size, "00000000-0000-4000-8000-000000000123", "fec-test", true);
     builder.set_current_slice(0);
     std::vector<neotape::BuiltFrame> frames = builder.feed(payload);
-    expect(frames.size() == 36,
-           "first full 32C+4F group should be emitted together");
+    REQUIRE(frames.size() == 36);
     auto tail = builder.flush();
     frames.insert(frames.end(), std::make_move_iterator(tail.begin()),
                   std::make_move_iterator(tail.end()));
-    expect(frames.size() == 42, "expected 32C+4F then 2C+4F");
+    REQUIRE(frames.size() == 42);
 
     for (std::size_t i = 0; i < frames.size(); ++i) {
         neotape::FrameHeader const header = neotape::parse_fixed_header(
             reinterpret_cast<const uint8_t *>(frames[i].record.data()),
             frames[i].record.size());
-        expect(header.global_frame_seq_num == i,
-               "FEC layout global sequence is not gapless");
+        REQUIRE(header.global_frame_seq_num == i);
         bool const first_repair = i >= 32 && i < 36;
         bool const final_repair = i >= 38;
         if (first_repair || final_repair) {
-            expect(header.channel_type == neotape::ChannelType::CH_FEC,
-                   "repair position is not ch_fec");
-            expect(neotape::has_frame_flag_sideband(header.flags),
-                   "ch_fec frame is missing SIDEBAND");
+            REQUIRE(header.channel_type == neotape::ChannelType::CH_FEC);
+            REQUIRE(neotape::has_frame_flag_sideband(header.flags));
             neotape::FecDescriptor const descriptor =
                 neotape::parse_fec_descriptor(header.sideband_data);
             neotape::validate_fec_descriptor(descriptor, capacity);
-            expect(descriptor.source_frame_count == (first_repair ? 32 : 2),
-                   "FEC descriptor source count mismatch");
-            expect(descriptor.repair_index == (first_repair ? i - 32 : i - 38),
-                   "FEC repair index mismatch");
-            expect(header.frame_payload_size == capacity,
-                   "repair payload must fill the record");
+            REQUIRE(descriptor.source_frame_count == (first_repair ? 32 : 2));
+            REQUIRE(descriptor.repair_index ==
+                    (first_repair ? i - 32 : i - 38));
+            REQUIRE(header.frame_payload_size == capacity);
         } else {
-            expect(header.channel_type == neotape::ChannelType::CH_CONTENT,
-                   "content position is not ch_content");
-            expect(neotape::has_frame_flag_fec_protected(header.flags),
-                   "protected content is missing FEC_PROTECTED");
+            REQUIRE(header.channel_type == neotape::ChannelType::CH_CONTENT);
+            REQUIRE(neotape::has_frame_flag_fec_protected(header.flags));
         }
     }
 
@@ -249,18 +207,8 @@ void test_fec_frame_builder_layout() {
     neotape::FrameHeader const final_fec = neotape::parse_fixed_header(
         reinterpret_cast<const uint8_t *>(frames.back().record.data()),
         frames.back().record.size());
-    expect(neotape::has_frame_flag_end(final_content.flags),
-           "final content channel frame must carry END");
-    expect(neotape::has_frame_flag_end(final_fec.flags),
-           "final FEC channel frame must carry END");
+    REQUIRE(neotape::has_frame_flag_end(final_content.flags));
+    REQUIRE(neotape::has_frame_flag_end(final_fec.flags));
 }
 
 } // namespace
-
-TEST_CASE("Reed-Solomon FEC", "[unit][fec]") {
-    test_descriptor_round_trip();
-    test_encode_coefficients();
-    test_recover_four_missing_real_shards();
-    test_recovery_rejects_wrong_commitment();
-    test_fec_frame_builder_layout();
-}

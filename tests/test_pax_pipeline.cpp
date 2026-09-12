@@ -1,5 +1,8 @@
 #include "neotape/closable_queue.hpp"
 #include "neotape/result_store.hpp"
+#include "support/process.hpp"
+
+#include <catch2/interfaces/catch_interfaces_capture.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -7,7 +10,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <future>
-#include <iostream>
 #include <optional>
 #include <string>
 #include <utility>
@@ -16,136 +18,181 @@ namespace {
 
 using namespace std::chrono_literals;
 
-void require(bool cond, const char *msg) {
-    INFO(msg);
-    REQUIRE(cond);
+// Re-exec one Catch case so a stuck future destructor cannot hang the caller.
+std::optional<neotape::test::ProcessResult>
+run_isolated(std::chrono::milliseconds timeout) {
+    if (std::getenv("NEOTAPE_PIPELINE_CHILD"))
+        return std::nullopt;
+    neotape::test::ProcessOptions options{
+        {NEOTAPE_PAX_PIPELINE_TEST,
+         Catch::getResultCapture().getCurrentTestName(), "--reporter",
+         "compact"}};
+    options.environment.emplace_back("NEOTAPE_PIPELINE_CHILD", "1");
+    return neotape::test::Process::run(std::move(options), timeout);
 }
 
-void test_pop_wakes_on_close() {
+template <typename Function> auto start_operation(Function operation) {
+    std::promise<void> entered;
+    auto ready = entered.get_future();
+    auto pending = std::async(std::launch::async,
+                              [operation = std::move(operation),
+                               entered = std::move(entered)]() mutable {
+                                  entered.set_value();
+                                  return operation();
+                              });
+    // Establish worker startup explicitly; wait_for below observes
+    // non-completion, rather than treating elapsed time as proof of a
+    // particular internal state.
+    ready.wait();
+    return pending;
+}
+
+TEST_CASE("pipeline: pop wakes on close", "[unit][pax]") {
+    if (auto result = run_isolated(3s)) {
+        INFO(result->standard_output);
+        INFO(result->standard_error);
+        REQUIRE_FALSE(result->timed_out);
+        REQUIRE(result->exit_code == 0);
+        return;
+    }
     neotape::ClosableQueue<int> q(1);
-    auto pending = std::async(std::launch::async, [&] { return q.pop(); });
-    require(pending.wait_for(50ms) == std::future_status::timeout,
-            "empty queue pop remains pending");
+    auto pending = start_operation([&] { return q.pop(); });
+    REQUIRE(pending.wait_for(50ms) == std::future_status::timeout);
     q.close();
-    require(pending.wait_for(1s) == std::future_status::ready,
-            "close wakes empty queue pop before deadline");
+    REQUIRE(pending.wait_for(1s) == std::future_status::ready);
     std::optional<int> const got = pending.get();
-    require(!got.has_value(), "closed empty queue returns nullopt");
+    REQUIRE(!got.has_value());
 }
 
-void test_push_wakes_on_close() {
+TEST_CASE("pipeline: push wakes on close", "[unit][pax]") {
+    if (auto result = run_isolated(3s)) {
+        INFO(result->standard_output);
+        INFO(result->standard_error);
+        REQUIRE_FALSE(result->timed_out);
+        REQUIRE(result->exit_code == 0);
+        return;
+    }
     neotape::ClosableQueue<int> q(1);
-    require(q.push(1), "initial push succeeds");
-    auto pending =
-        std::async(std::launch::async, [&] { return q.push(2); });
-    require(pending.wait_for(50ms) == std::future_status::timeout,
-            "second push blocks while full");
+    REQUIRE(q.push(1));
+    auto pending = start_operation([&] { return q.push(2); });
+    REQUIRE(pending.wait_for(50ms) == std::future_status::timeout);
     q.close();
-    require(pending.wait_for(1s) == std::future_status::ready,
-            "close wakes blocked push before deadline");
+    REQUIRE(pending.wait_for(1s) == std::future_status::ready);
     bool const pushed = pending.get();
-    require(!pushed, "blocked push returns false after close");
+    REQUIRE(!pushed);
 }
 
-void test_close_drains_existing_items() {
+TEST_CASE("pipeline: close drains existing items", "[unit][pax]") {
+    if (auto result = run_isolated(3s)) {
+        INFO(result->standard_output);
+        INFO(result->standard_error);
+        REQUIRE_FALSE(result->timed_out);
+        REQUIRE(result->exit_code == 0);
+        return;
+    }
     neotape::ClosableQueue<int> q(2);
-    require(q.push(7), "push before close succeeds");
+    REQUIRE(q.push(7));
     q.close();
     auto first = q.pop();
     auto second = q.pop();
-    require(first.has_value() && *first == 7,
-            "closed queue drains existing item");
-    require(!second.has_value(), "closed drained queue returns nullopt");
-    require(!q.push(8), "push after close fails");
+    REQUIRE((first.has_value() && *first == 7));
+    REQUIRE(!second.has_value());
+    REQUIRE(!q.push(8));
 }
 
-void test_result_store_waits_for_exact_sequence() {
+TEST_CASE("pipeline: result store waits for exact sequence", "[unit][pax]") {
+    if (auto result = run_isolated(3s)) {
+        INFO(result->standard_output);
+        INFO(result->standard_error);
+        REQUIRE_FALSE(result->timed_out);
+        REQUIRE(result->exit_code == 0);
+        return;
+    }
     neotape::ResultStore<std::string> store;
-    auto pending =
-        std::async(std::launch::async, [&] { return store.take(5); });
-    require(pending.wait_for(50ms) == std::future_status::timeout,
-            "take waits for requested sequence");
-    store.put(4, "wrong");
-    require(pending.wait_for(50ms) == std::future_status::timeout,
-            "take ignores other sequence results");
-    store.put(5, "right");
-    require(pending.wait_for(1s) == std::future_status::ready,
-            "requested sequence wakes take before deadline");
+    auto pending = start_operation([&] { return store.take(5); });
+    REQUIRE(pending.wait_for(50ms) == std::future_status::timeout);
+    REQUIRE(store.put(4, "wrong"));
+    REQUIRE(pending.wait_for(50ms) == std::future_status::timeout);
+    REQUIRE(store.put(5, "right"));
+    REQUIRE(pending.wait_for(1s) == std::future_status::ready);
     std::optional<std::string> const got = pending.get();
-    require(got.has_value() && *got == "right",
-            "take returns requested result");
+    REQUIRE((got.has_value() && *got == "right"));
 }
 
-void test_result_store_close_wakes_take() {
+TEST_CASE("pipeline: result store close wakes take", "[unit][pax]") {
+    if (auto result = run_isolated(3s)) {
+        INFO(result->standard_output);
+        INFO(result->standard_error);
+        REQUIRE_FALSE(result->timed_out);
+        REQUIRE(result->exit_code == 0);
+        return;
+    }
     neotape::ResultStore<std::string> store;
-    auto pending =
-        std::async(std::launch::async, [&] { return store.take(9); });
-    require(pending.wait_for(50ms) == std::future_status::timeout,
-            "missing result keeps take pending");
+    auto pending = start_operation([&] { return store.take(9); });
+    REQUIRE(pending.wait_for(50ms) == std::future_status::timeout);
     store.close();
-    require(pending.wait_for(1s) == std::future_status::ready,
-            "close wakes pending take before deadline");
+    REQUIRE(pending.wait_for(1s) == std::future_status::ready);
     std::optional<std::string> const got = pending.get();
-    require(!got.has_value(), "closed result store wakes pending take");
+    REQUIRE(!got.has_value());
 }
 
-void test_result_store_bounded_put_waits_for_space() {
+TEST_CASE("pipeline: result store bounded put waits for space", "[unit][pax]") {
+    if (auto result = run_isolated(3s)) {
+        INFO(result->standard_output);
+        INFO(result->standard_error);
+        REQUIRE_FALSE(result->timed_out);
+        REQUIRE(result->exit_code == 0);
+        return;
+    }
     neotape::ResultStore<std::string> store(1);
-    require(store.put(1, "first"), "initial bounded put succeeds");
-    auto pending =
-        std::async(std::launch::async, [&] { return store.put(2, "second"); });
-    require(pending.wait_for(50ms) == std::future_status::timeout,
-            "bounded result store put blocks while full");
+    REQUIRE(store.put(1, "first"));
+    auto pending = start_operation([&] { return store.put(2, "second"); });
+    REQUIRE(pending.wait_for(50ms) == std::future_status::timeout);
     auto first = store.take(1);
-    require(pending.wait_for(1s) == std::future_status::ready,
-            "free capacity wakes blocked put before deadline");
+    REQUIRE(pending.wait_for(1s) == std::future_status::ready);
     bool const second_put = pending.get();
-    require(first.has_value() && *first == "first",
-            "take returns first bounded result");
-    require(second_put, "blocked bounded put succeeds after take frees space");
+    REQUIRE((first.has_value() && *first == "first"));
+    REQUIRE(second_put);
     auto second = store.take(2);
-    require(second.has_value() && *second == "second",
-            "second bounded result is stored after wait");
+    REQUIRE((second.has_value() && *second == "second"));
 }
 
-void test_result_store_close_wakes_bounded_put() {
+TEST_CASE("pipeline: result store close wakes bounded put", "[unit][pax]") {
+    if (auto result = run_isolated(3s)) {
+        INFO(result->standard_output);
+        INFO(result->standard_error);
+        REQUIRE_FALSE(result->timed_out);
+        REQUIRE(result->exit_code == 0);
+        return;
+    }
     neotape::ResultStore<std::string> store(1);
-    require(store.put(1, "first"), "initial bounded close test put succeeds");
-    auto pending =
-        std::async(std::launch::async, [&] { return store.put(2, "second"); });
-    require(pending.wait_for(50ms) == std::future_status::timeout,
-            "bounded result store put waits before close");
+    REQUIRE(store.put(1, "first"));
+    auto pending = start_operation([&] { return store.put(2, "second"); });
+    REQUIRE(pending.wait_for(50ms) == std::future_status::timeout);
     store.close();
-    require(pending.wait_for(1s) == std::future_status::ready,
-            "close wakes bounded put before deadline");
+    REQUIRE(pending.wait_for(1s) == std::future_status::ready);
     bool const second_put = pending.get();
-    require(!second_put, "blocked bounded put returns false after close");
+    REQUIRE(!second_put);
 }
 
-void test_result_store_capacity_allows_earliest_late_completion() {
+TEST_CASE("pipeline: result store capacity allows earliest late completion",
+          "[unit][pax]") {
+    if (auto result = run_isolated(3s)) {
+        INFO(result->standard_output);
+        INFO(result->standard_error);
+        REQUIRE_FALSE(result->timed_out);
+        REQUIRE(result->exit_code == 0);
+        return;
+    }
     neotape::ResultStore<std::string> store(3);
-    require(store.put(2, "two"), "put later result 2 succeeds");
-    require(store.put(1, "one"), "put later result 1 succeeds");
-    auto pending =
-        std::async(std::launch::async, [&] { return store.put(0, "zero"); });
-    require(pending.wait_for(1s) == std::future_status::ready,
-            "earliest result can publish after later results");
+    REQUIRE(store.put(2, "two"));
+    REQUIRE(store.put(1, "one"));
+    auto pending = start_operation([&] { return store.put(0, "zero"); });
+    REQUIRE(pending.wait_for(1s) == std::future_status::ready);
     bool const put_zero = pending.get();
-    require(put_zero, "earliest result put succeeds");
+    REQUIRE(put_zero);
     auto zero = store.take(0);
-    require(zero.has_value() && *zero == "zero",
-            "earliest result is available");
+    REQUIRE((zero.has_value() && *zero == "zero"));
 }
 
 } // namespace
-
-TEST_CASE("pax pipeline synchronization primitives", "[unit][pax]") {
-    test_pop_wakes_on_close();
-    test_push_wakes_on_close();
-    test_close_drains_existing_items();
-    test_result_store_waits_for_exact_sequence();
-    test_result_store_close_wakes_take();
-    test_result_store_bounded_put_waits_for_space();
-    test_result_store_close_wakes_bounded_put();
-    test_result_store_capacity_allows_earliest_late_completion();
-}
