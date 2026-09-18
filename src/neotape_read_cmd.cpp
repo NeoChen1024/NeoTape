@@ -107,10 +107,14 @@ int main(int argc, char **argv) {
         uint64_t filemark_count = 0;
         uint64_t skipped_prefix_records = 0;
         bool saw_neotape_frame = false;
+        bool archive_end_acked = false;
 
         for (;;) {
             auto msg = neotape::tcp::read_message(fd);
             if (!msg) {
+                if (!archive_end_acked)
+                    fail("unexpected disconnect before archive_end "
+                         "acknowledgement");
                 break;
             }
 
@@ -125,8 +129,20 @@ int main(int argc, char **argv) {
                         ++filemark_count;
                         continue;
                     }
-                    if (saw_neotape_frame)
-                        break;
+                    if (saw_neotape_frame) {
+                        try {
+                            neotape::parse_fixed_header(
+                                reinterpret_cast<const uint8_t *>(
+                                    event.record.data()),
+                                event.record.size());
+                            break;
+                        } catch (const std::exception &error) {
+                            std::cerr << format(
+                                "neotape-read: unavailable record: {}\n",
+                                error.what());
+                            continue;
+                        }
+                    }
                     if (event.record.size() >= neotape::magic.size() &&
                         std::memcmp(event.record.data(), neotape::magic.data(),
                                     neotape::magic.size()) == 0) {
@@ -150,6 +166,9 @@ int main(int argc, char **argv) {
                         skipped_prefix_records);
                 }
 
+                auto const sent_header = neotape::parse_fixed_header(
+                    reinterpret_cast<const uint8_t *>(event.record.data()),
+                    event.record.size());
                 {
                     vector<std::byte> frame_bytes;
                     frame_bytes.swap(event.record);
@@ -168,6 +187,12 @@ int main(int argc, char **argv) {
                     fail(format("expected ack_frame, got message type {}",
                                 static_cast<int>(ack->type)));
                 }
+                if (ack->payload.size() != 8 ||
+                    neotape::le64_from_bytes(ack->payload) !=
+                        sent_header.global_frame_seq_num)
+                    fail("ack_frame does not match the sent record");
+                archive_end_acked = sent_header.channel_type ==
+                                    neotape::ChannelType::ARCHIVE_END;
                 break;
             }
             case MessageType::error: {

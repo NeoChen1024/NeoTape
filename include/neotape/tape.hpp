@@ -114,12 +114,13 @@ class TapeDevice {
     [[nodiscard]] [[nodiscard]] bool is_read_write() const noexcept {
         return read_write_;
     }
+    // Checked close; may report deferred backend errors. Never retries close.
     void close();
     void reopen();
 
     // -- I/O -----------------------------------------------------------
 
-    // Write all bytes to the tape device. Throws on short write or error.
+    // Write exactly one physical record. A positive short write is an error.
     virtual void write_record(const void *data, std::size_t size);
 
     // -- positioning ---------------------------------------------------

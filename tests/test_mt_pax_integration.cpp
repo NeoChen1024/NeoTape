@@ -42,12 +42,17 @@ TEST_CASE(
         std::string const contents = "slice contents " + std::to_string(i);
         std::ofstream(source) << contents;
         plan << '/' << i << "/0/f/" << contents.size() << "/0/0/root/0/root/"
-             << source.string() << '\0' << '\n';
+             << source.filename().string() << '\0' << '\n';
     }
     plan.close();
 
     neotape::PaxWriterOptions options;
     options.plan_path = plan_path;
+    struct WorkingDirectoryGuard {
+        fs::path original = fs::current_path();
+        ~WorkingDirectoryGuard() { fs::current_path(original); }
+    } working_directory;
+    options.chdir_dir = temporary.path().string();
     options.output_buf_size = 4096;
     options.io_thread = 4;
     std::vector<std::byte> bytes;
@@ -157,9 +162,11 @@ TEST_CASE("multi-threaded mt-pax preserves files and symlinks",
         expected_paths.insert(relative);
         auto const restored = output / "src" / relative;
         CAPTURE(relative);
-        REQUIRE(fs::symlink_status(restored).type() == entry.symlink_status().type());
+        REQUIRE(fs::symlink_status(restored).type() ==
+                entry.symlink_status().type());
         if (entry.is_symlink()) {
-            REQUIRE(fs::read_symlink(restored) == fs::read_symlink(entry.path()));
+            REQUIRE(fs::read_symlink(restored) ==
+                    fs::read_symlink(entry.path()));
         } else if (entry.is_regular_file()) {
             REQUIRE(neotape::test::read_file(restored) ==
                     neotape::test::read_file(entry.path()));

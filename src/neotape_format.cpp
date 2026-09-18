@@ -241,6 +241,24 @@ Hash blake3_hash(const uint8_t *data, std::size_t size) {
     return hash;
 }
 
+Hash compute_replay_hash(const uint8_t *data, std::size_t size) {
+    auto const header = parse_fixed_header(data, size);
+    if (size != decoded_block_size(header))
+        throw std::runtime_error("replay record size mismatch");
+    HeaderBytes canonical;
+    std::copy_n(data, fixed_header_size, canonical.begin());
+    std::fill_n(canonical.begin() + off_volume_seq_num, 8, 0);
+    std::fill(canonical.begin() + off_signature, canonical.end(), 0);
+    blake3_hasher hasher;
+    blake3_hasher_init(&hasher);
+    blake3_hasher_update(&hasher, canonical.data(), canonical.size());
+    blake3_hasher_update(&hasher, data + fixed_header_size,
+                         size - fixed_header_size);
+    Hash result{};
+    blake3_hasher_finalize(&hasher, result.data(), result.size());
+    return result;
+}
+
 Hash compute_frame_hash(const uint8_t *data, std::size_t size) {
     FrameHeader const header = parse_fixed_header(data, size);
     if (size != decoded_block_size(header)) {

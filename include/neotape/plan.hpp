@@ -33,6 +33,7 @@ class PlanReader {
     std::ifstream input_;
     std::filesystem::path path_;
     uint64_t record_num_ = 0;
+    std::optional<PlannedEntry> previous_;
 };
 void write_plan_record(FILE *output, const PlanRecord &record);
 } // namespace neotape

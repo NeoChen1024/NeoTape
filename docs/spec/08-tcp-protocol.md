@@ -71,7 +71,14 @@ Client→Server.  `error` is always bidirectional.
    requesting frames (slice boundary).  The Archiver may send more frames
    from subsequent slices.
 7. On `archive_end` (`frame_record` with `archive_end` channel): Writer
-   drains queued writes, sends final ACK, and exits zero.
+   drains queued writes, commits the end record, and sends its final ACK. It
+   then writes the trailing filemark (or finalizes the spool file) before
+   reporting success. The ACK confirms the record, not the later filemark.
+   If finalization fails, Writer reports a media-layout failure and exits
+   non-zero; it SHOULD send `error` if the connection remains available.
+   The committed end record remains a valid logical completion marker and
+   MUST NOT be replayed solely to retry a filemark. The Archiver's receipt of
+   the final ACK does not certify successful media finalization.
 8. On physical EOT (tape drive reports write failure): Writer sends ACKs only
    for records that were completely committed. It does not acknowledge the
    incomplete record and exits non-zero.
@@ -79,11 +86,29 @@ Client→Server.  `error` is always bidirectional.
 ### Reading pipeline (Extractor = Server, Reader = Client)
 
 1. Reader connects → Extractor sends `next_frame`
-2. Reader reads next record from tape/spool → sends `frame_record`
-3. Extractor validates record → sends `ack_frame(seq)`
-4. Repeat from step 1
-5. Reader hits physical EOT → sends `tape_eof` → disconnects
-6. Operator loads next volume, re-connects Reader
+2. Reader skips ordinary tape filemarks or spool file boundaries and sends
+   the next record as `frame_record`. Filemarks are not forwarded as
+   `tape_eof` in this direction.
+3. Extractor validates/processes the record, applying configured recovery and
+   replay rules, then sends `ack_frame(seq)` for the received record. Reader
+   MUST check the ACK payload is exactly eight bytes and matches that record.
+   This ACK permits Reader to advance; it does not certify full archive
+   conformance or durable storage of extracted output.
+4. Repeat from step 1. On accepted `archive_end`, Extractor finishes pending
+   output, sends the final ACK, and closes the connection. Reader treats the
+   subsequent close as successful completion of this archive.
+5. At the end of the current volume's readable data, Reader sends `tape_eof`
+   and disconnects. This may be EOD, physical EOT, or the end of a spool root;
+   it is not by itself clean archive completion.
+6. If the archive has not completed, Extractor retains state while the
+   operator supplies the next volume and reconnects Reader.
+
+An unexpected disconnect is not an implicit `archive_end`. A recoverable
+missing tape block may be skipped only when the backend can advance to a known
+record boundary; subsequent frame sequence numbers expose the gap. Reader
+MUST report the read failure. Extractor applies the FEC or salvage rules in
+[05-validation.md](05-validation.md). If the next boundary cannot be established,
+Reader MUST stop and report an error.
 
 ## Error handling
 
@@ -99,8 +124,11 @@ received record before committing it and validates sequence continuity
 observable within its current connection.
 
 In the reading pipeline, the Extractor maintains authoritative validation state
-across Reader connections and validates the complete archive stream before
-emitting payload bytes. Both pipelines apply the relevant shared rules in
+across Reader connections. It validates incrementally before emission,
+buffering a protected group until its recovery commitment is verified. Whole
+archive completion can only be established after a valid `archive_end` and
+completion of the applicable continuity checks. Both pipelines apply the
+relevant shared rules in
 [docs/spec/05-validation.md](05-validation.md).
 
 On fatal validation failure the endpoint that detected the failure SHOULD send
@@ -111,17 +139,33 @@ On fatal validation failure the endpoint that detected the failure SHOULD send
 The Archiver persists archive-generation and acknowledgement state across
 Writer disconnects. The Extractor persists archive-validation state across
 Reader disconnects. In the reading pipeline, when a new Reader connects, its
-first `frame_record` MUST continue exactly from the last validated frame. Any
-gap, backward jump, or identity mismatch causes the Extractor to send `error`
-and close the connection.
+first new logical frame MUST continue prior state. Verified replays and
+unavailable FEC records are handled under [05-validation.md](05-validation.md).
+Unexplained gaps, conflicting replays, or identity mismatches cause the
+Extractor to send `error` and close the connection outside salvage mode.
 
-A volume in the writing pipeline is considered committed when the Archiver
-receives the first `ack_frame` from the Writer — that is, after at least one
-frame has been successfully written to the physical medium and acknowledged.
-If a Writer disconnects before any `ack_frame` is received (e.g. the tape drive
-was not ready, or the Writer crashed immediately), the volume is **not**
-committed and the Archiver reuses the same `volume_seq_num` for the next Writer.
-This keeps `volume_seq_num` gapless across the archive.
+A record is **media-committed** when its complete backend write succeeds; it
+is **acknowledged** when the Archiver receives its `ack_frame`. The Archiver
+advances its replay checkpoint only on acknowledgements, in global sequence
+order. Each ACK confirms one record, not a cumulative range or a filemark.
+
+For advisory volume numbering, a connection's volume is counted when its first
+ACK arrives. With no ACK, the Archiver reuses `volume_seq_num`; that does not
+prove that nothing reached the medium. This ordinal is not a unique identifier
+for a physical tape.
+
+If a connection is lost after a write but before the ACK reaches the Archiver,
+the producer cannot know whether the record exists on media. It MAY replay the
+unacknowledged suffix on the next volume, starting immediately after its last
+acknowledged frame. Reissued frames preserve all logical data and header fields
+except the new `volume_seq_num` and recomputed `frame_hash` and `signature`.
+Readers MUST NOT emit verified replays twice; comparison and acceptance rules
+are defined in [05-validation.md](05-validation.md#replayed-records).
+
+The same lost-ACK ambiguity can occur in the reading pipeline. A reconnecting
+Reader may resend an uncertain suffix, which the Extractor verifies and
+suppresses using its retained state. A receiver lacking comparison state MUST
+report that it cannot validate the replay rather than silently accept it.
 
 ## Security
 
@@ -137,8 +181,9 @@ with [Ed25519 signature](00-format-common.md) over
 `NeoTape-frame\0 || frame_hash`), a receiver configured with the corresponding
 trusted public key can verify integrity and authenticity at the frame level.
 A tampered or forged frame will fail verification even if the TCP connection is
-unencrypted. Sequence checks reject frame duplication and reordering within the
-archive state being validated; they do not prove archive freshness or prevent
+unencrypted. Sequence checks reject conflicting duplicates and unexplained
+reordering, while suppressing verified retry replays within the archive state
+being validated; they do not prove archive freshness or prevent
 replay of an entire otherwise-valid old archive.
 
 In the writing pipeline, a Writer configured with a trusted public key enters
@@ -227,8 +272,9 @@ auth use the same Ed25519 key material over different domain strings:
 and `NeoTape-auth\0` (this section).  The signatures are cryptographically
 independent even with a shared key.
 
-The Writer issues a fresh random nonce per connection, so replay of a
-previous `auth_response` is impossible.  The exchange costs one round-trip
+The Writer MUST generate a fresh, unpredictable 32-byte nonce per connection
+using a cryptographically secure random source. A previous `auth_response`
+does not authenticate a connection with a different nonce.  The exchange costs one round-trip
 after TCP handshake (negligible on localhost or LAN).  Because the Writer
 verifies `auth_response` with the same trusted public key it later uses for
 per-frame signature checks, connection-time peer authentication and

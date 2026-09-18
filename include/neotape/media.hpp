@@ -1,5 +1,6 @@
 #pragma once
 
+#include "neotape/format.hpp"
 #include "neotape/tape.hpp"
 #include <memory>
 
@@ -41,5 +42,7 @@ class RecordReader {
     uint64_t file_num_ = 0;
     int spool_fd_ = -1;
     bool ended_ = false;
+    uint32_t spool_block_size_ = 0;
+    std::size_t tape_read_size_ = max_block_size;
 };
 } // namespace neotape

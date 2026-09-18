@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <format>
@@ -197,8 +198,10 @@ TapeDevice::TapeDevice(int fd, std::string_view path, bool read_write)
     : fd_(fd), device_path_(path), read_write_(read_write) {}
 
 TapeDevice::~TapeDevice() {
-    if (fd_ >= 0) {
-        ::close(fd_);
+    try {
+        close();
+    } catch (const std::exception &error) {
+        std::fprintf(stderr, "neotape: %s\n", error.what());
     }
 }
 
@@ -222,34 +225,31 @@ TapeDevice &TapeDevice::operator=(TapeDevice &&other) noexcept {
 }
 
 void TapeDevice::close() {
-    if (fd_ >= 0) {
-        ::close(fd_);
-        fd_ = -1;
-    }
+    if (fd_ < 0)
+        return;
+    // close may release the descriptor even when it reports an error. Never
+    // retry it, or a later file that reuses this descriptor could be closed.
+    int const descriptor = fd_;
+    fd_ = -1;
+    if (::close(descriptor) < 0)
+        throw Error(device_path_, "close", errno);
 }
 
 void TapeDevice::write_record(const void *data, std::size_t size) {
-    const auto *p = static_cast<const char *>(data);
-    std::size_t remaining = size;
-    NEOTAPE_DEBUG("[tape {}] write_record begin size={}\n", device_path_, size);
-    while (remaining > 0) {
-        ssize_t const w = ::write(fd_, p, remaining);
-        if (w < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            NEOTAPE_DEBUG("[tape {}] write_record error errno={} ({})\n",
-                          device_path_, errno, std::strerror(errno));
-            throw Error(device_path_, "write_record", errno);
-        }
-        if (w == 0) {
-            NEOTAPE_DEBUG("[tape {}] write_record error short write (w=0)\n",
-                          device_path_);
-            throw Error(device_path_, "write_record", EIO);
-        }
-        p += w;
-        remaining -= static_cast<std::size_t>(w);
-    }
+    if (size == 0)
+        throw Error(device_path_, "empty record", EINVAL);
+    NEOTAPE_DEBUG("[tape {}] write_record begin size={}\n", device_path_,
+                  size);
+    ssize_t written;
+    do {
+        written = ::write(fd_, data, size);
+    } while (written < 0 && errno == EINTR);
+    if (written < 0)
+        throw Error(device_path_, "write_record", errno);
+    // One successful syscall is one physical record. Retrying a positive
+    // short write would append a second record, not complete the first.
+    if (static_cast<std::size_t>(written) != size)
+        throw Error(device_path_, "short record write", EIO);
     NEOTAPE_DEBUG("[tape {}] write_record done size={}\n", device_path_, size);
 }
 

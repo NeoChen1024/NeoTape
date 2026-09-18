@@ -28,7 +28,7 @@ A backend-defined physical or virtual container. It is not an authoritative logi
 
 A logical tape file delimited by LTO filemarks.
 
-NeoTape uses tape files for coarse seekable boundaries such as slice tape files and the Archive End frame. Frames within a slice tape file are chained by `frame_payload_size`, not by additional filemarks.
+NeoTape uses tape files for coarse seekable boundaries such as slice tape files and the Archive End frame. Frames within a tape file are delimited by backend record boundaries or the decoded record size. `frame_payload_size` identifies meaningful payload bytes and does not locate the next frame.
 
 ### Slice
 
@@ -176,7 +176,7 @@ timestamp fields.
 
 ### nt_name
 
-N-byte fixed UTF-8 text field. NUL-terminated, NUL-padded. Maximum (N-1) usable characters. `archive_label` uses a 65-byte field with at most 64 usable bytes.
+N-byte fixed UTF-8 text field. NUL-terminated, NUL-padded. Maximum (N-1) usable bytes; a UTF-8 character may occupy multiple bytes. `archive_label` uses a 65-byte field with at most 64 usable bytes.
 
 ### Empty Fixed-Field Encoding
 
@@ -194,7 +194,7 @@ In fixed header field tables, `MUST`, `SHOULD`, and `MAY` describe whether a wri
 
 ### volume_block_size_kib
 
-The fixed NeoTape record size for an archive volume, encoded in KiB. The decoded record size is `volume_block_size_kib * 1024` bytes. This field is repeated in every frame.
+The fixed NeoTape record size for an entire archive, including all its volumes, encoded in KiB. The decoded record size is `volume_block_size_kib * 1024` bytes. This field is repeated in every frame.
 
 ### Block Size Constraints
 
@@ -202,7 +202,7 @@ The fixed NeoTape record size for an archive volume, encoded in KiB. The decoded
 | ------------------- | ---------------------------- | -------------------------------------------------------------- |
 | Minimum             | 4 KiB (`value >= 4`)         | Below 4 KiB, header overhead dominates.                        |
 | Recommended minimum | 64 KiB (`value >= 64`)       | At 4 KiB, the Frame Header consumes 12.5% of each record.      |
-| Maximum             | 8 MiB (`value <= 8192`)      | LTO hardware record size limit.                                |
+| Maximum             | 8 MiB (`value <= 8192`)      | NeoTape format limit; backend limits may be lower.                                |
 
 Non-power-of-2 block sizes are allowed by the format, but they are generally not a good choice for physical media, including LTO tape.
 
@@ -222,7 +222,7 @@ Fields repeated across every frame:
 | `archive_uuid`          | Stable UUID for the archive instance.                                      |
 | `archive_label`         | Human-readable archive label. Operator-facing, not a unique key.           |
 | `volume_seq_num`        | Advisory volume sequence number, normally starting at 1 for a new archive. |
-| `volume_block_size_kib` | Fixed NeoTape record size for this volume, encoded in KiB.                 |
+| `volume_block_size_kib` | Fixed NeoTape record size for the archive, encoded in KiB.                 |
 
 ### Channel and Flag Names
 
@@ -271,7 +271,7 @@ sequence of files. Ordering, archive boundaries, and record framing follow
 - An **Archive** contains one or more **Backend Volumes**.
 - A **Backend Volume** is stored on one **Physical Medium** (or virtual volume).
 - A **Physical Medium** may store multiple **Archive Instances** sequentially.
-- A **Backend Volume** contains one or more **Slices**.
+- A **Backend Volume** stores complete slices or portions of slices, and may contain only an Archive End frame. A slice may span volumes.
 - A **Slice** contains at most one contiguous leading `ch_metadata` run. After metadata, `ch_content` and `ch_fec` MAY appear as repeated runs within the same slice. At least one frame must be present.
 - A **Frame** is exactly one **NeoTape Record**.
 - `ch_metadata` frames MUST precede both `ch_content` and `ch_fec` within a slice.

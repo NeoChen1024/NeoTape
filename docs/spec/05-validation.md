@@ -80,9 +80,14 @@ Specifically:
 
 ## Signature Validation Modes
 
-`frame_hash` verification is mandatory in every mode and MUST be completed
-before signature verification. Signature verification does not replace frame
-integrity validation.
+Readers MUST check `frame_hash` before treating a received record as valid or
+verifying its signature. A failed check normally rejects that record. The
+advisory metadata exception and FEC recovery rules below define when processing
+may continue without accepting the failed record as valid. Signature
+verification does not replace frame integrity validation.
+
+In every signature mode, `SIGNED = 0` requires all 72 signature bytes to be
+zero. Non-zero bytes MUST be rejected, including on advisory metadata.
 
 ### Integrity-only mode
 
@@ -111,15 +116,18 @@ When one or more trusted public keys are configured:
 Require-signed mode MUST NOT be enabled without at least one trusted public
 key. In this mode every NeoTape frame, including `ch_metadata`, `ch_content`,
 `ch_fec`, and `archive_end`, MUST set `SIGNED` and MUST verify against a
-configured trusted key. An unsigned frame MUST be rejected.
+configured trusted key. An unsigned frame MUST be rejected. Advisory metadata
+handling MUST NOT bypass this requirement. Recovery of unavailable content is
+subject to the authenticated FEC commitment rule below; it does not manufacture
+or verify a signature for a missing original frame.
 
 ## Archive Identity Validation
 
 Within one logical archive instance, the validator MUST check:
 
-- `archive_uuid` consistency across all normal frames
-- `archive_label` consistency across all normal frames
-- Decoded `volume_block_size_kib` consistency unless a new archive begins
+- `archive_uuid` consistency across all frames, including `archive_end`
+- `archive_label` consistency across all frames, including `archive_end`
+- Decoded `volume_block_size_kib` consistency across the entire archive, including volume transitions and `archive_end`
 
 `volume_seq_num` is advisory. A validator MUST NOT use it as the sole
 authoritative continuity check, but it MAY warn if it moves backward or changes
@@ -127,7 +135,9 @@ unexpectedly within one backend volume.
 
 ## Sequence Continuity
 
-Within one logical archive instance, the validator MUST enforce:
+These rules describe the logical frame stream, after suppressing verified
+replays. Missing records may be handled only under the FEC recovery or salvage
+rules below. Within one logical archive instance, the validator MUST enforce:
 
 - `global_frame_seq_num` is monotonic and gapless across all frames, including
   `ch_fec` and `archive_end`
@@ -143,13 +153,44 @@ After a valid `archive_end` closes the current archive context, a different
 `archive_uuid` begins a new independent sequence context as defined under
 [`archive_end` Validation](#archive_end-validation).
 
-When resuming after EOT or a client reconnect, the first new frame MUST
-continue exactly from the last validated frame. Any gap, backward jump, or
-archive identity mismatch MUST be rejected.
+When resuming after EOT or a client reconnect, the first new logical frame
+MUST continue the prior logical stream. A replayed suffix may precede it.
+Unexplained gaps, conflicting replays, and archive identity mismatches MUST be
+rejected outside explicit salvage mode.
+
+### Replayed Records
+
+Loss of an acknowledgement can cause a producer to replay a contiguous suffix
+of records already stored on an earlier volume. Readers SHOULD accept such
+replays at a volume or connection boundary when equivalence can be verified.
+Physical spool file-number collisions are separate enumeration errors and are
+not permitted by this rule. This applies to any channel, including `archive_end`.
+
+A replay MUST independently pass frame integrity and the active signature
+policy. To establish equivalence with an already accepted frame, compare the
+entire record, excluding only `volume_seq_num`, `signature`, and `frame_hash`.
+All other header bytes, payload bytes, and padding MUST match. These excluded
+fields may change when a frame is reissued on a new volume; they still undergo
+their own validation. A normalized digest of these comparison bytes MAY be
+retained instead of the full original record.
+
+The replay must start at a previously accepted global sequence number, proceed
+in order, and reach the prior logical endpoint before new frames are accepted.
+Readers MUST NOT emit replayed payload twice, advance logical sequence state,
+or count replayed shards twice in an FEC group. An equal sequence number alone
+is insufficient: a conflicting record MUST be rejected. If prior comparison
+state is unavailable, the reader MUST report that it cannot verify the replay
+rather than silently discard it or assume equivalence.
+
+An equivalent replay of `archive_end` does not reopen the archive. No new
+logical frame may follow it within that archive instance. Readers SHOULD
+report accepted replays separately from corruption or sequence gaps.
 
 ## Slice and Channel Ordering
 
-Within each slice, the validator MUST enforce:
+For an intact logical stream, the validator MUST enforce the following within
+each slice. Recovery may account for unavailable records as described below;
+it MUST NOT invent missing header fields to claim full conformance.
 
 - `ch_metadata`, when present, forms at most one contiguous leading run
 - No `ch_metadata` frame appears after the first `ch_content` or `ch_fec` frame
@@ -171,6 +212,10 @@ interleaved as repeated runs within the slice. This does not reset
 `channel_frame_seq_num` for either channel.
 
 ## END Flag Rules
+
+These are full-conformance checks on the logical stream after replay removal.
+Recovery may establish payload integrity even when a missing header prevents
+verification of an original `END` flag; it MUST report that distinction.
 
 The validator MUST interpret `END` as "final frame of this channel within the
 current slice".
@@ -211,14 +256,17 @@ A conforming validator MUST check that an `archive_end` frame has:
 - `slice_seq_num = 0`
 - `channel_frame_seq_num = 0`
 
-Before accepting `archive_end`, the validator MUST confirm that every channel
+Before accepting `archive_end` as proof of clean archive conformance, the
+validator MUST confirm that every channel
 present in the preceding slice has reached `END`. Checking only the physically
 preceding frame is insufficient when channels are interleaved.
 
-Each cleanly completed logical archive instance MUST contain exactly one valid
-`archive_end`. Once it is accepted, that archive validation context is closed:
+Each cleanly completed logical archive instance MUST contain exactly one
+logical `archive_end`. Equivalent physical replays are handled under
+[Replayed Records](#replayed-records). Once the end is accepted, that archive
+validation context is closed:
 
-- any later NeoTape frame belonging to the same archive instance MUST be
+- any later new logical frame belonging to the same archive instance MUST be
   rejected;
 - a later frame MAY begin a new archive instance only with a different
   `archive_uuid` and fresh archive-local sequence state starting at
@@ -250,42 +298,87 @@ used to skip:
 - Ambiguous headers
 - Frame-size ambiguity
 - Sequence or identity failures
+- Non-zero unsigned signature fields or other structural flag violations
+- Signature verification failures or require-signed policy failures
+
+A signed metadata record whose hash fails MUST NOT be accepted as authenticated
+metadata. With trusted-key verification enabled, the reader MUST reject it
+rather than use this exception to bypass signature verification.
 
 ## FEC Validation
 
-A normal payload reader MAY verify and skip `ch_fec`, but it MUST NOT emit
-`ch_fec` payload bytes.
+Readers MUST NOT emit `ch_fec` payload bytes. A reader that does not repair
+still applies the applicable frame and intact-stream validation rules.
 
-A repair-capable validator MUST additionally check:
+### Intact Stream Conformance
 
-- `ch_fec` descriptor structure and field consistency per
-  [04-fec-channel.md](04-fec-channel.md)
-- Agreement among all FEC frames in one group on group parameters and
-  `fec_group_blake3`
-- `repair_index` range for the active FEC profile
-- Reject `ch_fec` that describes any `ch_content` frame without
-  `FEC_PROTECTED = 1`
-- `source_content_frame_start` matches the `channel_frame_seq_num` of the first
-  frame in the immediately preceding protected run
-- `source_frame_count` matches the number of real `ch_content` frames in that
-  protected run
-- `source_stream_size` equals the sum of `frame_payload_size` over the real
-  protected `ch_content` frames and satisfies the profile bounds in
-  [04-fec-channel.md](04-fec-channel.md)
-- Reject duplicate `repair_index` values within one group
-- Reject missing or non-continuous `repair_index` values within one group, as
-  defined by the active FEC profile
-- Profile-specific group-size rules MUST be enforced. For `rs_32_4`, reject a
-  `FEC_PROTECTED` run longer than 32 real `ch_content` frames, and reject a
-  matching group unless it contains exactly four `ch_fec` frames with
-  `repair_index = 0, 1, 2, 3`
+Writers MUST emit exactly four repair records per `rs_32_4` group, with
+`repair_index = 0, 1, 2, 3` in order. A conformance checker MUST report missing
+or damaged records; successful payload recovery does not make the original
+media representation intact.
 
-A repaired FEC group MUST NOT be accepted unless:
+For an intact group, validators MUST check:
 
-```text
-BLAKE3(reconstructed_source_stream[0:source_stream_size]) ==
-    fec_group_blake3
-```
+- descriptor structure and profile bounds from [04-fec-channel.md](04-fec-channel.md);
+- agreement on group parameters and `fec_group_blake3` across repair records;
+- a contiguous protected run of `1..32` content frames immediately before the
+  repair group, all with `FEC_PROTECTED = 1`;
+- `source_content_frame_start` and `source_frame_count` match that run;
+- `source_stream_size` matches the sum of the real content payload sizes;
+- exactly one occurrence of each repair index after verified replay removal.
+
+### Recovery from Unavailable Records
+
+A repair-capable reader SHOULD attempt recovery when content or repair records
+are unavailable. Unavailable includes a record whose integrity check failed,
+an unreadable tape block, and an entirely missing record. The reader MUST NOT
+require all four repair records to survive. It may proceed only at a known
+backend record boundary; it MUST NOT guess a byte-stream boundary after an
+unframed I/O failure.
+
+The reader MUST establish the group from at least one valid surviving FEC
+descriptor, any surviving valid content headers, and surrounding sequence state.
+The descriptor identifies real source positions and their total meaningful
+length. Missing real source positions are erasures, not virtual zero shards.
+Only positions beyond `source_frame_count` are virtual zero shards. Corrupt
+headers MUST NOT be used as authoritative position or group information.
+
+Surviving descriptors MUST agree on group identity, dimensions, and commitment.
+Surviving content MUST match the described archive, slice, protected range,
+and payload lengths. Each surviving repair index must be in range and unique
+apart from verified replays. Gaps may be tolerated only when their placement
+is unambiguously accounted for by the group's missing content or repair
+records. Unrelated sequence gaps and conflicting records remain errors.
+
+A reader MUST NOT wait indefinitely for a missing repair index. A subsequent
+valid group, slice, or archive-end record, or a known end of input, may delimit
+the available group once its membership is unambiguous. End of input alone
+does not prove clean archive completion. At a volume transition, the reader
+may retain the pending group while requesting the next volume.
+
+The reader MUST choose enough independent surviving and virtual-zero shards
+to form the invertible basis defined in [04-fec-channel.md](04-fec-channel.md).
+It MUST verify `fec_group_blake3` over the reconstructed meaningful source
+stream before emitting that group's content, in source order and once only.
+No bytes from an unverified reconstruction may be emitted. If all source
+shards survive, they may be checked directly against the group commitment
+without requiring any particular number of surviving repair shards.
+
+With trusted-key verification enabled, any descriptor used as the recovery
+commitment MUST come from a frame whose hash and trusted signature both verify.
+Require-signed additionally applies to every accepted surviving frame. A
+signature-policy failure MUST NOT be silently treated as a valid unsigned
+shard. Recovered content is authenticated through the signed group commitment;
+this does not establish the original missing frame's header or signature.
+
+Recovery can establish payload integrity without establishing full frame or
+archive conformance. In particular, FEC protects content bytes, not missing
+metadata, flags, signatures, or `archive_end`. Readers MUST report missing
+records and recovery separately, and MUST NOT claim clean archive conformance
+when missing headers or channel endings remain unverified. A missing end
+marker cannot be reconstructed by this profile. If group membership or payload
+completeness remains ambiguous, only explicit salvage mode may emit partial
+surviving content.
 
 ## Salvage Validation Mode
 
@@ -307,11 +400,12 @@ completeness, and clean `archive_end` requirements. A frame that fails a
 mandatory integrity check MUST NOT contribute payload bytes. The implementation
 MAY skip it and continue at the next independently framed record.
 
-When damaged `FEC_PROTECTED` content has a complete matching repair group, a
-repair-capable salvage reader SHOULD treat that shard as unavailable and
-attempt reconstruction. It MUST verify `fec_group_blake3` before emitting
-reconstructed bytes. If recovery is impossible, it MAY emit only surviving
-content shards in channel order.
+A repair-capable salvage reader SHOULD attempt reconstruction under the FEC
+recovery rules above, including when some repair records are missing. It MUST
+verify `fec_group_blake3` before emitting reconstructed bytes and MUST preserve
+the configured signature policy. If recovery is impossible, it MAY emit only
+individually validated surviving content shards in channel order, reporting
+that the payload is incomplete.
 
 Salvage mode MUST prominently report that its output is not fully verified.
 Diagnostics belong on stderr and MUST NOT contaminate payload stdout.
@@ -322,7 +416,7 @@ When reading from a spool directory, the validator MUST preserve tape-order
 semantics:
 
 - Enumerate candidate NeoTape files by filename grammar
-- Sort by numeric `file-num`
+- Reject duplicate numeric `file-num` values before reading any records, then sort numerically
 - Treat each regular file boundary as one tape-file boundary
 - Apply the same frame and per-archive continuity validation rules as tape mode
 
@@ -346,8 +440,9 @@ For `frame_record` messages, it MUST additionally reject:
 
 - Payloads larger than the protocol maximum
 - Records whose byte length does not match decoded `volume_block_size_kib`
-- Connection resumes whose first frame does not continue from prior validated
-  state, when the receiving endpoint owns that prior state
+- Connection resumes that neither continue prior logical state nor satisfy
+  the verified replay or explicit recovery rules, when the receiver owns that
+  prior state
 
 On fatal validation failure, a TCP endpoint SHOULD send `error` with a
 human-readable diagnostic and close the connection.

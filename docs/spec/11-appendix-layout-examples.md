@@ -27,7 +27,9 @@ File 2:   Archive End frame (END, CLEAN_END)
 filemark
 ```
 
-A recovery bundle (plain pax tar) MAY be written as the first tape file before the first slice. Readers skip non-NeoTape data by scanning forward for the NeoTape magic.
+A recovery bundle (plain pax tar) MAY be written as the first tape file before the first slice. Readers skip prefix records by checking for NeoTape magic at backend record
+boundaries, then validating the candidate frame. They do not search arbitrary
+byte offsets inside records for a header.
 
 ## FEC-Enabled Slice With Local `32C + 4F` Runs
 
@@ -79,7 +81,7 @@ A slice that spans two backend volumes:
 Tape 1:
 File 0:   Slice 0 tape file
           +-- ch_content Frame (slice=0, channel-frame-seq=0, volume=1)
-          +-- payload bytes (first 60 GiB)
+          +-- payload bytes (one record; this run totals 60 GiB)
           ... (more ch_content frames)
           +-- ch_content Frame (slice=0, channel-frame-seq=K, NOT END, volume=1)
           +-- payload bytes
@@ -132,3 +134,27 @@ following high-level structure:
   +-- frame_payload_size payload bytes
   +-- zero padding to volume_block_size_kib * 1024
 ```
+
+## Lost Acknowledgement and Replay
+
+Suppose frames 40 and 41 reached volume 1, but the Archiver received only ACK
+40 before the connection failed. Volume 2 may begin by reissuing frame 41 with
+its new volume ordinal and recomputed hash/signature, then continue with 42.
+A reader that already accepted 41 verifies the replay's equivalence and emits
+its payload only once. A different payload for the same sequence number is a
+conflict, not an acceptable retry.
+
+## Missing Content and Repair Records
+
+In a full `32C + 4F` group, suppose content shard C0 and repair shard F3 cannot
+be read. The 31 surviving content shards and F0 supply an invertible basis for
+this example; F1 and F2 are additional surviving repairs. A repair-capable
+reader can recover C0, verify the source-stream hash from a surviving valid
+descriptor, and emit the 32 source payloads once in order. It need not wait for
+F3 to appear. Group closure is established by the following valid records or
+input boundary, subject to the recovery validation rules.
+
+The missing original headers are not reconstructed by payload FEC. The reader
+reports recovered payload separately from full media conformance. If the
+remaining descriptors disagree or no valid descriptor survives, this example
+does not authorize guessing a group or emitting unverified reconstruction.

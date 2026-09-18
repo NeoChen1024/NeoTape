@@ -192,6 +192,8 @@ int do_inspect(const Options &opts) {
     // Disable hash verification for raw dump mode.
     Stats stats;
     uint64_t frame_number = 0;
+    bool starts_at_zero = false;
+    uint64_t replayed_frames = 0;
     vector<string> issues;
 
     // --- header ---
@@ -245,6 +247,7 @@ int do_inspect(const Options &opts) {
         if (frame_number == 1) {
             // A spool or tape scan may begin at any volume boundary, not
             // necessarily at archive-global frame 0 or channel-frame 0.
+            starts_at_zero = header.global_frame_seq_num == 0;
             validator.seed_for_stream_start(header);
         }
         auto err = validator.validate(header, data, rr.record.size());
@@ -252,6 +255,9 @@ int do_inspect(const Options &opts) {
             ++stats.errors;
             issues.push_back(format("Frame #{}: {}", frame_number, *err));
         }
+
+        if (!err && validator.last_was_replay)
+            ++replayed_frames;
 
         // Verify frame_hash explicitly for display.
         neotape::Hash const computed =
@@ -338,6 +344,13 @@ int do_inspect(const Options &opts) {
     }
     std::cout << format("  Total payload:    {} bytes\n",
                         stats.total_payload_bytes);
+
+    std::cout << format("  Replayed frames:  {}\n", replayed_frames);
+    std::cout << format("  Archive completeness: {}\n",
+                        starts_at_zero && validator.saw_archive_end &&
+                                issues.empty()
+                            ? "verified"
+                            : "unverified (observed records only)");
 
     // --- issues ---
     if (issues.empty()) {

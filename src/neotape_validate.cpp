@@ -44,7 +44,9 @@ bool same_fec_group(const FecDescriptor &left, const FecDescriptor &right) {
 
 bool all_seen_channels_ended(const FrameValidator &validator) {
     for (std::size_t i = 0; i < validator.channel_seen.size(); ++i) {
-        if (validator.channel_seen[i] && !validator.channel_ended[i]) {
+        if (validator.channel_seen[i] && !validator.channel_ended[i] &&
+            !(validator.recover_missing_fec &&
+              validator.unknown_channel_end[i])) {
             return false;
         }
     }
@@ -71,14 +73,191 @@ void FrameValidator::seed_for_stream_start(const FrameHeader &header) {
     if (header.channel_type != ChannelType::ARCHIVE_END) {
         std::size_t const index = channel_index(header.channel_type);
         next_channel_seq[index] = header.channel_frame_seq_num;
+        if (header.channel_type == ChannelType::CH_FEC) {
+            auto const descriptor = parse_fec_descriptor(header.sideband_data);
+            validate_fec_descriptor(descriptor, decoded_block_size(header) -
+                                                    fixed_header_size);
+            next_channel_seq[0] = descriptor.source_content_frame_start +
+                                  descriptor.source_frame_count;
+            channel_ended[0] =
+                descriptor.source_stream_size <
+                descriptor.source_frame_count *
+                    uint64_t(decoded_block_size(header) - fixed_header_size);
+        }
     }
+}
+
+void FrameValidator::remember_record(const FrameHeader &header,
+                                     const uint8_t *data, std::size_t size,
+                                     bool skip_hash) {
+    if (skip_hash)
+        return;
+    replay_history_.emplace_back(header.global_frame_seq_num,
+                                 compute_replay_hash(data, size));
+    constexpr std::size_t retry_history_records = 8192;
+    if (replay_history_.size() > retry_history_records)
+        replay_history_.pop_front();
+}
+
+std::optional<string> FrameValidator::finish_missing_repairs() {
+    if (!current_fec_group)
+        return std::nullopt;
+    if (!recover_missing_fec)
+        return "incomplete FEC repair group";
+    auto const missing = fec_repair_shards - next_repair_index;
+    expected_global_frame_seq += missing;
+    next_channel_seq[2] += missing;
+    missing_records += missing;
+    unknown_channel_end[2] = missing != 0;
+    current_fec_group.reset();
+    next_repair_index = 0;
+    protected_run_count = 0;
+    protected_run_size = 0;
+    protected_run_bytes.clear();
+    protected_run_has_unavailable = false;
+    return std::nullopt;
+}
+
+std::optional<string>
+FrameValidator::account_for_missing(const FrameHeader &header) {
+    if (!recover_missing_fec)
+        return std::nullopt;
+    std::optional<FecDescriptor> descriptor;
+    if (header.channel_type == ChannelType::CH_FEC) {
+        descriptor = parse_fec_descriptor(header.sideband_data);
+        validate_fec_descriptor(*descriptor,
+                                decoded_block_size(header) - fixed_header_size);
+    }
+    if (current_fec_group &&
+        (!descriptor || header.slice_seq_num != current_slice_seq_num ||
+         !same_fec_group(*current_fec_group, *descriptor))) {
+        if (auto error = finish_missing_repairs())
+            return error;
+    }
+    if (header.channel_type != ChannelType::ARCHIVE_END &&
+        header.slice_seq_num != current_slice_seq_num &&
+        header.slice_seq_num == current_slice_seq_num + 1 &&
+        all_seen_channels_ended(*this) && !protected_run_count &&
+        !current_fec_group) {
+        current_slice_seq_num = header.slice_seq_num;
+        next_channel_seq.fill(0);
+        channel_seen.fill(false);
+        channel_ended.fill(false);
+        unknown_channel_end.fill(false);
+        saw_non_metadata_in_slice = false;
+        current_phase = Phase::none;
+    }
+    if (header.global_frame_seq_num <= expected_global_frame_seq)
+        return std::nullopt;
+    uint64_t const gap =
+        header.global_frame_seq_num - expected_global_frame_seq;
+    uint64_t const capacity = decoded_block_size(header) - fixed_header_size;
+    if (header.slice_seq_num != current_slice_seq_num || gap > fec_total_shards)
+        return "unexplained sequence gap outside FEC group";
+
+    if (header.channel_type == ChannelType::CH_CONTENT &&
+        has_frame_flag_fec_protected(header.flags) && !current_fec_group &&
+        !channel_ended[0] &&
+        header.channel_frame_seq_num >= next_channel_seq[0] &&
+        header.channel_frame_seq_num - next_channel_seq[0] == gap &&
+        protected_run_count + gap < fec_data_shards) {
+        if (protected_run_count == 0)
+            protected_run_start = next_channel_seq[0];
+        protected_run_count += static_cast<uint16_t>(gap);
+        protected_run_size += gap * capacity;
+        protected_run_has_unavailable = true;
+        next_channel_seq[0] += gap;
+        channel_seen[0] = true;
+    } else if (descriptor && !current_fec_group) {
+        auto const &d = *descriptor;
+        uint64_t const start =
+            protected_run_count ? protected_run_start : next_channel_seq[0];
+        uint64_t const end =
+            d.source_content_frame_start + d.source_frame_count;
+        if (d.source_content_frame_start != start || end < next_channel_seq[0])
+            return "FEC descriptor cannot account for missing content";
+        uint64_t const missing = end - next_channel_seq[0];
+        if (gap != missing + d.repair_index ||
+            protected_run_count + missing != d.source_frame_count ||
+            (missing && channel_ended[0]) ||
+            (!missing && d.source_stream_size != protected_run_size))
+            return "FEC descriptor does not explain sequence gap";
+        if (missing) {
+            if (d.source_stream_size < protected_run_size ||
+                d.source_stream_size - protected_run_size > missing * capacity)
+                return "FEC missing content length mismatch";
+            protected_run_size = d.source_stream_size;
+            protected_run_has_unavailable = true;
+            unknown_channel_end[0] = true;
+            channel_ended[0] =
+                d.source_stream_size < d.source_frame_count * capacity;
+        }
+        archive_uses_fec = true;
+        protected_run_start = start;
+        protected_run_count = d.source_frame_count;
+        next_channel_seq[0] = end;
+        channel_seen[0] = true;
+        next_channel_seq[2] += d.repair_index;
+        next_repair_index = d.repair_index;
+    } else if (descriptor && current_fec_group &&
+               descriptor->repair_index >= next_repair_index &&
+               static_cast<uint64_t>(descriptor->repair_index -
+                                     next_repair_index) == gap) {
+        next_repair_index = descriptor->repair_index;
+        next_channel_seq[2] += gap;
+    } else {
+        return "unexplained sequence gap";
+    }
+    expected_global_frame_seq += gap;
+    missing_records += gap;
+    return std::nullopt;
+}
+
+void FrameValidator::begin_connection() { replay_next_.reset(); }
+
+std::optional<string> FrameValidator::check_replay(const FrameHeader &header,
+                                                   const uint8_t *raw_data,
+                                                   std::size_t record_size,
+                                                   bool skip_hash) {
+    if (header.global_frame_seq_num < expected_global_frame_seq) {
+        if (skip_hash ||
+            !verify_frame_hash(raw_data, record_size, header.frame_hash))
+            return "replay failed frame integrity";
+        auto const found =
+            std::ranges::find_if(replay_history_, [&](const auto &entry) {
+                return entry.first == header.global_frame_seq_num;
+            });
+        if (found == replay_history_.end())
+            return "cannot verify replay: prior comparison state unavailable";
+        if (found->second != compute_replay_hash(raw_data, record_size))
+            return "conflicting replay record";
+        if (replay_next_ && *replay_next_ != header.global_frame_seq_num)
+            return "non-contiguous replay suffix";
+        replay_next_ = header.global_frame_seq_num + 1;
+        if (*replay_next_ == expected_global_frame_seq)
+            replay_next_.reset();
+        last_was_replay = true;
+        return std::nullopt;
+    }
+    if (replay_next_)
+        return "new frame before replay suffix completed";
+    return std::nullopt;
 }
 
 std::optional<string> FrameValidator::validate(const FrameHeader &header,
                                                const uint8_t *raw_data,
                                                std::size_t record_size,
                                                bool skip_hash) {
-    // Reject any frame presented after archive_end.
+    last_was_replay = false;
+    bool const signature_present =
+        std::ranges::any_of(header.signature, [](uint8_t b) { return b != 0; });
+    if (signature_present != has_frame_flag_signed(header.flags))
+        return "SIGNED flag and signature bytes are inconsistent";
+    if (auto error = check_replay(header, raw_data, record_size, skip_hash))
+        return error;
+    if (last_was_replay)
+        return std::nullopt;
+    // Reject any new logical frame presented after archive_end.
     if (saw_archive_end) {
         return format("frame after archive_end at global_seq={}",
                       header.global_frame_seq_num);
@@ -103,19 +282,6 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
         }
     }
 
-    // --- SIGNED flag / signature consistency ---
-    {
-        bool const sig_set = std::ranges::any_of(
-            header.signature, [](uint8_t b) { return b != 0; });
-        if (has_frame_flag_signed(header.flags)) {
-            if (!sig_set) {
-                return "SIGNED flag set but signature bytes are all zero";
-            }
-        } else if (sig_set) {
-            return "non-zero signature bytes without SIGNED flag";
-        }
-    }
-
     // --- volume_block_size consistency ---
     if (volume_block_size == 0) {
         volume_block_size = block_size;
@@ -137,6 +303,9 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
         }
     }
 
+    if (auto error = account_for_missing(header))
+        return error;
+
     // --- global_frame_seq_num ---
     if (header.global_frame_seq_num != expected_global_frame_seq) {
         return format("global_frame_seq_num {} != expected {}",
@@ -145,21 +314,10 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
     expected_global_frame_seq = header.global_frame_seq_num + 1;
     validating_seed_frame = false;
 
-    // --- volume_seq_num (advisory, monotonic, at most +1) ---
-    if (!saw_first_volume_seq) {
-        expected_volume_seq_num = header.volume_seq_num;
-        saw_first_volume_seq = true;
-    } else {
-        if (header.volume_seq_num < expected_volume_seq_num) {
-            return format("volume_seq_num {} went backward from {}",
-                          header.volume_seq_num, expected_volume_seq_num);
-        }
-        if (header.volume_seq_num > expected_volume_seq_num + 1) {
-            return format("volume_seq_num {} skipped ahead from {}",
-                          header.volume_seq_num, expected_volume_seq_num);
-        }
-        expected_volume_seq_num = header.volume_seq_num;
-    }
+    // Volume ordinals are advisory; gaps and backward values do not change
+    // archive identity or logical continuity.
+    expected_volume_seq_num = header.volume_seq_num;
+    saw_first_volume_seq = true;
 
     // --- archive_end ---
     if (header.channel_type == ChannelType::ARCHIVE_END) {
@@ -182,6 +340,7 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
                           header.channel_frame_seq_num);
         }
         saw_archive_end = true;
+        remember_record(header, raw_data, record_size, skip_hash);
         return std::nullopt;
     }
 
@@ -212,10 +371,17 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
         next_channel_seq.fill(0);
         channel_seen.fill(false);
         channel_ended.fill(false);
+        unknown_channel_end.fill(false);
         saw_non_metadata_in_slice = false;
     }
 
     std::size_t const index = channel_index(header.channel_type);
+    // A connection may start halfway through a content run after earlier
+    // FEC groups. Its first repair-channel sequence is not necessarily zero.
+    // Subsequent repair records still have to be contiguous.
+    if (header.channel_type == ChannelType::CH_FEC && !channel_seen[index] &&
+        protected_run_started_before_stream)
+        next_channel_seq[index] = header.channel_frame_seq_num;
     if (channel_ended[index]) {
         return format("{} frame after channel END in slice {}",
                       channel_type_name(header.channel_type),
@@ -229,6 +395,7 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
     channel_seen[index] = true;
     next_channel_seq[index] = header.channel_frame_seq_num + 1;
     channel_ended[index] = has_frame_flag_end(header.flags);
+    unknown_channel_end[index] = false;
 
     uint32_t const payload_capacity = block_size - fixed_header_size;
     if (header.channel_type == ChannelType::CH_FEC) {
@@ -308,7 +475,7 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
                     descriptor.source_content_frame_start +
                     descriptor.source_frame_count;
                 if (observed_end != described_end ||
-                    descriptor.source_content_frame_start >=
+                    descriptor.source_content_frame_start >
                         protected_run_start) {
                     return "FEC descriptor does not cover seeded protected run";
                 }
@@ -330,7 +497,8 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
                 }
             }
             current_fec_group = descriptor;
-            next_repair_index = 0;
+            if (!recover_missing_fec)
+                next_repair_index = 0;
         } else if (!same_fec_group(*current_fec_group, descriptor)) {
             return "FEC descriptors disagree within repair group";
         }
@@ -353,6 +521,7 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
     last_channel_type = header.channel_type;
     last_frame_had_end = has_frame_flag_end(header.flags);
 
+    remember_record(header, raw_data, record_size, skip_hash);
     return std::nullopt; // OK
 }
 
@@ -363,7 +532,7 @@ FrameValidator::validate_restore_frame(const FrameHeader &header,
     if (header.channel_type == ChannelType::CH_METADATA) {
         bool const hash_ok =
             verify_frame_hash(raw_data, record_size, header.frame_hash);
-        if (auto err = validate(header, raw_data, record_size, true);
+        if (auto err = validate(header, raw_data, record_size, !hash_ok);
             err.has_value()) {
             return make_restore_validation(RestoreFrameValidationStatus::fatal,
                                            std::move(*err));
@@ -387,7 +556,8 @@ FrameValidator::validate_restore_frame(const FrameHeader &header,
 RestoreFrameValidation
 FrameValidator::validate_salvage_frame(const FrameHeader &header,
                                        const uint8_t *raw_data,
-                                       std::size_t record_size) const {
+                                       std::size_t record_size) {
+    last_was_replay = false;
     uint32_t const block_size = decoded_block_size(header);
     if (record_size != block_size) {
         return make_restore_validation(
@@ -419,10 +589,28 @@ FrameValidator::validate_salvage_frame(const FrameHeader &header,
                 format("invalid FEC descriptor: {}", error.what()));
         }
     }
+    if (archive_uuid != header.archive_uuid) {
+        replay_history_.clear();
+        replay_next_.reset();
+        expected_global_frame_seq = 0;
+        archive_uuid = header.archive_uuid;
+    }
+    if (auto error = check_replay(header, raw_data, record_size, false))
+        return make_restore_validation(RestoreFrameValidationStatus::fatal,
+                                       *error);
+    if (!last_was_replay) {
+        remember_record(header, raw_data, record_size, false);
+        expected_global_frame_seq = header.global_frame_seq_num + 1;
+    }
     return make_restore_validation(RestoreFrameValidationStatus::ok);
 }
 
 void FrameValidator::reset() {
+    last_was_replay = false;
+    missing_records = 0;
+    unknown_channel_end.fill(false);
+    replay_history_.clear();
+    replay_next_.reset();
     archive_uuid.clear();
     archive_label.clear();
     expected_global_frame_seq = 0;

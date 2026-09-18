@@ -1,5 +1,6 @@
 #include "neotape/fec.hpp"
 #include "neotape/format.hpp"
+#include "neotape/frame_builder.hpp"
 #include "neotape/validate.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -186,7 +187,7 @@ TEST_CASE(
         record.size());
     REQUIRE(error.has_value());
     REQUIRE_THAT(*error, Catch::Matchers::ContainsSubstring(
-                              "channel_frame_seq_num 1 != expected 0"));
+                             "channel_frame_seq_num 1 != expected 0"));
 }
 
 TEST_CASE(
@@ -214,7 +215,7 @@ TEST_CASE(
         second_record.size());
     REQUIRE(error.has_value());
     REQUIRE_THAT(*error, Catch::Matchers::ContainsSubstring(
-                              "channel_frame_seq_num 1 != expected 0"));
+                             "channel_frame_seq_num 1 != expected 0"));
 }
 
 TEST_CASE("validate: validator rejects archive end without preceding end",
@@ -267,7 +268,7 @@ TEST_CASE("validate: validator rejects multiple groups in same slice",
         second_record.size());
     REQUIRE(error.has_value());
     REQUIRE_THAT(*error, Catch::Matchers::ContainsSubstring(
-                              "CH_CONTENT frame after channel END"));
+                             "CH_CONTENT frame after channel END"));
 }
 
 TEST_CASE("validate: validator seed accepts volume local start and rejects gap",
@@ -298,7 +299,7 @@ TEST_CASE("validate: validator seed accepts volume local start and rejects gap",
                            gap_record.size());
     REQUIRE(error.has_value());
     REQUIRE_THAT(*error, Catch::Matchers::ContainsSubstring(
-                              "global_frame_seq_num 44 != expected 43"));
+                             "global_frame_seq_num 44 != expected 43"));
 }
 
 TEST_CASE("validate: validator accepts interleaved fec group",
@@ -440,3 +441,129 @@ TEST_CASE("validate: seeded validator accepts fec group split across volumes",
 }
 
 } // namespace
+
+TEST_CASE("validate: replayed end marker does not reopen archive",
+          "[unit][validation][replay]") {
+    FrameValidator validator;
+    auto content =
+        build_record(make_content_header(0, 0, 0, 0, neotape::frame_flag_end));
+    auto ending = build_record(make_archive_end_header(1));
+    for (auto const &record : {content, ending, content, ending}) {
+        REQUIRE_FALSE(validator.validate(
+            parse_header(record),
+            reinterpret_cast<const uint8_t *>(record.data()), record.size()));
+    }
+    REQUIRE(validator.last_was_replay);
+    REQUIRE(validator.expected_global_frame_seq == 2);
+    REQUIRE(validator.saw_archive_end);
+    auto appended =
+        build_record(make_content_header(2, 1, 0, 0, neotape::frame_flag_end));
+    REQUIRE(validator
+                .validate(parse_header(appended),
+                          reinterpret_cast<const uint8_t *>(appended.data()),
+                          appended.size())
+                .has_value());
+}
+
+TEST_CASE("validate: unsigned replay must still have zero signature bytes",
+          "[unit][validation][replay]") {
+    FrameValidator validator;
+    auto record =
+        build_record(make_content_header(0, 0, 0, 0, neotape::frame_flag_end));
+    REQUIRE_FALSE(validator.validate(
+        parse_header(record), reinterpret_cast<const uint8_t *>(record.data()),
+        record.size()));
+    record[408] = std::byte{1}; // Signature is excluded from the frame hash.
+    REQUIRE(validator
+                .validate(parse_header(record),
+                          reinterpret_cast<const uint8_t *>(record.data()),
+                          record.size())
+                .has_value());
+}
+
+TEST_CASE("validate: block size cannot change on a new volume",
+          "[unit][validation]") {
+    FrameValidator validator;
+    auto first =
+        build_record(make_content_header(0, 0, 0, 0, neotape::frame_flag_end));
+    REQUIRE_FALSE(validator.validate(
+        parse_header(first), reinterpret_cast<const uint8_t *>(first.data()),
+        first.size()));
+    auto next_header = make_content_header(1, 1, 0, 0, neotape::frame_flag_end);
+    next_header.volume_seq_num = 2;
+    next_header.volume_block_size_kib = 8;
+    auto next = build_record(next_header);
+    REQUIRE(validator
+                .validate(parse_header(next),
+                          reinterpret_cast<const uint8_t *>(next.data()),
+                          next.size())
+                .has_value());
+}
+
+TEST_CASE(
+    "validate: recovery requires sequence evidence for missing repair indices",
+    "[unit][validation][fec]") {
+    FrameValidator validator;
+    validator.recover_missing_fec = true;
+    vector<std::byte> payload = {std::byte{'x'}};
+    auto source =
+        build_record(make_content_header(0, 0, 0, 1,
+                                         neotape::frame_flag_fec_protected |
+                                             neotape::frame_flag_end),
+                     payload);
+    REQUIRE_FALSE(validator.validate(
+        parse_header(source), reinterpret_cast<const uint8_t *>(source.data()),
+        source.size()));
+    neotape::FecDescriptor descriptor;
+    descriptor.source_frame_count = 1;
+    descriptor.source_stream_size = 1;
+    descriptor.fec_group_blake3 = neotape::blake3_hash(
+        reinterpret_cast<const uint8_t *>(payload.data()), payload.size());
+    descriptor.repair_index = 2;
+    // No global/channel gap exists to account for missing repairs 0 and 1.
+    auto repair = build_record(make_fec_header(1, 0, descriptor, false),
+                               vector<std::byte>(3584));
+    REQUIRE(validator
+                .validate(parse_header(repair),
+                          reinterpret_cast<const uint8_t *>(repair.data()),
+                          repair.size())
+                .has_value());
+}
+
+TEST_CASE("validate: volume can begin at every position of later FEC groups",
+          "[unit][validation][fec]") {
+    constexpr uint32_t block_size = 4096, capacity = block_size - 512;
+    auto identity = make_content_header(0, 0, 0, 0, 0);
+    neotape::ContentFrameBuilder builder(block_size, identity.archive_uuid,
+                                         "seed", true);
+    std::vector<std::byte> source(capacity * 70 + 123, std::byte{0x5a});
+    auto records = builder.feed(source);
+    auto tail = builder.flush();
+    for (auto &frame : tail)
+        records.push_back(std::move(frame));
+    for (auto &frame : records) {
+        auto header = parse_header(frame.record);
+        neotape::finalize_record(header, frame.record);
+    }
+    auto ending = neotape::build_archive_end_record(
+        block_size, 1, identity.archive_uuid, "seed",
+        builder.next_global_seq_num());
+    for (size_t begin = 1; begin < records.size(); ++begin) {
+        CAPTURE(begin);
+        FrameValidator validator;
+        validator.seed_for_stream_start(parse_header(records[begin].record));
+        for (size_t index = begin; index < records.size(); ++index) {
+            CAPTURE(index);
+            auto const &record = records[index].record;
+            auto error = validator.validate(
+                parse_header(record),
+                reinterpret_cast<const uint8_t *>(record.data()),
+                record.size());
+            CAPTURE(error);
+            REQUIRE_FALSE(error);
+        }
+        REQUIRE_FALSE(validator.validate(
+            parse_header(ending),
+            reinterpret_cast<const uint8_t *>(ending.data()), ending.size()));
+    }
+}

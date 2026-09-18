@@ -14,6 +14,7 @@ neotape_library(neotape_common neotape_common.cpp neotape_progress.cpp)
 target_link_libraries(neotape_common PUBLIC Threads::Threads)
 
 neotape_library(neotape_plan_codec neotape_plan.cpp)
+target_link_libraries(neotape_plan_codec PRIVATE neotape_common)
 
 neotape_library(neotape_bounded_buffer neotape_bounded_buffer.cpp)
 

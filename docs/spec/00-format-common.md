@@ -15,6 +15,7 @@ All fixed header field tables in this specification use the following datatypes:
 | `uint8`        | Unsigned 8-bit integer.                                                               |
 | `uint8_enum`   | Unsigned 8-bit integer with enumerated values defined per field.                      |
 | `uint16`       | Unsigned 16-bit integer, little-endian.                                               |
+| `uint32`       | Unsigned 32-bit integer, little-endian.                                               |
 | `uint64`       | Unsigned 64-bit integer, little-endian.                                               |
 | `char[N]`      | Fixed N-byte character array. NUL-terminated or NUL-padded per field rules.           |
 | `byte[N]`      | Fixed N-byte raw binary array.                                                        |
@@ -90,12 +91,13 @@ signature payload when the `SIGNED` flag is set. Bytes 0-7 hold the opaque
 key ID is not an integer and has no byte order. Bytes 8-71 hold the raw 64-byte
 Ed25519 signature over the
 domain-separated message `NeoTape-frame\0 || frame_hash` (see
-[Format Write Order](#format-write-order) step 4).  The domain string
+[Signing Sequence](#signing-sequence) step 4).  The domain string
 includes its trailing NUL byte and is followed immediately by the 32 raw
 bytes of `frame_hash`.  This mirrors OpenBSD
 signify's Ed25519 signature payload without the leading two `Ed` bytes.
 When `SIGNED` is clear, writers MUST write the entire `signature` field
-as zero and readers MUST ignore it.
+as zero. Readers MUST reject a non-zero `signature` field when `SIGNED` is
+clear; they MUST NOT interpret an all-zero unsigned field as a signature.
 
 The writer-side sequence is:
 
@@ -124,7 +126,7 @@ A writer SHOULD use at least 64 KiB (65536 bytes) in practice (`volume_block_siz
 
 ### Maximum
 
-The NeoTape record block size MUST NOT exceed 8 MiB (8388608 bytes), encoded as `volume_block_size_kib <= 8192`. A reader SHOULD reject larger values as unsupported.
+The NeoTape record block size MUST NOT exceed 8 MiB (8388608 bytes), encoded as `volume_block_size_kib <= 8192`. Readers MUST reject values outside the supported range of 4 through 8192 KiB.
 
 ### Shape
 
@@ -132,7 +134,10 @@ The format MAY use non-power-of-2 block sizes. In practice, that is usually a po
 
 ### Scope
 
-`volume_block_size_kib` is repeated in every frame in the archive volume. The decoded record size is `volume_block_size_kib * 1024` bytes.
+`volume_block_size_kib` is repeated in every frame and MUST remain constant
+throughout one archive, including across backend volumes and on `archive_end`.
+The decoded record size is `volume_block_size_kib * 1024` bytes. A new archive
+MAY use a different block size.
 
 ## Requirement Keywords
 

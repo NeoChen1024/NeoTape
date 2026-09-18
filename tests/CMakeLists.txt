@@ -1,4 +1,9 @@
 if(BUILD_TESTING)
+    add_executable(neotape_make_replay_cases EXCLUDE_FROM_ALL hardware/make_replay_cases.cpp)
+    target_link_libraries(neotape_make_replay_cases PRIVATE neotape_build_options neotape_frame_builder)
+    add_executable(neotape_capture_volume EXCLUDE_FROM_ALL hardware/capture_volume.cpp)
+    target_link_libraries(neotape_capture_volume PRIVATE neotape_build_options
+        neotape_tape neotape_signature neotape_socket neotape_protocol)
     find_package(Catch2 3 REQUIRED)
     include(Catch)
 
@@ -17,6 +22,10 @@ if(BUILD_TESTING)
         )
     endfunction()
 
+    neotape_unit_test(test_tape_reader test_tape_reader.cpp neotape_tape)
+    target_link_options(test_tape_reader PRIVATE "-Wl,--wrap=read" "-Wl,--wrap=ioctl")
+    neotape_unit_test(test_tape_io test_tape_io.cpp neotape_writer)
+    target_link_options(test_tape_io PRIVATE "-Wl,--wrap=write" "-Wl,--wrap=close")
     neotape_unit_test(test_common test_common.cpp neotape_common)
     neotape_unit_test(test_pax_pipeline test_pax_pipeline.cpp
         Threads::Threads neotape_test_support)
@@ -25,7 +34,7 @@ if(BUILD_TESTING)
     )
     neotape_unit_test(test_tcp_protocol test_tcp_protocol.cpp neotape_protocol)
     neotape_unit_test(test_format test_format.cpp neotape_format)
-    neotape_unit_test(test_validate test_validate.cpp neotape_validation)
+    neotape_unit_test(test_validate test_validate.cpp neotape_validation neotape_frame_builder)
     neotape_unit_test(test_signature test_signature.cpp
         neotape_frame_builder neotape_fec neotape_signature)
     target_compile_definitions(test_signature PRIVATE
@@ -101,6 +110,7 @@ if(BUILD_TESTING)
         NEOTAPE_BSDTAR="${NEOTAPE_BSDTAR_EXECUTABLE}"
     )
     neotape_integration_test(test_recovery_integration test_recovery_integration.cpp)
+    target_link_libraries(test_recovery_integration PRIVATE neotape_format neotape_socket neotape_protocol)
     neotape_integration_test(test_signed_integration test_signed_integration.cpp)
     target_link_libraries(test_signed_integration PRIVATE neotape_socket neotape_protocol)
     find_program(NEOTAPE_CMP_EXECUTABLE NAMES cmp REQUIRED)

@@ -13,21 +13,21 @@ All NeoTape records use a single unified 512-byte fixed header. The final 32 byt
 
 | Field                      | datatype       | size (in bytes) | Requirement | Notes                                                                                                      |
 | -------------------------- | -------------- | --------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
-| `magic`                  | `char[8]`    | 8               | MUST        | Fixed NeoTape identifier:`NeoTape\0`.                                                                    |
-| `header_version`         | `uint8`      | 1               | MUST        | Currently`1`; bump on layout-breaking changes.                                                           |
-| `channel_type`           | `uint8_enum` | 1               | MUST        | Frame role. See[Channel Types](#channel-types).                                                             |
-| `volume_block_size_kib`  | `uint16`     | 2               | MUST        | Record size for this volume, encoded in KiB.                                                               |
+| `magic`                  | `char[8]`    | 8               | MUST        | Fixed NeoTape identifier: `NeoTape\0`.                                                                    |
+| `header_version`         | `uint8`      | 1               | MUST        | Currently `1`; bump on layout-breaking changes.                                                           |
+| `channel_type`           | `uint8_enum` | 1               | MUST        | Frame role. See [Channel Types](#channel-types).                                                             |
+| `volume_block_size_kib`  | `uint16`     | 2               | MUST        | Record size for the entire archive, encoded in KiB.                                                               |
 | `archive_uuid`           | `nt_uuid`    | 37              | MUST        | NUL-terminated UUID string.                                                                                |
 | `archive_label`          | `nt_name`    | 65              | SHOULD      | NUL-terminated/padded human-readable archive label.                                                        |
 | `volume_seq_num`         | `uint64`     | 8               | SHOULD      | Advisory volume sequence number; part of the volume label/name.                                            |
-| `global_frame_seq_num`   | `uint64`     | 8               | MUST        | Monotonically increasing across**all** frames, including `archive_end`.                            |
+| `global_frame_seq_num`   | `uint64`     | 8               | MUST        | Monotonically increasing across **all** frames, including `archive_end`.                            |
 | `slice_seq_num`          | `uint64`     | 8               | MUST        | `0` for the `archive_end` control frame.                                                               |
 |  `channel_frame_seq_num` | `uint64`     | 8               | MUST        | `0` for the `archive_end` control frame.                                                               |
 | `frame_payload_size`     | `uint32`     | 4               | MUST        | Meaningful payload bytes after the fixed header.                                                           |
-| `flags`                  | `uint64`     | 8               | MUST        | Frame flags. See[Flags](#flags).                                                                            |
+| `flags`                  | `uint64`     | 8               | MUST        | Frame flags. See [Flags](#flags).                                                                            |
 | `_reserved`              | `byte[122]`  | 122             | MUST        | Zero-filled padding. Immediately followed by `sideband_data` at offset 280.                               |
-| `sideband_data`          | `byte[128]`  | 128             | MAY         | Optional sideband data. Interpretation is defined by `channel_type`. See [Sideband Data](#sideband-data). |
-| `signature`              | `byte[72]`   | 72              | MAY         | 8-byte key ID plus 64-byte Ed25519 signature over`NeoTape-frame\0 \|\| frame_hash` when `SIGNED` is set. |
+| `sideband_data`          | `byte[128]`  | 128             | MAY         | Optional sideband data. Interpretation is defined by `channel_type`. See [Sideband Data](#sideband_data). |
+| `signature`              | `byte[72]`   | 72              | MAY         | 8-byte key ID plus 64-byte Ed25519 signature over `NeoTape-frame\0 \|\| frame_hash` when `SIGNED` is set. |
 | `frame_hash`             | `nt_hash`    | 32              | MUST        | BLAKE3 over the canonical image of the whole frame.                                                        |
 
 Total: 512 bytes.
@@ -38,7 +38,11 @@ Datatype rules from `docs/spec/00-format-common.md` still apply (little-endian i
 
 ### `volume_block_size_kib`
 
-Stores the NeoTape record size in KiB, not bytes. The decoded record size is `volume_block_size_kib * 1024` bytes. Writers MUST encode only whole-KiB record sizes; readers MUST reject `0` and SHOULD apply the format's normal minimum/maximum block-size constraints after decoding. The current supported encoded range is `4 <= volume_block_size_kib <= 8192`, matching a decoded record-size range of 4 KiB to 8 MiB.
+Stores the NeoTape record size in KiB, not bytes. The decoded record size is
+`volume_block_size_kib * 1024` bytes. It MUST remain constant across every frame
+of an archive, including volume transitions and `archive_end`. Writers MUST
+encode whole-KiB sizes in `4 <= volume_block_size_kib <= 8192`; readers MUST
+reject values outside that range (4 KiB through 8 MiB decoded).
 
 `frame_payload_size` is a uint32; its maximum value is implicitly bounded by `(volume_block_size_kib * 1024) - 512`.
 
@@ -68,10 +72,10 @@ The `signature` and `frame_hash` fields are defined in [docs/spec/00-format-comm
 
 ### `sideband_data`
 
-- `sideband_data` is a 128-byte optional area whose meaning is defined by `channel_type`. The `SIDEBAND` flag signals that the area carries meaningful data; when `SIDEBAND` is clear, writers MUST write all 128 bytes as zero and readers MUST ignore the field's contents.
+- `sideband_data` is a 128-byte optional area whose meaning is defined by `channel_type`. The `SIDEBAND` flag signals that the area carries meaningful data; when `SIDEBAND` is clear, writers MUST write all 128 bytes as zero and readers MUST verify that they are zero, without interpreting them as sideband data.
 - In `header_version=1`, `ch_content`, `ch_metadata`, and `archive_end` MUST NOT set `SIDEBAND` and MUST zero-fill `sideband_data`. `ch_fec` MUST set `SIDEBAND = 1` and MUST encode the FEC group descriptor defined in [docs/spec/04-fec-channel.md](04-fec-channel.md). Future `channel_type` values (4–254) may define their own sideband encoding, internal structure, and per-frame consistency rules.
 - `sideband_data` is included in `frame_hash` like every other fixed header field; the canonical image only zeroes `signature` and `frame_hash`. Consequently it is integrity-protected by `frame_hash` and, when `SIGNED` is set, by the Ed25519 signature.
-- Readers that do not understand the sideband encoding for a given `channel_type` MUST ignore `sideband_data` but MUST still include it in `frame_hash` verification.
+- Readers MUST apply the descriptor validation required by [05-validation.md](05-validation.md), even when they do not use FEC for repair. Unsupported channels or descriptor versions MUST NOT be accepted as understood data; salvage readers may skip their independently framed records. All sideband bytes are included in `frame_hash` verification.
 
 ## Channel Types
 
@@ -86,8 +90,8 @@ The `channel_type` field identifies the frame's role:
 
 Values 0 and 4–254 are reserved for future channels. Validation behavior for
 unknown channels is defined in [docs/spec/05-validation.md](05-validation.md).
-Salvage mode MAY skip unknown channels only when it can do so without
-breaking frame/slice sequence continuity.
+Salvage mode MAY skip independently framed records of unknown channels; it
+MUST NOT emit their payloads or claim complete sequence validation.
 
 ## Flags
 
@@ -100,7 +104,7 @@ breaking frame/slice sequence continuity.
 | 2    | `SIDEBAND`  | `sideband_data` carries meaningful, channel-type-defined data. MUST be set for `ch_fec` and clear for `ch_content`, `ch_metadata`, and `archive_end` in `header_version=1`; when clear, `sideband_data` MUST be all zero. |
 | 3    | `FEC_PROTECTED` | Only valid on `ch_content`. Marks this frame as real protected source material for a following `ch_fec` group. |
 | 4-62 | _reserved_  | Must be zero.                                                                                          |
-| 63   | `CLEAN_END` | Only valid for`archive_end`. Must be `1` on a valid end-of-archive frame.                          |
+| 63   | `CLEAN_END` | Only valid for `archive_end`. Must be `1` on a valid end-of-archive frame.                          |
 
 The `archive_end` control frame sets `END = 1`, and `CLEAN_END = 1`.
 
@@ -114,6 +118,10 @@ The `archive_end` control frame sets `END = 1`, and `CLEAN_END = 1`.
   frame may claim it as protected source material.
 
 ## Channel Semantics
+
+Channel ordering, completion, and sequence rules describe logical frames.
+Physical retries do not create new logical frames; readers apply replay
+comparison and suppression under [05-validation.md](05-validation.md#replayed-records).
 
 ### `ch_content` / `ch_metadata` / `ch_fec`
 
@@ -157,10 +165,13 @@ The `archive_end` control frame sets `END = 1`, and `CLEAN_END = 1`.
 
 ```
 Archive (archive_uuid)
-  └── Volume (backend-defined physical/virtual volume)
-      └── Slice (slice_seq_num)
-          └── Channel (channel_type: ch_metadata / ch_content / ch_fec)
-              └── Frame (global_frame_seq_num, channel_frame_seq_num)
+  ├── Slice (slice_seq_num)
+  │   └── Channel (ch_metadata / ch_content / ch_fec)
+  │       └── Frame (global_frame_seq_num, channel_frame_seq_num)
+  └── Archive End control frame
+
+Physical placement: the ordered frames occupy one or more backend volumes.
+A slice may span volumes; a frame may not.
 ```
 
 - **Archive** — authoritative logical backup instance, identified by `archive_uuid`.
@@ -189,7 +200,7 @@ Archive End frame (single record)
 filemark
 ```
 
-Volume boundaries are physical/operator events, detected by filemark transitions. Every frame repeats `volume_block_size_kib`, `archive_uuid`, `archive_label`, and advisory `volume_seq_num`. A slice MAY span backend volumes; sequence continuity does not reset at volume boundaries.
+Volume boundaries are backend or operator events. A filemark marks a tape-file boundary and does not by itself indicate a volume change. Every frame repeats `volume_block_size_kib`, `archive_uuid`, `archive_label`, and advisory `volume_seq_num`. A slice MAY span backend volumes; sequence continuity does not reset at volume boundaries.
 
 Within a backend volume, all frames SHOULD carry the same `volume_seq_num`. `volume_seq_num` is a human/operator-facing ordinal; together with `archive_label` it forms the display label `${archive_label} #${volume_seq_num}`. `archive_uuid` remains the authoritative archive identity.
 
@@ -199,7 +210,7 @@ Within a backend volume, all frames SHOULD carry the same `volume_seq_num`. `vol
 2. Decode `volume_block_size_kib`; validate record size when the backend exposes it.
 3. Apply the relevant validation rules from [docs/spec/05-validation.md](05-validation.md).
 4. Dispatch by `channel_type`: `ch_content` — emit payload bytes; `ch_metadata` — skip or parse advisory bytes; `ch_fec` — skip in normal mode or hand to a repair-capable reader; `archive_end` — verify `CLEAN_END` and finish.
-5. Ignore `sideband_data` unless the `SIDEBAND` flag is set and the `channel_type` defines an interpretation; always include `sideband_data` in `frame_hash` verification.
+5. Validate `sideband_data` according to its channel and flag rules, including zero requirements when `SIDEBAND` is clear; always include it in `frame_hash` verification.
 
 Archive continuity rules, `archive_end` checks, and mode-specific exceptions
 are centralized in [docs/spec/05-validation.md](05-validation.md).

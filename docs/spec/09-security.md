@@ -62,8 +62,10 @@ integrity and authenticity are protected at the frame level. A tampered frame
 will fail verification regardless of transport.
 
 Challenge-response uses a fresh nonce to prevent replay of an old
-`auth_response`. Frame sequence validation rejects duplication and reordering
-within the archive state being validated. Neither mechanism proves archive
+`auth_response`. Frame sequence validation rejects conflicting duplicates and unexplained
+reordering within the archive state being validated. Verified retry replays
+are suppressed under [05-validation.md](05-validation.md#replayed-records),
+without emitting their payload twice. Neither mechanism proves archive
 freshness or prevents replay of a complete, otherwise-valid old archive; a
 deployment requiring that property must independently enforce an expected
 `archive_uuid` or another freshness policy.

@@ -38,7 +38,7 @@ where:
 
 - `<file-num>` — zero-padded integer, the sequential tape-file number within the spool (0-based).
 - `<type>` — one of `slice-<slice-seq>`, `archive-end`.
-- `[-<detail>]` — optional qualifier.
+- `[-<detail>]` — optional non-empty ASCII qualifier using letters, digits, `_`, or `-`; it does not affect ordering or archive identity.
 - `.nts` — extension for "NeoTape Spool".
 
 Examples:
@@ -56,13 +56,31 @@ neotape-000006.slice-000002.nts
 neotape-000007.archive-end.nts
 ```
 
-There is no dedicated Volume Header tape file. Volume boundaries are physical/operator events and are detected by `volume_seq_num` changes or sequence continuity checks.
+There is no dedicated Volume Header tape file. Volume transitions are backend
+or operator events; `volume_seq_num` is advisory, and sequence checks validate
+logical continuity rather than identify physical boundaries.
 
 Sequence numbers embedded in filenames are deliberately present so that a reader can enumerate candidate files by scanning names matching the expected pattern, then sort them numerically to determine the correct playback order. Zero-padding to 6 digits is a convention. Tools MUST parse the numeric value from each name and sort numerically.
 
 `file-num` is scoped to the spool root and continues increasing when a new
 archive is appended. `slice-seq` is scoped to one archive instance and restarts
 at 0 for each new `archive_uuid`, as illustrated above.
+
+`file-num` and `slice-seq` are unsigned decimal integers in `0..2^64-1`.
+Readers MUST reject numeric overflow. Leading zeroes do not affect identity.
+Before reading records, readers MUST reject two candidate files that parse to
+the same numeric `file-num`, regardless of their padding, type, or detail.
+They MUST report an error and stop; lexical tie-breaking is not allowed.
+
+Writers MUST allocate consecutive file numbers. Readers MAY continue across
+missing file numbers only while reporting the missing tape-file boundary and
+applying the recovery rules in [05-validation.md](05-validation.md); filename
+gaps alone do not establish which frames or payload bytes are missing.
+
+Frame headers are authoritative for archive identity and logical sequence.
+The filename type and slice number MUST agree with the contained frames.
+A mismatch is a spool conformance error and MUST NOT be silently used to
+reinterpret the frame headers.
 
 ## Semantics
 

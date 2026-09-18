@@ -31,16 +31,11 @@ bool RecordSink::write(std::span<const std::byte> record) {
         device_->write_record(record.data(), record.size());
     }
     used_ += record.size();
-    if (device_) {
-        try {
-            return device_->status().eot();
-        } catch (const mt::Error &e) {
-            if (e.error_code() != ENOSPC)
-                throw;
-            return true;
-        }
-    }
-    return false;
+    // MTIOCGET can flush an asynchronous write. An error here leaves its
+    // commit status uncertain, so propagate it without authorizing an ACK.
+    // A successful status query reporting EOT is a different case: the
+    // completed record may be acknowledged, then the session stops.
+    return device_ && device_->status().eot();
 }
 
 void RecordSink::filemark() {
@@ -108,6 +103,9 @@ void output_records(int fd, RecordSink &sink, Session &state) {
                  {MessageType::ack_frame,
                   uint64_to_le_bytes(item.header.global_frame_seq_num)});
             if (item.header.channel_type == ChannelType::ARCHIVE_END) {
+                // ACK certifies the record. Finalization errors must still
+                // reach the caller instead of disappearing in a destructor.
+                sink.filemark();
                 result = SessionStatus::complete;
                 break;
             }
@@ -117,7 +115,8 @@ void output_records(int fd, RecordSink &sink, Session &state) {
             }
         }
     } catch (const mt::Error &e) {
-        if (e.error_code() == ENOSPC)
+        if (e.error_code() == ENOSPC &&
+            state.last.channel_type != ChannelType::ARCHIVE_END)
             result = SessionStatus::volume_full;
         else
             error = std::current_exception();
@@ -225,6 +224,10 @@ WriteResult write_volume(int fd, RecordSink &sink,
                     validate_frame_signature(item.header, keys, !keys.empty());
                 if (signature.error)
                     throw std::runtime_error(*signature.error);
+                if (validator.last_was_replay) {
+                    throw std::runtime_error(
+                        "producer replay within writer connection");
+                }
                 if (signature.status ==
                         FrameSignatureStatus::signed_unverified &&
                     !warned) {

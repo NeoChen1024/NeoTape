@@ -125,9 +125,9 @@ int main(int argc, char **argv) {
         }
 
         uint64_t const frames = neotape::run_tcp_extractor(ex_opts);
-        std::cerr << format(
-            "neotape-extractor: archive complete: validated_frames={}\n",
-            frames);
+        std::cerr << format("neotape-extractor: restore finished at "
+                            "archive_end: processed_frames={}\n",
+                            frames);
         return 0;
     } catch (const std::exception &e) {
         fail(e.what());

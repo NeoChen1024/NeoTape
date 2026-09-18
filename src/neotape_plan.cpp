@@ -1,6 +1,8 @@
+#include "neotape/common.hpp"
 #include "neotape/plan.hpp"
-#include <cstdlib>
+#include <charconv>
 #include <format>
+#include <limits>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
@@ -14,13 +16,17 @@ using std::string_view;
 using std::vector;
 uint64_t parse_u64_field(const string &field, const fs::path &path,
                          uint64_t record_num) {
-    char *end = nullptr;
-    unsigned long long const value = std::strtoull(field.c_str(), &end, 10);
-    if (end == field.c_str() || *end != '\0') {
-        throw std::runtime_error(
-            format("{}:{}: invalid numeric field", path.string(), record_num));
-    }
-    return static_cast<uint64_t>(value);
+    return parse_uint(field,
+                      format("{}:{} numeric field", path.string(), record_num));
+}
+
+int64_t parse_mtime(const string &field) {
+    int64_t value = 0;
+    auto [end, error] =
+        std::from_chars(field.data(), field.data() + field.size(), value);
+    if (error != std::errc{} || end != field.data() + field.size())
+        throw std::runtime_error("invalid signed plan mtime");
+    return value;
 }
 
 PlanRecord parse_plan_record(string_view text, const fs::path &path,
@@ -58,6 +64,11 @@ PlanRecord parse_plan_record(string_view text, const fs::path &path,
     }
 
     char const kind = fields[2][0];
+    if (string_view("fhdlcbps").find(kind) == string_view::npos ||
+        entry_path.front() == '/')
+        throw std::runtime_error("invalid plan entry kind or path");
+    if (kind == 'h' && parse_u64_field(fields[3], path, record_num) != 0)
+        throw std::runtime_error("hardlink plan entry size must be zero");
 
     return PlanRecord{
         .chdir_dir = std::nullopt,
@@ -67,13 +78,14 @@ PlanRecord parse_plan_record(string_view text, const fs::path &path,
                 .file_num = parse_u64_field(fields[1], path, record_num),
                 .kind = kind,
                 .size = parse_u64_field(fields[3], path, record_num),
-                .mtime = static_cast<int64_t>(
-                    parse_u64_field(fields[4], path, record_num)),
+                .mtime = parse_mtime(fields[4]),
                 .uid = static_cast<uint32_t>(
-                    parse_u64_field(fields[5], path, record_num)),
+                    parse_uint(fields[5], "plan owner ID", 0,
+                               std::numeric_limits<uint32_t>::max())),
                 .uname = fields[6],
                 .gid = static_cast<uint32_t>(
-                    parse_u64_field(fields[7], path, record_num)),
+                    parse_uint(fields[7], "plan owner ID", 0,
+                               std::numeric_limits<uint32_t>::max())),
                 .gname = fields[8],
                 .path = std::move(entry_path),
             },
@@ -99,7 +111,26 @@ std::optional<PlanRecord> PlanReader::next() {
     if (input_.eof() || input_.get() != '\n')
         throw std::runtime_error(std::format("{}:{}: unterminated plan record",
                                              path_.string(), record_num_));
-    return parse_plan_record(record, path_, record_num_);
+    auto parsed = parse_plan_record(record, path_, record_num_);
+    if (parsed.chdir_dir) {
+        if (record_num_ != 1 || parsed.chdir_dir->empty())
+            throw std::runtime_error(
+                "chdir must be the first non-empty plan directive");
+    } else {
+        auto const &entry = *parsed.entry;
+        bool valid = !previous_ ? entry.slice == 0 && entry.file_num == 0
+                     : entry.slice == previous_->slice
+                         ? previous_->file_num != UINT64_MAX &&
+                               entry.file_num == previous_->file_num + 1
+                         : previous_->slice != UINT64_MAX &&
+                               entry.slice == previous_->slice + 1 &&
+                               entry.file_num == 0;
+        if (!valid)
+            throw std::runtime_error(
+                "non-contiguous plan slice or file number");
+        previous_ = entry;
+    }
+    return parsed;
 }
 
 void write_plan_record(FILE *output, const PlanRecord &record) {
@@ -108,9 +139,14 @@ void write_plan_record(FILE *output, const PlanRecord &record) {
         text = "/chdir/" + *record.chdir_dir;
     else if (record.entry) {
         const auto &e = *record.entry;
+        auto name = [](const string &value) -> string {
+            return value.find_first_of(string("/\0", 2)) == string::npos
+                       ? value
+                       : string{};
+        };
         text = std::format("/{}/{}/{}/{}/{}/{}/{}/{}/{}/{}", e.slice,
-                           e.file_num, e.kind, e.size, e.mtime, e.uid, e.uname,
-                           e.gid, e.gname, e.path);
+                           e.file_num, e.kind, e.size, e.mtime, e.uid,
+                           name(e.uname), e.gid, name(e.gname), e.path);
     } else
         throw std::invalid_argument("empty plan record");
     text.append("\0\n", 2);

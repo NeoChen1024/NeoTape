@@ -76,6 +76,8 @@ std::string channel_type_name(ChannelType type);
 std::string hash_hex(const Hash &hash);
 Hash blake3_hash(const uint8_t *data, std::size_t size);
 Hash compute_frame_hash(const uint8_t *data, std::size_t size);
+// Logical retry identity excludes only volume ordinal, signature, and hash.
+Hash compute_replay_hash(const uint8_t *data, std::size_t size);
 uint32_t decoded_block_size(const FrameHeader &header);
 bool valid_block_size(uint32_t block_size);
 

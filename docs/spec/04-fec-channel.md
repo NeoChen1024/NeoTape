@@ -129,7 +129,9 @@ For a shortened final group with `source_frame_count = s`, where `1 <= s <= 32`:
   zero-padded at the end to `fec_shard_size` when its payload is shorter;
 - data shard positions `s..31` are synthetic virtual all-zero shards;
 - repair shard positions `32..35` are computed from all 32 data shard positions;
-- only the `s` real content shards and 4 repair shards are emitted on media.
+- the writer emits only the `s` real content shards and all 4 repair shards.
+  Recovery does not require all emitted records to survive; see
+  [05-validation.md](05-validation.md#recovery-from-unavailable-records).
 
 For `ch_fec` under `rs_32_4`, every FEC frame payload carries exactly one full
 repair shard. Therefore `frame_payload_size` MUST equal:
@@ -210,9 +212,9 @@ backend-neutral procedure, equivalent to the one commonly used with ISA-L, is:
 - choose any deterministic set of 32 known positions whose generator rows
   form an invertible `32x32` matrix over GF(2^8);
 - invert that matrix;
-- for each missing data shard position `d in 0..31`, use row `d` of the
-  inverted matrix when `d` itself was among the selected rows, otherwise use
-  the original generator row for `d` multiplied by the inverted matrix.
+- for each missing real data shard position `d`, multiply row `d` of the
+  inverted matrix by the vector of selected shard bytes at each byte offset.
+  The selected shards MUST use the same order as the rows of the basis matrix.
 
 Any equivalent procedure is allowed, but it MUST reconstruct the same missing
 data shard bytes as the matrix arithmetic above. Extra valid surviving shards
@@ -223,19 +225,6 @@ shards are output candidates. After reconstruction, the implementation MUST
 concatenate the real data shards, truncate the result to `source_stream_size`,
 and verify `fec_group_blake3`. If that verification fails, the repaired group
 MUST be rejected and no partial reconstructed output may be emitted.
-
-Golden sample test vectors for this profile will be published under:
-
-```text
-docs/spec/test-vectors/rs_32_4/
-  matrix.hex
-  case-full-32/
-    data-shards.txt
-    repair-shards.txt
-  case-short-17/
-    data-shards.txt
-    repair-shards.txt
-```
 
 ## Reader Behavior
 

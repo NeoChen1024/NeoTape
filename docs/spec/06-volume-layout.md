@@ -12,10 +12,13 @@ For the fixed header layout and channel type definitions, see [docs/spec/02-fram
 
 ```
 Archive (archive_uuid)
-  └── Volume (backend-defined physical/virtual volume)
-      └── Slice (slice_seq_num)
-          └── Channel (channel_type: ch_metadata / ch_content / ch_fec)
-              └── Frame (global_frame_seq_num, channel_frame_seq_num)
+  ├── Slice (slice_seq_num)
+  │   └── Channel (ch_metadata / ch_content / ch_fec)
+  │       └── Frame (global_frame_seq_num, channel_frame_seq_num)
+  └── Archive End control frame
+
+Physical placement: the ordered frames occupy one or more backend volumes.
+A slice may span volumes; a frame may not.
 ```
 
 - **Archive** is the authoritative logical backup instance, identified by `archive_uuid`.
@@ -24,14 +27,14 @@ Archive (archive_uuid)
 - **Channel** partitions a slice into `ch_metadata`, `ch_content`, and optional `ch_fec`. Metadata, when present, precedes all non-metadata frames. A slice may contain only metadata.
 - **Frame** is the concrete transport record. Every frame has exactly one `channel_type`, one `global_frame_seq_num`, and one `channel_frame_seq_num`.
 
-## Physical Nesting
+## Physical Placement
 
 ```
 Physical Medium (LTO tape)
   └── (optional recovery bundle tape file, not NeoTape format)
   └── [optional filemark]
   └── Archive Volume (part of one archive on one medium)
-  │     ├── Slice (tape file, one or more NeoTape records)
+  │     ├── Slice or slice continuation (tape file, one or more NeoTape records)
   │     │     ├── ch_metadata Frame (optional, NeoTape record, volume_block_size_kib * 1024 bytes)
   │     │     │     ├── 512-byte Frame Header
   │     │     │     ├── payload bytes
@@ -52,12 +55,12 @@ Physical Medium (LTO tape)
 - **Physical Medium** — a sequential storage medium holding one or more archive volumes. NeoTape does not store a medium-level descriptor; any non-NeoTape prefix before the first NeoTape frame is ignored by readers.
 - **Tape file** — LTO filemark-delimited region. NeoTape uses tape files for slices and the Archive End frame.
 - **NeoTape record** — a single `volume_block_size_kib * 1024`-byte block written to the tape device or stored as a record within a spool file.
-- **Frame** — exactly one NeoTape record. Frames within a slice tape file are chained by `frame_payload_size`, not by filemarks.
-- **Volume boundary** — a physical/operator event, identified by EOT and detected by `volume_seq_num` change (advisory) or sequence continuity checks (authoritative).
+- **Frame** — exactly one NeoTape record. Frames within a tape file are delimited by backend record boundaries or the decoded record size. `frame_payload_size` identifies meaningful payload bytes and does not locate the next frame.
+- **Volume boundary** — a backend/operator event, such as replacing a tape after EOT. `volume_seq_num` is an advisory hint; sequence continuity verifies logical ordering and does not itself identify a physical boundary.
 
 ## No Volume Header
 
-There is no dedicated Volume Header tape file. The first NeoTape record on a new volume is the first frame of the first slice (or an Archive End frame if the volume contains only the end marker). Every frame repeats `volume_block_size_kib`, `archive_uuid`, `archive_label`, and `volume_seq_num`, so a reader can bootstrap from any frame.
+There is no dedicated Volume Header tape file. The first NeoTape record on a new volume may begin a slice, continue an interrupted slice, replay an unacknowledged suffix, or contain only the Archive End marker. Every frame repeats `volume_block_size_kib`, `archive_uuid`, `archive_label`, and `volume_seq_num`, so a reader can parse a frame independently. Complete continuity validation and replay detection still require prior archive state.
 
 Within a backend-defined physical or virtual volume, all NeoTape frames SHOULD carry the same `volume_seq_num`. A reader MAY warn if `volume_seq_num` changes unexpectedly within the same backend volume.
 
@@ -82,7 +85,7 @@ File N:   Archive End frame (END, CLEAN_END)
 filemark
 ```
 
-Within a slice tape file, frames are located by `frame_payload_size`, not by additional filemarks. Metadata frames, when present, precede all non-metadata frames. `ch_content` and `ch_fec` MAY then appear as repeated runs within the same slice tape file. A slice MUST contain at least one frame across its channels.
+Within a slice tape file, each frame occupies one complete fixed-size record, including padding. Filemarks delimit tape files, not individual frames. Metadata frames, when present, precede all non-metadata frames. `ch_content` and `ch_fec` MAY then appear as repeated runs within the same slice tape file. A slice MUST contain at least one frame across its channels.
 
 ## Multi-Volume Tape Layout
 
@@ -173,12 +176,15 @@ When the writer encounters EOT (physical end of tape) or reaches the configured 
    volume MUST write the same logical frame again from byte zero. Its
    `archive_uuid`, `global_frame_seq_num`, `slice_seq_num`,
    `channel_frame_seq_num`, channel semantics, and payload content remain the
-   same. Volume-scoped or advisory fields such as `volume_seq_num` MUST describe
-   the new volume, and `frame_hash` and `signature` MUST be recomputed for the
-   resulting canonical frame image.
-2. **Frame committed:** The next volume continues with the next frame. A
-   committed frame MUST NOT be repeated merely because a following filemark
-   could not be written.
+   same. Only `volume_seq_num` and the resulting `frame_hash` and `signature`
+   may change; the archive block size MUST remain unchanged. The producer
+   recomputes the hash and, when signed, the signature for the new image.
+2. **Frame committed and acknowledged:** The next volume continues with the
+   next frame. A committed frame MUST NOT be repeated merely because a
+   following filemark could not be written. If acknowledgement was lost, the
+   producer MAY replay the unacknowledged suffix as specified in
+   [08-tcp-protocol.md](08-tcp-protocol.md). Readers handle verified duplicate
+   records under [05-validation.md](05-validation.md#replayed-records).
 3. **END frame committed, slice-level filemark not yet written:** The logical
    slice frame stream is complete. The next volume proceeds to the next slice
    or Archive End frame. The missing filemark is a media-layout anomaly.

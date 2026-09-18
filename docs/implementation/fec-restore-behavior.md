@@ -27,19 +27,21 @@ FEC-protected run, emission waits only for the matching local repair group:
 
 1. Content that passes integrity and signature policy becomes an available
    real data shard.
-2. Protected content with a hash mismatch advances through strict
-   sequence/channel validation using its structurally parsed header, but its
-   payload is never trusted; its shard position is marked unavailable.
-3. A valid `ch_fec` frame becomes an available repair shard. A repair frame
-   with a hash mismatch is also marked unavailable when its descriptor and
-   strict ordering remain structurally valid.
-4. After `repair_index = 3`, the extractor builds the fixed 36-position shard
-   set, including virtual zero positions for a shortened group, and runs the
-   `rs_32_4` decoder.
-5. Recovered real data is concatenated, truncated to `source_stream_size`, and
-   accepted only if `fec_group_blake3` matches.
-6. Only after that commitment succeeds are the content bytes streamed to the
-   output.
+2. A hash-invalid protected content or repair record is unavailable. Its
+   header and descriptor are not used to advance logical state; later valid
+   headers must account for the gap.
+3. Valid FEC descriptors identify missing source positions, real source length,
+   and the expected group commitment. Whole missing records are erasures just
+   like damaged payloads. Missing repair indices do not prevent recovery when
+   the surviving matrix rows are sufficient.
+4. The group closes at repair index 3 or an unambiguous following group, slice,
+   or archive-end boundary. A pending group is retained across volume changes.
+5. The decoder uses real surviving shards and virtual-zero positions, verifies
+   the reconstructed source-stream hash, and emits source bytes once in order.
+6. With trusted keys configured, the recovery commitment must come from a
+   verified signed repair frame. Recovery does not authenticate a missing
+   original frame header; diagnostics distinguish recovered payload from
+   intact media conformance.
 
 The extractor never buffers a complete slice. Its retained payload is bounded
 by one incomplete FEC group, including groups split across volume boundaries.
@@ -70,23 +72,40 @@ as normal restore. Its differences apply outside successful decoding:
   shards in channel order;
 - stderr prominently marks the overall output as not fully verified.
 
-The same repairable damage therefore yields the same reconstructed payload in
-normal and salvage modes. Salvage changes what happens to unrepairable or
-inconsistent input, not whether FEC correction is attempted.
+Both modes verify the reconstructed group commitment. Salvage may emit
+individually validated surviving content when a group cannot be reconstructed;
+normal mode rejects incomplete recovery.
+
+## Retry Handling and Media Boundaries
+
+The shared validator retains normalized BLAKE3 fingerprints for the most recent
+8192 accepted records. Comparison excludes only volume ordinal, signature, and
+frame hash; each replay still undergoes integrity and signature checks. An
+equivalent replay does not advance logical sequence state or contribute output
+or a second FEC shard. An older retry outside retained state fails explicitly.
+This bounds retry memory independently of archive size.
+
+Spool enumeration rejects duplicate numeric file numbers before playback.
+Established fixed record framing permits skipping an unreadable header without
+searching arbitrary byte offsets. Tape read failures are distinguished from
+filemarks: continuation requires reported file/block counters and confirmed
+progress to another record boundary. Failed or unavailable positioning stops
+the reader instead of retrying indefinitely.
 
 ## Diagnostics and Tests
 
-Normal restore reports an invalid protected frame as unavailable while waiting
-for group completion. Successful repair reports the number of unavailable
-content shards recovered. Failure is fatal in normal mode and downgraded only
-in salvage mode.
+Normal restore reports unavailable records and verified retry suppression.
+A successful repair reports the recovered shard count; uncertain original
+headers are reported separately from payload integrity. Inspector reports
+archive completeness separately from conformance of the observed records.
 
-`tests/test_recovery_integration.cpp` covers undamaged normal restore, normal recovery
-of damaged protected content, and normal recovery with both a content and a
-repair shard unavailable. It also verifies that five unavailable positions are
-fatal and cause the normal extractor to exit rather than emit partial group
-output or wait for another reader. The salvage test in the same file covers non-FEC
-best-effort skipping and unverified-output diagnostics.
+`tests/test_recovery_integration.cpp` checks actual whole-record deletion,
+missing content and repair shards together, shortened groups, damaged headers,
+signed recovery commitments, replay across Reader connections, conflicting
+retries, and unrecoverable non-FEC gaps. It also exercises mismatched ACKs and
+spool finalization errors. These are spool/socket tests, not verification of
+physical tape positioning.
+
 `tests/test_bounded_memory_integration.cpp` restores a 320 MiB single-slice FEC
 stream under a 256 MiB address-space limit and compares the streamed output
-byte-for-byte, preventing reintroduction of slice-sized buffering.
+byte-for-byte. Buffering remains bounded by a local FEC group and retry history.

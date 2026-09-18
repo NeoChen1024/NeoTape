@@ -72,7 +72,7 @@ void report_volume_capacity_reached(TargetLocator::Kind kind,
                                     uint64_t committed_frames) {
     if (kind == TargetLocator::tape) {
         neotape::write_diagnostic(
-            format("neotape-write: end of tape reached: committed_frames={}",
+            format("neotape-write: tape volume boundary reached: committed_frames={}",
                    committed_frames));
         return;
     }
@@ -244,13 +244,6 @@ Options parse_args(int argc, char **argv) {
         }
     }
 
-    if (opts.max_volume_bytes.has_value() &&
-        opts.target.kind != TargetLocator::spool &&
-        opts.target.kind != TargetLocator::null_sink) {
-        usage_error(
-            "--max-volume-bytes is only valid with spool or null targets");
-    }
-
     constexpr size_t min_output_buffer_size = 8ULL * 1024 * 1024;
     if (opts.output_buffer_size < min_output_buffer_size) {
         usage_error("--output-buffer-size must be at least 8 MiB");
@@ -368,8 +361,8 @@ uint64_t install_spool_recovery_bundle(const fs::path &root,
     return size;
 }
 
-void write_tape_recovery_bundle(mt::TapeDevice &dev, const fs::path &source,
-                                size_t record_size) {
+uint64_t write_tape_recovery_bundle(mt::TapeDevice &dev, const fs::path &source,
+                                    size_t record_size) {
     std::ifstream input(source, std::ios::binary);
     if (!input) {
         throw std::runtime_error(
@@ -406,6 +399,7 @@ void write_tape_recovery_bundle(mt::TapeDevice &dev, const fs::path &source,
                         "of {} bytes)\n",
                         source.string(), source_bytes, record_count,
                         record_size);
+    return record_count * record_size;
 }
 
 } // namespace
@@ -473,7 +467,7 @@ int main(int argc, char **argv) {
                 uint64_t const bundle_block_size =
                     opts.recovery_bundle_block_size.value_or(
                         default_recovery_bundle_block_size);
-                write_tape_recovery_bundle(
+                recovery_bundle_bytes = write_tape_recovery_bundle(
                     *dev, *opts.recovery_bundle,
                     static_cast<size_t>(bundle_block_size));
             } else if (opts.target.kind == TargetLocator::spool) {
@@ -504,6 +498,10 @@ int main(int argc, char **argv) {
                                  recovery_bundle_bytes);
         auto result = neotape::write_volume(fd, sink, verify_keys,
                                             opts.output_buffer_size);
+        // Surface deferred physical-tape close errors before reporting either
+        // successful completion or a clean volume-change checkpoint.
+        if (output && opts.target.kind == TargetLocator::tape)
+            output->close();
         if (result.status == neotape::WriteStatus::volume_full) {
             report_volume_capacity_reached(opts.target.kind, result.frames);
             return exit_volume_change_required;

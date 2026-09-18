@@ -47,6 +47,7 @@ struct ExtractorState {
     std::vector<std::pair<uint64_t, std::optional<FecShard>>>
         pending_content_shards;
     FecAvailableShards fec_shards;
+    std::optional<FrameHeader> repair_header;
 };
 
 [[nodiscard]] bool write_output(FILE *output, const uint8_t *data,
@@ -74,6 +75,9 @@ struct ExtractorState {
 
 void remember_fec_content(ExtractorState &state, const FrameHeader &header,
                           const uint8_t *data, bool available) {
+    if (state.pending_content_shards.size() >= fec_data_shards)
+        throw std::runtime_error(
+            "FEC content run exceeds 32 frames without a valid descriptor");
     std::optional<FecShard> shard;
     if (available) {
         std::size_t const shard_size =
@@ -190,67 +194,40 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
     }
 
     uint64_t const prev_slice_seq = state.validator.current_slice_seq_num;
-
+    bool const hash_ok =
+        verify_frame_hash(data, record.size(), header.frame_hash);
     bool const protected_content =
         header.channel_type == ChannelType::CH_CONTENT &&
         has_frame_flag_fec_protected(header.flags);
     bool const fec_repair = header.channel_type == ChannelType::CH_FEC;
-    bool const recoverable_unavailable =
-        !state.salvage && (protected_content || fec_repair) &&
-        !verify_frame_hash(data, record.size(), header.frame_hash);
-
-    RestoreFrameValidation validation;
-    if (recoverable_unavailable) {
-        if (auto error =
-                state.validator.validate(header, data, record.size(), true);
-            error.has_value()) {
-            validation = {RestoreFrameValidationStatus::fatal,
-                          std::move(*error)};
-        } else {
-            validation = {
-                RestoreFrameValidationStatus::warning,
-                format("{} unavailable at global_seq={}; waiting for FEC "
-                       "group completion",
-                       protected_content ? "protected content" : "FEC repair",
-                       header.global_frame_seq_num)};
-        }
-    } else {
-        validation = state.salvage ? state.validator.validate_salvage_frame(
-                                         header, data, record.size())
-                                   : state.validator.validate_restore_frame(
-                                         header, data, record.size());
+    bool const signature_present =
+        std::ranges::any_of(header.signature, [](uint8_t b) { return b != 0; });
+    if (signature_present != has_frame_flag_signed(header.flags) ||
+        (state.require_signed && !has_frame_flag_signed(header.flags))) {
+        std::cerr << "neotape-extractor: signature policy violation\n";
+        return false;
     }
-    if (validation.status == RestoreFrameValidationStatus::warning) {
-        std::cerr << format("neotape-extractor: warning: {}\n",
-                            validation.message);
-    } else if (validation.status == RestoreFrameValidationStatus::fatal) {
-        if (!state.salvage) {
-            std::cerr << format("neotape-extractor: {}\n", validation.message);
-            return false;
-        }
-        std::cerr << format("neotape-extractor: salvage skipped frame: {}\n",
-                            validation.message);
-        if (header.channel_type == ChannelType::CH_CONTENT &&
-            has_frame_flag_fec_protected(header.flags)) {
-            remember_fec_content(state, header, data, false);
-        }
+    // A bad record is an erasure, never an authority for shard position,
+    // descriptor commitment, or sequence advancement. The next valid header
+    // must account for its absence before reconstruction can be accepted.
+    if (!hash_ok && (protected_content || fec_repair)) {
+        std::cerr << format(
+            "neotape-extractor: {} unavailable: frame hash mismatch\n",
+            fec_repair ? "FEC repair" : "protected content");
         ++state.processed_frames;
         return true;
     }
-
-    FrameSignatureValidation const signature_validation =
-        validate_frame_signature(header, state.verify_keys,
-                                 state.require_signed);
-    if (signature_validation.error.has_value()) {
-        if (!state.salvage) {
-            std::cerr << format("neotape-extractor: {}\n",
-                                *signature_validation.error);
-            return false;
-        }
-        std::cerr << format("neotape-extractor: salvage skipped frame: {}\n",
+    if (!hash_ok && !state.verify_keys.empty() &&
+        has_frame_flag_signed(header.flags)) {
+        std::cerr << "neotape-extractor: signed frame hash mismatch\n";
+        return false;
+    }
+    auto const signature_validation = validate_frame_signature(
+        header, state.verify_keys, state.require_signed);
+    if (signature_validation.error) {
+        std::cerr << format("neotape-extractor: {}\n",
                             *signature_validation.error);
-        ++state.processed_frames;
-        return true;
+        return false;
     }
     if (signature_validation.status ==
             FrameSignatureStatus::signed_unverified &&
@@ -261,30 +238,91 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
         state.warned_signed_unverified = true;
     }
 
-    if (recoverable_unavailable && protected_content) {
-        remember_fec_content(state, header, data, false);
-        ++state.processed_frames;
+    std::optional<FecDescriptor> descriptor;
+    if (fec_repair) {
+        descriptor = parse_fec_descriptor(header.sideband_data);
+        validate_fec_descriptor(*descriptor,
+                                decoded_block_size(header) - fixed_header_size);
+        if (!state.verify_keys.empty() &&
+            signature_validation.status != FrameSignatureStatus::verified) {
+            std::cerr
+                << "neotape-extractor: FEC commitment is not authenticated\n";
+            return false;
+        }
+    }
+    bool closes_group = false;
+    if (state.repair_header) {
+        auto const previous =
+            parse_fec_descriptor(state.repair_header->sideband_data);
+        closes_group =
+            !descriptor ||
+            header.slice_seq_num != state.repair_header->slice_seq_num ||
+            descriptor->source_content_frame_start !=
+                previous.source_content_frame_start;
+        if (!closes_group) {
+            auto left = previous, right = *descriptor;
+            left.repair_index = right.repair_index = 0;
+            if (serialize_fec_descriptor(left) !=
+                serialize_fec_descriptor(right)) {
+                std::cerr << "neotape-extractor: FEC descriptors disagree\n";
+                return false;
+            }
+        }
+    }
+    uint64_t const missing_before = state.validator.missing_records;
+    auto const validation =
+        state.salvage ? state.validator.validate_salvage_frame(header, data,
+                                                               record.size())
+                      : state.validator.validate_restore_frame(header, data,
+                                                               record.size());
+    if (validation.status == RestoreFrameValidationStatus::fatal) {
+        std::cerr << format("neotape-extractor: {}{}\n",
+                            state.salvage ? "salvage skipped frame: " : "",
+                            validation.message);
+        return state.salvage;
+    }
+    if (validation.status == RestoreFrameValidationStatus::warning)
+        std::cerr << format("neotape-extractor: warning: {}\n",
+                            validation.message);
+    if (state.validator.last_was_replay) {
+        std::cerr << format(
+            "neotape-extractor: suppressed replay global_seq={}\n",
+            header.global_frame_seq_num);
         return true;
+    }
+    if (state.validator.missing_records != missing_before)
+        std::cerr << "neotape-extractor: missing FEC records; "
+                     "full media header conformance cannot be established\n";
+    if (closes_group) {
+        auto const previous =
+            parse_fec_descriptor(state.repair_header->sideband_data);
+        if (!emit_fec_group(state, previous,
+                            decoded_block_size(*state.repair_header) -
+                                fixed_header_size,
+                            output))
+            return false;
+        state.repair_header.reset();
     }
 
     ++state.processed_frames;
-    if (header.channel_type == ChannelType::CH_METADATA) {
+    if (header.channel_type == ChannelType::CH_METADATA)
         return true;
-    }
-    if (header.channel_type == ChannelType::CH_FEC) {
-        FecDescriptor const descriptor =
-            parse_fec_descriptor(header.sideband_data);
-        const std::byte *payload = record.data() + fixed_header_size;
-        if (!recoverable_unavailable) {
-            state.fec_shards[fec_data_shards + descriptor.repair_index] =
-                FecShard(payload, payload + header.frame_payload_size);
+    if (descriptor) {
+        const auto index = fec_data_shards + descriptor->repair_index;
+        if (state.fec_shards[index]) {
+            std::cerr << "neotape-extractor: duplicate repair index\n";
+            return false;
         }
-        if (descriptor.repair_index + 1 == fec_repair_shards) {
-            if (!emit_fec_group(state, descriptor,
+        state.repair_header = header;
+        const auto *payload = record.data() + fixed_header_size;
+        state.fec_shards[index] =
+            FecShard(payload, payload + header.frame_payload_size);
+        if (descriptor->repair_index + 1 == fec_repair_shards) {
+            if (!emit_fec_group(state, *descriptor,
                                 decoded_block_size(header) - fixed_header_size,
-                                output)) {
+                                output))
                 return false;
-            }
+            state.repair_header.reset();
         }
         return true;
     }
@@ -311,8 +349,7 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
 
     // Protected content is held only until its local FEC group commits.
     // Unprotected content can be streamed as soon as the frame is accepted.
-    if (header.channel_type == ChannelType::CH_CONTENT &&
-        header.frame_payload_size > 0) {
+    if (header.channel_type == ChannelType::CH_CONTENT) {
         if (has_frame_flag_fec_protected(header.flags)) {
             remember_fec_content(state, header, data, true);
             state.output_slice_seq = header.slice_seq_num;
@@ -333,6 +370,7 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
 // extracted (archive_end received and acked).
 [[nodiscard]] bool serve_client(int client, ExtractorState &state,
                                 FILE *output) {
+    state.validator.begin_connection();
     try {
         for (;;) {
             NEOTAPE_DEBUG("extractor: requesting next frame\n");
@@ -348,7 +386,14 @@ void remember_fec_content(ExtractorState &state, const FrameHeader &header,
             switch (resp->type) {
             case MessageType::frame_record: {
                 NEOTAPE_DEBUG("extractor: received frame_record\n");
-                if (!process_frame(state, resp->payload, output)) {
+                bool accepted = false;
+                try {
+                    accepted = process_frame(state, resp->payload, output);
+                } catch (const std::exception &error) {
+                    std::cerr
+                        << format("neotape-extractor: {}\n", error.what());
+                }
+                if (!accepted) {
                     state.fatal_error = true;
                     send_error(client, "frame validation failed");
                     return false;
@@ -449,6 +494,7 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
     state.require_signed = opts.require_signed;
     state.verify_keys = opts.verify_keys;
     state.salvage = opts.salvage;
+    state.validator.recover_missing_fec = true;
     if (state.salvage) {
         std::cerr << "neotape-extractor: warning: SALVAGE MODE: output is not "
                      "fully verified; "
@@ -471,24 +517,17 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
             throw std::runtime_error("unrecoverable frame validation failure");
         }
         if (complete) {
-            total_frames = state.salvage ? state.processed_frames
-                           : state.validator.expected_global_frame_seq == 0
-                               ? 0
-                               : state.validator.expected_global_frame_seq - 1;
+            total_frames = state.processed_frames;
             return total_frames;
         }
 
         // Connection dropped before completion.  Count the frames we
         // validated (the next expected seq minus 1), then wait for the
         // next reader to reconnect.
-        total_frames = state.salvage ? state.processed_frames
-                       : state.validator.expected_global_frame_seq == 0
-                           ? 0
-                           : state.validator.expected_global_frame_seq - 1;
-        std::cerr << format(
-            "neotape-extractor: reader disconnected: "
-            "total_validated_frames={}; waiting for next reader\n",
-            total_frames);
+        total_frames = state.processed_frames;
+        std::cerr << format("neotape-extractor: reader disconnected: "
+                            "processed_frames={}; waiting for next reader\n",
+                            total_frames);
     }
 
     return total_frames;

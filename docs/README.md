@@ -37,6 +37,7 @@ docs/
     cli-tooling.md                  CLI reference and workflow examples
     fec-restore-behavior.md         FEC producer, normal restore, and salvage policy
     lto-behavior-notes.md           Empirical LTO EOT/EOM observations
+    lto5-hardware-regression-2026-09-18.md  Physical signed/FEC multi-volume regression
     mt-pax-architecture.md          mt-pax thread roles and data flow
     path-pitfalls.md                Path handling conventions and gotchas
     phase-3.5-mt-pax-writer.md      Historical mt-pax writer phase notes

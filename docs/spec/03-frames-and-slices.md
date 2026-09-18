@@ -62,8 +62,8 @@ in [docs/spec/05-validation.md](05-validation.md).
 
 `ch_fec` frames are also advisory in normal restore mode:
 
-- A normal payload reader MAY verify and skip `ch_fec` frames, but it MUST NOT
-  emit their payload bytes.
+- A normal payload reader validates and skips `ch_fec` frames according to
+  its mode; it MUST NOT emit their payload bytes.
 - A repair-capable reader MAY buffer `ch_content` plus `ch_fec` for one FEC
   group and reconstruct missing or damaged content before emission, subject to
   the FEC verification rules in [docs/spec/05-validation.md](05-validation.md).
@@ -95,11 +95,18 @@ Each frame is individually integrity-checked by `frame_hash`, a BLAKE3 digest ov
 
 ## Frame Sequence Numbering
 
+Channel ordering, completion, and sequence rules describe logical frames.
+Physical retries do not create new logical frames; readers apply replay
+comparison and suppression under [05-validation.md](05-validation.md#replayed-records).
+
 - `global_frame_seq_num` — starts at 0 and increments by 1 for every frame in the archive, including `archive_end`. Does not reset at volume boundaries.
 - `slice_seq_num` — starts at 0 for the first slice, increments by 1 for each new slice. All frames in the same slice carry the same value, even across volumes. `archive_end` uses the canonical control-frame value `0`.
 - `channel_frame_seq_num` — scoped to `(slice_seq_num, channel_type)`. Starts at 0 on the first frame of that channel in the slice, increments only within that channel, and does not reset merely because a different channel appears later in the same slice. `archive_end` uses the canonical control-frame value `0`.
 
-All three are `uint64`. The reader validates that sequence numbers are contiguous within their scope.
+All three are `uint64`. Writers assign contiguous logical sequence numbers
+within each scope. Readers apply the verified replay and unavailable-record
+recovery rules in [05-validation.md](05-validation.md); physical replays do
+not introduce new logical frames.
 The authoritative continuity rules are defined in
 [docs/spec/05-validation.md](05-validation.md).
 

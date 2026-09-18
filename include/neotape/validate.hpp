@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstddef>
+#include <deque>
 #include <optional>
 #include <string>
 #include <vector>
@@ -33,6 +34,14 @@ struct RestoreFrameValidation {
 //
 // Thread-compatible: single-threaded use only.
 struct FrameValidator {
+    // Recovery only accounts for erasures whose positions follow from valid
+    // headers/descriptors. The caller must verify reconstructed group bytes.
+    bool recover_missing_fec = false;
+    bool last_was_replay = false;
+    uint64_t missing_records = 0;
+    std::array<bool, 3> unknown_channel_end{};
+    void begin_connection();
+
     // --- public state (read-only after feeding) ---
     std::string archive_uuid;
     std::string archive_label;
@@ -82,8 +91,9 @@ struct FrameValidator {
     //             structural/state validation. Used for advisory metadata and
     //             FEC candidates already classified as unavailable shards.
     //
-    // After validate() returns with saw_archive_end == true, the
-    // caller MUST stop sending frames.
+    // last_was_replay identifies an equivalent physical retry; callers must
+    // still apply signature policy, then suppress repeated output. After
+    // archive_end, only equivalent replays are accepted within this context.
     std::optional<std::string> validate(const FrameHeader &header,
                                         const uint8_t *raw_data,
                                         std::size_t record_size,
@@ -92,8 +102,8 @@ struct FrameValidator {
     // Validate one frame using restore-mode policy.
     //
     // Metadata frames are still checked for archive identity and sequencing,
-    // but a metadata-only frame_hash mismatch is downgraded to a warning so a
-    // payload reader can continue reconstructing ch_content.
+    // but a metadata-only frame_hash mismatch is downgraded to a warning.
+    // Callers enforce signature policy before using that exception.
     RestoreFrameValidation validate_restore_frame(const FrameHeader &header,
                                                   const uint8_t *raw_data,
                                                   std::size_t record_size);
@@ -101,12 +111,25 @@ struct FrameValidator {
     // Salvage mode keeps frame integrity and unambiguous record framing
     // mandatory, but deliberately does not enforce archive identity,
     // sequencing, channel ordering, or clean-completion consistency.
-    RestoreFrameValidation
-    validate_salvage_frame(const FrameHeader &header, const uint8_t *raw_data,
-                           std::size_t record_size) const;
+    RestoreFrameValidation validate_salvage_frame(const FrameHeader &header,
+                                                  const uint8_t *raw_data,
+                                                  std::size_t record_size);
 
     // Reset to initial state (for inspecting a new archive).
     void reset();
+
+  private:
+    // Keep retry memory bounded even for multi-day archives. Older retries
+    // fail explicitly instead of being silently treated as equivalent.
+    std::deque<std::pair<uint64_t, Hash>> replay_history_;
+    std::optional<uint64_t> replay_next_;
+    std::optional<std::string> finish_missing_repairs();
+    std::optional<std::string> check_replay(const FrameHeader &header,
+                                            const uint8_t *data,
+                                            std::size_t size, bool skip_hash);
+    std::optional<std::string> account_for_missing(const FrameHeader &header);
+    void remember_record(const FrameHeader &header, const uint8_t *data,
+                         std::size_t size, bool skip_hash);
 };
 
 } // namespace neotape

@@ -10,11 +10,12 @@ This chapter is the authoritative source for both the planning stream consumed
 by `neotape-archiver --plan` and the slice-scoped catalog record format written
 into `ch_metadata`.
 
-**Required for resumable archive creation.**
+The current archiver uses the plan for resumable archive creation; the plan
+is not required to restore an existing archive.
 
 ## Record Format
 
-Every record is a single line terminated by `\0\n` (NUL byte followed by
+Every record is a byte sequence terminated by `\0\n` (NUL byte followed by
 newline). NUL cannot appear in file paths, so `\0\n` is an unambiguous record
 separator even when paths contain embedded newlines.
 
@@ -29,7 +30,9 @@ present, it changes the working directory for all subsequent entry records.
 ### `/chdir/<path>\0\n`
 
 Changes the working directory before processing subsequent sources. The `<path>` is
-a filesystem path to a directory or symlink to a directory (resolved when there's trailing `/`).
+a filesystem path to a directory, resolved using normal working-directory
+lookup, including following a symlink to a directory. A trailing `/` is not
+required to follow such a symlink.
 
 This directive is emitted whenever the user specified `-C <dir>` on the command
 line.
@@ -64,8 +67,30 @@ indistinguishable from the valid Unix epoch timestamp.
 
 This record doubles as the `ch_metadata` catalog for each slice. A
 downstream reader can parse the same record format to list archive contents,
-compute per-slice progress, or verify slice integrity against the planned
-file set.
+compute expected per-slice progress, or compare the planned file set with
+entries actually observed in the payload. These records contain no per-file
+content digests and cannot by themselves verify file-content integrity.
+
+## Parsing and Ordering
+
+Parsers MUST split the first nine fields after the initial `/` at `/`
+delimiters; the remaining bytes are `<filepath>`, including any further `/`
+or newline bytes. `<filepath>` MUST be non-empty. `<uname>` and `<gname>`
+MUST NOT contain `/` or NUL; an unavailable or unrepresentable name is empty.
+No escaping or Unicode normalization is applied to path bytes.
+
+Unsigned numeric fields use ASCII decimal digits without a sign or whitespace.
+`slice`, `file_num`, and `size` are in `0..2^64-1`; `uid` and `gid` are in
+`0..2^32-1`. `mtime` is in `-2^63..2^63-1`, with an optional leading minus
+sign and otherwise decimal digits. Readers MUST reject out-of-range values,
+unknown kinds, incomplete records, and malformed field counts.
+
+In a complete planning stream, slices start at zero, are contiguous, and appear
+in increasing order. Within each slice, `file_num` starts at zero and increases
+by one. Entry records for a slice MUST be contiguous. A slice-scoped catalog
+uses the enclosing slice number rather than restarting the slice number at
+zero. Catalog records are parsed after concatenating the channel payloads;
+a record may cross frame boundaries.
 
 ## Example
 
@@ -85,8 +110,9 @@ The plan metadata stream serves a dual purpose:
    and file packing order.
 2. **Catalog** — the same entry records, when written into `ch_metadata` frames
    within each slice, form a machine-readable index of the slice's
-   contents. A reader can parse them to list files, verify completeness, or
-   display progress without inspecting the `ch_content` payload.
+   expected contents. A reader can list planned files or display expected
+   progress without inspecting `ch_content`. Verifying that those files were
+   actually archived requires examining the payload.
 
 The catalog is slice-scoped: each slice's `ch_metadata` contains only
 the entry records whose `<slice>` field matches the enclosing

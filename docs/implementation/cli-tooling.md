@@ -51,6 +51,12 @@ pads the final bundle record, writes a filemark, and then writes NeoTape frames
 at the volume's own block size. A spool target copies the original tar to
 `recovery-bundle.tar`; it is deliberately outside the numbered `.nts` stream.
 
+An explicit `--max-volume-bytes` also provides a software capacity boundary
+for tape targets. It stops before the next complete record would exceed the
+limit, without waiting for physical EOT; tape recovery-bundle padding counts
+toward this limit. Without this option, tape writes stop at the drive's EOT
+indication. Both boundaries return status 3 when another volume is needed.
+
 ## Raw byte-stream store
 
 `neotape-raw-store` is the raw-stream counterpart to `neotape-archiver` server
@@ -201,7 +207,7 @@ Frame counters use explicit names:
 - `committed_frames` counts unique frames acknowledged by the writer.
 - `frame_transmissions` counts all frame records sent, including retransmits.
 - `forwarded_frames` counts records sent by one reader invocation.
-- `validated_frames` counts frames accepted by the extractor.
+- `processed_frames` counts records handled by the extractor, excluding suppressed retries; it is not a claim that unavailable FEC records were individually verified.
 
 While `neotape-write` is active it updates an mbuffer-style status line once
 per second:

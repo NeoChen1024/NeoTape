@@ -163,6 +163,9 @@ void validate_fec_descriptor(const FecDescriptor &descriptor,
         descriptor.source_frame_count > fec_data_shards) {
         throw std::runtime_error("FEC source_frame_count must be 1..32");
     }
+    if (descriptor.source_content_frame_start >
+        UINT64_MAX - descriptor.source_frame_count)
+        throw std::runtime_error("FEC source range overflows");
     if (descriptor.repair_index >= fec_repair_shards) {
         throw std::runtime_error("FEC repair_index must be 0..3");
     }

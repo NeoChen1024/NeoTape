@@ -6,9 +6,12 @@ This document collects extension ideas for future NeoTape versions. They are not
 
 ## Additional Channel Types
 
-Extend `channel_type` beyond `ch_content`, `ch_metadata`, `ch_fec`, and `archive_end`. Values 4–254 are reserved. Use cases include:
+Extend `channel_type` beyond `ch_content`, `ch_metadata`, `ch_fec`, and `archive_end`. Values 0 and 4–254 are reserved.
 
-New `channel_type` values are allocated by future specification versions. Arbitrary mixing is allowed since `channel_frame_seq_num` provides per-channel ordering.
+New `channel_type` values would be allocated by future specification versions.
+Each extension would need to define allowed ordering, interaction with existing
+channels, and completion rules. Per-channel sequence numbers alone do not
+permit arbitrary interleaving.
 
 ## Sideband Data Area
 
@@ -31,7 +34,9 @@ Support for automated tape library changers: load/unload media, scan barcodes, s
 
 ## Multiple Catalog Replicas
 
-Store catalog replicas on multiple volumes for redundancy. Essential for large multi-volume archives where a single catalog point of failure is unacceptable.
+Store catalog replicas on multiple volumes to improve listing and partial
+restore availability. Catalogs remain advisory; their loss must not prevent
+basic payload restoration.
 
 ## Media Reopening After Archive End Frame
 
