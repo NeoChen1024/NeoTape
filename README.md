@@ -71,7 +71,7 @@ block-size change within a volume as a format error.
 | 6     | Frame inspect / compliance         | Done   |
 | 7     | Recovery & salvage                 | Done   |
 | 8     | Optional BOT recovery bundle       | Done   |
-| 9     | Optional FEC repair channel        | Done   |
+| 9     | Optional FEC repair channel        | Removed |
 
 See [`docs/spec/`](docs/spec/) for the active format specification and [`docs/implementation/`](docs/implementation/) for
 implementation-specific notes (mt-pax architecture, build notes).
@@ -88,7 +88,6 @@ writer-side source authentication are implemented. See
 - **Catch2 3** (system package, required by the `dev` preset)
 - **libarchive** (system package)
 - **BLAKE3** (bundled git submodule)
-- **ISA-L** (bundled git submodule, used by `rs_32_4` FEC)
 - **signify** sources (bundled git submodule)
 
 ### Initialize submodules
@@ -105,21 +104,6 @@ cmake --build --preset dev
 ctest --preset dev
 cmake --build --preset dev --target bot_bundle
 ```
-
-Measure the ISA-L `rs_32_4` generator and four-shard correction throughput:
-
-```sh
-cmake --preset benchmark
-cmake --build --preset benchmark
-build/benchmark/bin/benchmark_fec --shard-size 4M --iterations 8
-```
-
-The reported MiB/s uses protected source payload bytes as the denominator for
-both operations. This is an informational benchmark and has no machine-specific
-pass/fail threshold. Correction uses four missing data shards and includes
-matrix inversion, reconstruction, allocations, surviving-shard copies, and the
-BLAKE3 group commitment check; preparing the input fixture is outside the timed
-region.
 
 Produces the CLI programs under `build/dev/bin/`. The `release` preset produces
 an optimized build without Catch2 or test targets under `build/release/bin/`.
@@ -259,14 +243,8 @@ but are reported as signed and unverified.
 `--salvage` enables explicit best-effort extraction. It retains record framing,
 header, hash, and signature-structure checks while relaxing archive-level
 identity, sequence, channel-order, and clean-completion consistency. Invalid
-frames are skipped with stderr diagnostics. FEC-protected groups are repaired
-with RS(32,4) when the group BLAKE3 commitment verifies.
-
-FEC correction is also automatic in normal extraction. The extractor detects
-`FEC_PROTECTED`/`ch_fec`, buffers the group, and repairs unavailable content or
-repair shards before emitting it; no extractor-side `--fec` flag is required.
-See
-[`docs/implementation/fec-restore-behavior.md`](docs/implementation/fec-restore-behavior.md).
+frames are skipped with stderr diagnostics, leaving gaps in the output.
+Without `--salvage`, any missing or damaged content record is fatal.
 
 ### build/dev/bin/neotape-inspect (frame-level verification)
 

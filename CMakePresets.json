@@ -36,20 +36,12 @@
         "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
         "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined"
       }
-    },
-    {
-      "name": "benchmark",
-      "inherits": "release",
-      "cacheVariables": {
-        "NEOTAPE_BUILD_BENCHMARKS": "ON"
-      }
     }
   ],
   "buildPresets": [
     { "name": "dev", "configurePreset": "dev" },
     { "name": "release", "configurePreset": "release" },
-    { "name": "asan-ubsan", "configurePreset": "asan-ubsan" },
-    { "name": "benchmark", "configurePreset": "benchmark" }
+    { "name": "asan-ubsan", "configurePreset": "asan-ubsan" }
   ],
   "testPresets": [
     {

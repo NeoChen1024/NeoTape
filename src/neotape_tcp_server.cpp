@@ -60,7 +60,7 @@ VolumeServerSummary run_tcp_archiver(const TcpArchiverOptions &opts) {
     return run_volume_server(server_opts, [&](const string &archive_uuid,
                                               VolumeRecordQueue &frame_queue) {
         ContentFrameBuilder builder(opts.volume_block_size, archive_uuid,
-                                    opts.archive_name, opts.fec_enabled);
+                                    opts.archive_name);
         auto callbacks = make_server_callbacks(builder, frame_queue);
         write_pax(opts.pax, std::move(callbacks));
         for (auto &tail : builder.flush()) {

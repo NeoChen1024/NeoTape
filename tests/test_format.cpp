@@ -83,16 +83,10 @@ TEST_CASE("format: channel type values", "[unit][format]") {
         neotape::parse_fixed_header(bytes.data(), bytes.size()).channel_type ==
         neotape::ChannelType::CH_METADATA);
 
-    header.channel_type = neotape::ChannelType::CH_FEC;
-    header.flags = neotape::frame_flag_sideband;
-    header.sideband_data[0] = 1;
-    bytes = neotape::serialize_frame_header(header);
-    REQUIRE(bytes[9] == 3);
-    REQUIRE(bytes[280] == 1);
-    neotape::FrameHeader const fec_parsed =
-        neotape::parse_fixed_header(bytes.data(), bytes.size());
-    REQUIRE(fec_parsed.channel_type == neotape::ChannelType::CH_FEC);
-    REQUIRE(fec_parsed.sideband_data[0] == 1);
+    // Value 3 belonged to the retired ch_fec channel and is reserved again.
+    bytes[9] = 3;
+    REQUIRE_THROWS_AS(neotape::parse_fixed_header(bytes.data(), bytes.size()),
+                      std::exception);
 
     header = make_archive_end_header();
     bytes = neotape::serialize_frame_header(header);
@@ -169,10 +163,20 @@ TEST_CASE("format: validation", "[unit][format]") {
         neotape::parse_fixed_header(reserved.data(), reserved.size()),
         std::exception);
 
-    auto reserved_flag = bytes;
-    reserved_flag[150] = static_cast<uint8_t>(reserved_flag[150] | 0x04u);
+    // Bit 2 is SIDEBAND, which no header-version-1 channel may set; bit 3 is
+    // the retired FEC_PROTECTED flag.
+    for (uint8_t const flag : {0x04u, 0x08u}) {
+        auto reserved_flag = bytes;
+        reserved_flag[150] = static_cast<uint8_t>(reserved_flag[150] | flag);
+        REQUIRE_THROWS_AS(neotape::parse_fixed_header(reserved_flag.data(),
+                                                      reserved_flag.size()),
+                          std::exception);
+    }
+
+    auto sideband = bytes;
+    sideband[280] = 1;
     REQUIRE_THROWS_AS(
-        neotape::parse_fixed_header(reserved_flag.data(), reserved_flag.size()),
+        neotape::parse_fixed_header(sideband.data(), sideband.size()),
         std::exception);
 
     auto content_clean_end =

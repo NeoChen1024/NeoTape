@@ -36,9 +36,9 @@ A writer-declared content grouping, identified by `slice_seq_num`.
 
 A slice is either a metadata-only slice containing one or more `ch_metadata`
 frames, or a payload slice containing optional leading `ch_metadata` followed
-by one or more `ch_content` frames and optional matching `ch_fec` groups.
-At least one frame must be present. Metadata, when present, MUST precede all
-`ch_content` and `ch_fec` frames. A slice MAY span backend volumes.
+by one or more `ch_content` frames. At least one frame must be present.
+Metadata, when present, MUST precede all `ch_content` frames. A slice MAY span
+backend volumes.
 
 ### Frame
 
@@ -48,7 +48,7 @@ Each Frame occupies exactly one NeoTape record of `volume_block_size_kib * 1024`
 
 ### Channel
 
-Partitions a slice into `ch_metadata`, `ch_content`, and optional `ch_fec`. `ch_metadata` remains a leading contiguous run when present. `ch_content` and `ch_fec` are identified by `channel_type` and may appear as repeated runs later in the slice. `channel_frame_seq_num` is scoped to `(slice_seq_num, channel_type)`, and `channel_frame_seq_num = 0` identifies the first frame of that channel in the slice.
+Partitions a slice into `ch_metadata` and `ch_content`. `ch_metadata` remains a leading contiguous run when present. `channel_frame_seq_num` is scoped to `(slice_seq_num, channel_type)`, and `channel_frame_seq_num = 0` identifies the first frame of that channel in the slice.
 
 ### ch_content
 
@@ -57,10 +57,6 @@ The ordered payload byte stream carried by `ch_content` frames for one slice. Th
 ### ch_metadata
 
 Advisory metadata bytes carried by `ch_metadata` frames for one slice. It is transport metadata for listing, diagnostics, partial restore, or acceleration. It is not part of the content stream and must not be required for basic restore correctness.
-
-### ch_fec
-
-Forward-error-correction repair bytes carried by `ch_fec` frames for one slice. `ch_fec` protects contiguous ranges of `ch_content` frames within the same slice and is advisory for normal restore mode: normal payload readers skip it and still emit only `ch_content`.
 
 ## Headers And Metadata
 
@@ -98,14 +94,8 @@ Frame flag indicating that `signature` contains a binary signify-style signature
 ### SIDEBAND
 
 Frame flag indicating that `sideband_data` contains meaningful
-channel-type-specific data. In `header_version = 1`, it is required for
-`ch_fec` and prohibited for `ch_content`, `ch_metadata`, and `archive_end`.
-
-### FEC_PROTECTED
-
-Frame flag valid only on `ch_content`. It identifies the frame as real
-protected source material for an immediately following matching `ch_fec`
-group. Exact group-size and repair rules are defined by the active FEC profile.
+channel-type-specific data. No `header_version = 1` channel defines sideband
+data, so the flag is prohibited on every frame.
 
 ### CLEAN_END
 
@@ -227,8 +217,8 @@ Fields repeated across every frame:
 ### Channel and Flag Names
 
 `channel_type` selects the role of the current frame (`ch_content`,
-`ch_metadata`, `ch_fec`, or `archive_end`). `flags` carries per-frame state:
-`END`, `SIGNED`, `SIDEBAND`, `FEC_PROTECTED`, and `CLEAN_END`.
+`ch_metadata`, or `archive_end`). `flags` carries per-frame state: `END`,
+`SIGNED`, `SIDEBAND`, and `CLEAN_END`.
 
 For the authoritative enum values and bit assignments, see
 [02-frame-header.md](02-frame-header.md).
@@ -272,8 +262,8 @@ sequence of files. Ordering, archive boundaries, and record framing follow
 - A **Backend Volume** is stored on one **Physical Medium** (or virtual volume).
 - A **Physical Medium** may store multiple **Archive Instances** sequentially.
 - A **Backend Volume** stores complete slices or portions of slices, and may contain only an Archive End frame. A slice may span volumes.
-- A **Slice** contains at most one contiguous leading `ch_metadata` run. After metadata, `ch_content` and `ch_fec` MAY appear as repeated runs within the same slice. At least one frame must be present.
+- A **Slice** contains at most one contiguous leading `ch_metadata` run, followed by any `ch_content` frames. At least one frame must be present.
 - A **Frame** is exactly one **NeoTape Record**.
-- `ch_metadata` frames MUST precede both `ch_content` and `ch_fec` within a slice.
+- `ch_metadata` frames MUST precede `ch_content` within a slice.
 - A normal payload reader emits only `ch_content` frame payload bytes.
 - Archive completion is declared only by a valid **Archive End** frame with `CLEAN_END = 1`.

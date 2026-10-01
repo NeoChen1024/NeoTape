@@ -106,8 +106,8 @@ Client→Server.  `error` is always bidirectional.
 An unexpected disconnect is not an implicit `archive_end`. A recoverable
 missing tape block may be skipped only when the backend can advance to a known
 record boundary; subsequent frame sequence numbers expose the gap. Reader
-MUST report the read failure. Extractor applies the FEC or salvage rules in
-[05-validation.md](05-validation.md). If the next boundary cannot be established,
+MUST report the read failure. Extractor rejects the resulting gap unless the
+salvage rules in [05-validation.md](05-validation.md) are active. If the next boundary cannot be established,
 Reader MUST stop and report an error.
 
 ## Error handling
@@ -139,8 +139,8 @@ On fatal validation failure the endpoint that detected the failure SHOULD send
 The Archiver persists archive-generation and acknowledgement state across
 Writer disconnects. The Extractor persists archive-validation state across
 Reader disconnects. In the reading pipeline, when a new Reader connects, its
-first new logical frame MUST continue prior state. Verified replays and
-unavailable FEC records are handled under [05-validation.md](05-validation.md).
+first new logical frame MUST continue prior state. Verified replays are
+handled under [05-validation.md](05-validation.md).
 Unexplained gaps, conflicting replays, or identity mismatches cause the
 Extractor to send `error` and close the connection outside salvage mode.
 

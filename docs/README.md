@@ -22,7 +22,6 @@ docs/
     01-terminology.md               Shared terms and definitions
     02-frame-header.md              Unified 512-byte header layout and flags
     03-frames-and-slices.md         Frame model, channels, and sequence numbering
-    04-fec-channel.md               `ch_fec` sideband descriptor and repair model
     05-validation.md                Shared conformance and validation rules
     06-volume-layout.md             Logical and physical volume layout
     07-spool-dir.md                 Spool directory format
@@ -35,9 +34,8 @@ docs/
   implementation/                   Implementation-specific notes
     2026-09-refactor.md             CLI/streaming refactor plan and progress
     cli-tooling.md                  CLI reference and workflow examples
-    fec-restore-behavior.md         FEC producer, normal restore, and salvage policy
     lto-behavior-notes.md           Empirical LTO EOT/EOM observations
-    lto5-hardware-regression-2026-09-18.md  Physical signed/FEC multi-volume regression
+    lto5-hardware-regression-2026-09-18.md  Physical signed/FEC multi-volume regression (historical)
     mt-pax-architecture.md          mt-pax thread roles and data flow
     path-pitfalls.md                Path handling conventions and gotchas
     phase-3.5-mt-pax-writer.md      Historical mt-pax writer phase notes
@@ -59,8 +57,6 @@ and the TCP/Unix-domain socket protocol.
 
 Security- and transport-related behavior is split intentionally:
 
-- `04-fec-channel.md` defines the current `ch_fec` sideband descriptor and the
-  initial FEC profile `rs_32_4`.
 - `09-security.md` covers trust model, path safety, and frame signing.
 - `08-tcp-protocol.md` covers the writer/reader request-response protocol,
   including writer-side challenge-response authentication of the source server.

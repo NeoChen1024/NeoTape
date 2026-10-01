@@ -15,7 +15,6 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
 option(NEOTAPE_NATIVE_ARCH "Optimize for the build machine CPU" OFF)
-option(NEOTAPE_BUILD_BENCHMARKS "Build NeoTape benchmarks" OFF)
 
 find_program(NEOTAPE_TAR_EXECUTABLE NAMES tar REQUIRED)
 add_custom_target(bot_bundle
@@ -59,11 +58,10 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Blake3)
-include(Isal)
 include(Signify)
 
 add_subdirectory(src)
 
-if(BUILD_TESTING OR NEOTAPE_BUILD_BENCHMARKS)
+if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()

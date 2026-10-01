@@ -1,6 +1,5 @@
 #pragma once
 
-#include "neotape/fec.hpp"
 #include "neotape/format.hpp"
 
 #include <array>
@@ -8,7 +7,6 @@
 #include <deque>
 #include <optional>
 #include <string>
-#include <vector>
 
 namespace neotape {
 
@@ -34,12 +32,7 @@ struct RestoreFrameValidation {
 //
 // Thread-compatible: single-threaded use only.
 struct FrameValidator {
-    // Recovery only accounts for erasures whose positions follow from valid
-    // headers/descriptors. The caller must verify reconstructed group bytes.
-    bool recover_missing_fec = false;
     bool last_was_replay = false;
-    uint64_t missing_records = 0;
-    std::array<bool, 3> unknown_channel_end{};
     void begin_connection();
 
     // --- public state (read-only after feeding) ---
@@ -58,24 +51,12 @@ struct FrameValidator {
     bool saw_archive_end = false;
     bool last_frame_had_end = false;
 
-    // Per-channel state is required because ch_content and ch_fec may be
-    // physically interleaved while retaining independent sequence streams.
-    std::array<uint64_t, 3> next_channel_seq{};
-    std::array<bool, 3> channel_seen{};
-    std::array<bool, 3> channel_ended{};
+    // Each slice channel keeps an independent sequence stream and END state.
+    std::array<uint64_t, 2> next_channel_seq{};
+    std::array<bool, 2> channel_seen{};
+    std::array<bool, 2> channel_ended{};
     bool saw_non_metadata_in_slice = false;
-    bool archive_uses_fec = false;
     bool stream_start_seeded = false;
-    bool validating_seed_frame = false;
-
-    uint64_t protected_run_start = 0;
-    uint16_t protected_run_count = 0;
-    bool protected_run_started_before_stream = false;
-    uint64_t protected_run_size = 0;
-    bool protected_run_has_unavailable = false;
-    std::vector<uint8_t> protected_run_bytes;
-    std::optional<FecDescriptor> current_fec_group;
-    uint16_t next_repair_index = 0;
 
     // Seed connection-local validation when reading begins at a volume
     // boundary rather than archive-global frame zero. The supplied header is
@@ -88,8 +69,8 @@ struct FrameValidator {
     // raw_data  — pointer to the full record bytes (for hash check)
     // record_size — number of bytes in the record
     // skip_hash — when true, skip frame_hash verification while retaining
-    //             structural/state validation. Used for advisory metadata and
-    //             FEC candidates already classified as unavailable shards.
+    //             structural/state validation. Used for advisory metadata
+    //             whose hash failure restore mode downgrades to a warning.
     //
     // last_was_replay identifies an equivalent physical retry; callers must
     // still apply signature policy, then suppress repeated output. After
@@ -123,11 +104,9 @@ struct FrameValidator {
     // fail explicitly instead of being silently treated as equivalent.
     std::deque<std::pair<uint64_t, Hash>> replay_history_;
     std::optional<uint64_t> replay_next_;
-    std::optional<std::string> finish_missing_repairs();
     std::optional<std::string> check_replay(const FrameHeader &header,
                                             const uint8_t *data,
                                             std::size_t size, bool skip_hash);
-    std::optional<std::string> account_for_missing(const FrameHeader &header);
     void remember_record(const FrameHeader &header, const uint8_t *data,
                          std::size_t size, bool skip_hash);
 };

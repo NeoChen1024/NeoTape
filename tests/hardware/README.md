@@ -45,9 +45,10 @@ record/filemark observations and forwards each frame to the real extractor.
 Do not run a second full tape scan just to produce an inspection report.
 
 `make_replay_cases CAPTURED_SLICE_ZERO NEW_CASE_DIRECTORY TEST_SECRET_KEY`
-builds nine SSD-only fault cases from a complete first slice. It adds a signed
+builds five SSD-only fault cases from a complete first slice. It adds a signed
 test end marker without altering the captured originals. `replay_cases.py
-REPOSITORY CASE_DIRECTORY` verifies expected recovery or rejection using the
+REPOSITORY CASE_DIRECTORY` verifies that the baseline restores and that the
+missing, damaged, forged, and conflicting records are rejected by the
 production reader/extractor. The keys under `3rdparty/signify/regress` are
 public test fixtures, not keys for real backups.
 

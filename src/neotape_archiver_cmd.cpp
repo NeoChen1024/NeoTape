@@ -23,7 +23,6 @@ struct Options {
     uint32_t volume_block_size = 4 * 1024 * 1024;
     string archive_name = "archive";
     uint64_t retention_frame_count = 256;
-    bool fec_enabled = false;
     neotape::PaxWriterOptions pax;
     std::optional<string> sign_secret_key_file;
     std::optional<string> sign_passphrase_file;
@@ -42,7 +41,7 @@ void usage(const char *prog) {
         "       [-b|--volume-block-size <SIZE>] [-n|--archive-name <name>]\n"
         "       [-C <dir>] [-P <percent>] [-j|--io-thread <N>]\n"
         "       [-B|--output-buffer-size <SIZE>] [-p|--plan <file>]\n"
-        "       [-r|--retention-frame-count <N>] [-F|--fec]\n"
+        "       [-r|--retention-frame-count <N>]\n"
         "       [-k|--sign-secret-key <file.sec>]\n"
         "       [-K|--sign-passphrase-file <path>] [-v|-vv] [-x] [-d|--debug]\n"
         "       <path> [path...]\n"
@@ -66,13 +65,12 @@ Options parse_args(int argc, char **argv) {
         {"debug", no_argument, nullptr, 'd'},
         {"sign-secret-key", required_argument, nullptr, 'k'},
         {"sign-passphrase-file", required_argument, nullptr, 'K'},
-        {"fec", no_argument, nullptr, 'F'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "l:b:n:C:P:j:B:p:r:dk:K:Fvxh",
+    while ((c = getopt_long(argc, argv, "l:b:n:C:P:j:B:p:r:dk:K:vxh",
                             long_opts, nullptr)) != -1) {
         try {
             switch (c) {
@@ -127,9 +125,6 @@ Options parse_args(int argc, char **argv) {
             case 'K':
                 opts.sign_passphrase_file = optarg;
                 break;
-            case 'F':
-                opts.fec_enabled = true;
-                break;
             case 'h':
                 usage(argv[0]);
                 std::exit(0);
@@ -183,7 +178,6 @@ int main(int argc, char **argv) {
         server_opts.volume_block_size = opts.volume_block_size;
         server_opts.archive_name = opts.archive_name;
         server_opts.retention_frame_count = opts.retention_frame_count;
-        server_opts.fec_enabled = opts.fec_enabled;
         server_opts.pax = opts.pax;
         if (opts.sign_secret_key_file.has_value()) {
             server_opts.frame_signer = neotape::load_signify_secret_key(

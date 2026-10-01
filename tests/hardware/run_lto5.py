@@ -144,7 +144,7 @@ def main():
         archiver = server("archiver", [binaries / "neotape-archiver",
             "--listen", "unix://" + str(root / "archiver.sock"),
             "--plan", root / "source.plan", "--volume-block-size", "1M",
-            "--fec", "--sign-secret-key", secret, "--retention-frame-count", "64",
+            "--sign-secret-key", secret, "--retention-frame-count", "64",
             "--output-buffer-size", "256M", "--io-thread", "8",
             "--archive-name", "lto5-hardware-20260918", "--debug"])
         wait_socket(root / "archiver.sock", archiver)

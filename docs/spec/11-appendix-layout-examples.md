@@ -31,31 +31,6 @@ A recovery bundle (plain pax tar) MAY be written as the first tape file before t
 boundaries, then validating the candidate frame. They do not search arbitrary
 byte offsets inside records for a header.
 
-## FEC-Enabled Slice With Local `32C + 4F` Runs
-
-One slice using the preferred local FEC layout:
-
-```
-File P:   Slice K tape file
-          +-- ch_metadata Frame (optional)
-          +-- ch_content Frame (slice=K, channel-frame-seq=0)
-          +-- ...
-          +-- ch_content Frame (slice=K, channel-frame-seq=31)
-          +-- ch_fec Frame (slice=K, channel-frame-seq=0, repair-index=0)
-          +-- ch_fec Frame (slice=K, channel-frame-seq=1, repair-index=1)
-          +-- ch_fec Frame (slice=K, channel-frame-seq=2, repair-index=2)
-          +-- ch_fec Frame (slice=K, channel-frame-seq=3, repair-index=3)
-          +-- ch_content Frame (slice=K, channel-frame-seq=32)
-          +-- ...
-          +-- final ch_content Frame (END, slice=K, channel-frame-seq=N)
-          +-- final ch_fec Frame (END, slice=K, channel-frame-seq=M)
-filemark
-```
-
-- `ch_content.channel_frame_seq_num` continues from 0 to `N` across the whole slice, even though `ch_fec` frames appear in between.
-- `ch_fec.channel_frame_seq_num` is its own per-slice stream, continuing from 0 to `M` across all FEC groups in that slice.
-- `END` marks the final frame of each channel in the slice, not the end of each local FEC group.
-
 ## Metadata-Only Slice
 
 A slice with only advisory metadata:
@@ -143,18 +118,3 @@ its new volume ordinal and recomputed hash/signature, then continue with 42.
 A reader that already accepted 41 verifies the replay's equivalence and emits
 its payload only once. A different payload for the same sequence number is a
 conflict, not an acceptable retry.
-
-## Missing Content and Repair Records
-
-In a full `32C + 4F` group, suppose content shard C0 and repair shard F3 cannot
-be read. The 31 surviving content shards and F0 supply an invertible basis for
-this example; F1 and F2 are additional surviving repairs. A repair-capable
-reader can recover C0, verify the source-stream hash from a surviving valid
-descriptor, and emit the 32 source payloads once in order. It need not wait for
-F3 to appear. Group closure is established by the following valid records or
-input boundary, subject to the recovery validation rules.
-
-The missing original headers are not reconstructed by payload FEC. The reader
-reports recovered payload separately from full media conformance. If the
-remaining descriptors disagree or no valid descriptor survives, this example
-does not authorize guessing a group or emitting unverified reconstruction.

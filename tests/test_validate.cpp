@@ -1,4 +1,3 @@
-#include "neotape/fec.hpp"
 #include "neotape/format.hpp"
 #include "neotape/frame_builder.hpp"
 #include "neotape/validate.hpp"
@@ -58,18 +57,6 @@ FrameHeader make_metadata_header(uint64_t global_seq_num,
 FrameHeader make_archive_end_header(uint64_t global_seq_num) {
     return make_header(ChannelType::ARCHIVE_END, global_seq_num, 0, 0, 0,
                        neotape::frame_flag_end | neotape::frame_flag_clean_end);
-}
-
-FrameHeader make_fec_header(uint64_t global_seq_num,
-                            uint64_t channel_frame_seq_num,
-                            const neotape::FecDescriptor &descriptor,
-                            bool end) {
-    FrameHeader header = make_header(
-        ChannelType::CH_FEC, global_seq_num, 0, channel_frame_seq_num,
-        4096 - neotape::fixed_header_size,
-        neotape::frame_flag_sideband | (end ? neotape::frame_flag_end : 0));
-    header.sideband_data = neotape::serialize_fec_descriptor(descriptor);
-    return header;
 }
 
 vector<std::byte> build_record(FrameHeader header,
@@ -302,68 +289,6 @@ TEST_CASE("validate: validator seed accepts volume local start and rejects gap",
                              "global_frame_seq_num 44 != expected 43"));
 }
 
-TEST_CASE("validate: validator accepts interleaved fec group",
-          "[unit][validation]") {
-    FrameValidator validator;
-    constexpr uint32_t capacity = 4096 - neotape::fixed_header_size;
-    vector<std::byte> first(capacity, std::byte{0x31});
-    vector<std::byte> second(17, std::byte{0x72});
-
-    vector<uint8_t> source_stream;
-    source_stream.insert(source_stream.end(), capacity, 0x31);
-    source_stream.insert(source_stream.end(), second.size(), 0x72);
-    neotape::FecDescriptor descriptor;
-    descriptor.source_content_frame_start = 0;
-    descriptor.source_frame_count = 2;
-    descriptor.source_stream_size = source_stream.size();
-    descriptor.fec_group_blake3 =
-        neotape::blake3_hash(source_stream.data(), source_stream.size());
-
-    vector<neotape::FecShard> sources = {first, second};
-    neotape::FecRepairShards const repair =
-        neotape::encode_rs_32_4(sources, capacity);
-
-    vector<vector<std::byte>> records;
-    records.push_back(
-        build_record(make_content_header(0, 0, 0, capacity,
-                                         neotape::frame_flag_fec_protected),
-                     first));
-    records.push_back(
-        build_record(make_content_header(1, 0, 1, second.size(),
-                                         neotape::frame_flag_fec_protected |
-                                             neotape::frame_flag_end),
-                     second));
-    for (uint16_t index = 0; index < neotape::fec_repair_shards; ++index) {
-        descriptor.repair_index = index;
-        records.push_back(build_record(
-            make_fec_header(2 + index, index, descriptor,
-                            index + 1 == neotape::fec_repair_shards),
-            repair[index]));
-    }
-    records.push_back(build_record(make_archive_end_header(6)));
-
-    for (std::size_t i = 0; i < records.size(); ++i) {
-        auto error = validator.validate(
-            parse_header(records[i]),
-            reinterpret_cast<const uint8_t *>(records[i].data()),
-            records[i].size());
-        CAPTURE(error);
-        REQUIRE_FALSE(error.has_value());
-    }
-    REQUIRE(validator.saw_archive_end);
-
-    FrameValidator unavailable_validator;
-    records[1][neotape::fixed_header_size] ^= std::byte{1};
-    for (std::size_t i = 0; i < records.size(); ++i) {
-        auto error = unavailable_validator.validate(
-            parse_header(records[i]),
-            reinterpret_cast<const uint8_t *>(records[i].data()),
-            records[i].size(), i == 1);
-        CAPTURE(error);
-        REQUIRE_FALSE(error.has_value());
-    }
-}
-
 TEST_CASE("validate: salvage relaxes consistency but keeps integrity",
           "[unit][validation]") {
     FrameValidator validator;
@@ -386,58 +311,6 @@ TEST_CASE("validate: salvage relaxes consistency but keeps integrity",
     REQUIRE(result.status == RestoreFrameValidationStatus::fatal);
     REQUIRE_THAT(result.message,
                  Catch::Matchers::ContainsSubstring("frame hash mismatch"));
-}
-
-TEST_CASE("validate: seeded validator accepts fec group split across volumes",
-          "[unit][validation]") {
-    FrameValidator validator;
-    constexpr uint32_t capacity = 4096 - neotape::fixed_header_size;
-    vector<std::byte> payload(capacity, std::byte{0x4f});
-
-    auto first =
-        build_record(make_content_header(8, 0, 8, capacity,
-                                         neotape::frame_flag_fec_protected),
-                     payload);
-    FrameHeader const first_header = parse_header(first);
-    validator.seed_for_stream_start(first_header);
-    REQUIRE(!validator
-                 .validate(first_header,
-                           reinterpret_cast<const uint8_t *>(first.data()),
-                           first.size())
-                 .has_value());
-
-    for (uint64_t sequence = 9; sequence < 32; ++sequence) {
-        uint64_t flags = neotape::frame_flag_fec_protected;
-        if (sequence == 31) {
-            flags |= neotape::frame_flag_end;
-        }
-        auto record = build_record(
-            make_content_header(sequence, 0, sequence, capacity, flags),
-            payload);
-        auto error = validator.validate(
-            parse_header(record),
-            reinterpret_cast<const uint8_t *>(record.data()), record.size());
-        CAPTURE(error);
-        REQUIRE_FALSE(error.has_value());
-    }
-
-    neotape::FecDescriptor descriptor;
-    descriptor.source_content_frame_start = 0;
-    descriptor.source_frame_count = 32;
-    descriptor.source_stream_size = 32ULL * capacity;
-    vector<std::byte> repair(capacity, std::byte{0});
-    for (uint16_t index = 0; index < neotape::fec_repair_shards; ++index) {
-        descriptor.repair_index = index;
-        auto record = build_record(
-            make_fec_header(32 + index, index, descriptor,
-                            index + 1 == neotape::fec_repair_shards),
-            repair);
-        auto error = validator.validate(
-            parse_header(record),
-            reinterpret_cast<const uint8_t *>(record.data()), record.size());
-        CAPTURE(error);
-        REQUIRE_FALSE(error.has_value());
-    }
 }
 
 } // namespace
@@ -500,42 +373,12 @@ TEST_CASE("validate: block size cannot change on a new volume",
                 .has_value());
 }
 
-TEST_CASE(
-    "validate: recovery requires sequence evidence for missing repair indices",
-    "[unit][validation][fec]") {
-    FrameValidator validator;
-    validator.recover_missing_fec = true;
-    vector<std::byte> payload = {std::byte{'x'}};
-    auto source =
-        build_record(make_content_header(0, 0, 0, 1,
-                                         neotape::frame_flag_fec_protected |
-                                             neotape::frame_flag_end),
-                     payload);
-    REQUIRE_FALSE(validator.validate(
-        parse_header(source), reinterpret_cast<const uint8_t *>(source.data()),
-        source.size()));
-    neotape::FecDescriptor descriptor;
-    descriptor.source_frame_count = 1;
-    descriptor.source_stream_size = 1;
-    descriptor.fec_group_blake3 = neotape::blake3_hash(
-        reinterpret_cast<const uint8_t *>(payload.data()), payload.size());
-    descriptor.repair_index = 2;
-    // No global/channel gap exists to account for missing repairs 0 and 1.
-    auto repair = build_record(make_fec_header(1, 0, descriptor, false),
-                               vector<std::byte>(3584));
-    REQUIRE(validator
-                .validate(parse_header(repair),
-                          reinterpret_cast<const uint8_t *>(repair.data()),
-                          repair.size())
-                .has_value());
-}
-
-TEST_CASE("validate: volume can begin at every position of later FEC groups",
-          "[unit][validation][fec]") {
+TEST_CASE("validate: volume can begin at every content position",
+          "[unit][validation]") {
     constexpr uint32_t block_size = 4096, capacity = block_size - 512;
     auto identity = make_content_header(0, 0, 0, 0, 0);
     neotape::ContentFrameBuilder builder(block_size, identity.archive_uuid,
-                                         "seed", true);
+                                         "seed");
     std::vector<std::byte> source(capacity * 70 + 123, std::byte{0x5a});
     auto records = builder.feed(source);
     auto tail = builder.flush();

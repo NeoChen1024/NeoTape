@@ -26,12 +26,6 @@ target_link_libraries(neotape_socket PUBLIC neotape_protocol)
 
 neotape_library(neotape_protocol neotape_tcp_protocol.cpp)
 
-neotape_library(neotape_fec neotape_fec.cpp)
-target_link_libraries(neotape_fec
-    PUBLIC neotape_format
-    PRIVATE NeoTape::Isal
-)
-
 neotape_library(neotape_signature neotape_signature.cpp)
 target_link_libraries(neotape_signature
     PUBLIC neotape_format
@@ -40,14 +34,12 @@ target_link_libraries(neotape_signature
 
 neotape_library(neotape_frame_builder neotape_frame_builder.cpp)
 target_link_libraries(neotape_frame_builder PUBLIC
-    neotape_fec
     neotape_format
     neotape_signature
 )
 
 neotape_library(neotape_validation neotape_validate.cpp)
 target_link_libraries(neotape_validation PUBLIC
-    neotape_fec
     neotape_format
 )
 
@@ -80,7 +72,6 @@ target_link_libraries(neotape_pax PUBLIC
 neotape_library(neotape_volume_server neotape_volume_server.cpp)
 target_link_libraries(neotape_volume_server PUBLIC
     neotape_common
-    neotape_fec
     neotape_format
     neotape_frame_builder
     neotape_protocol
@@ -102,7 +93,6 @@ target_link_libraries(neotape_tcp_server PUBLIC
 neotape_library(neotape_extractor_core neotape_extractor.cpp)
 target_link_libraries(neotape_extractor_core PUBLIC
     neotape_common
-    neotape_fec
     neotape_format
     neotape_protocol
     neotape_signature
@@ -127,7 +117,6 @@ neotape_executable(neotape_raw_store neotape-raw-store neotape_raw_store_cmd.cpp
 neotape_executable(neotape_write neotape-write neotape_write_cmd.cpp
     neotape_writer
     neotape_common
-    neotape_fec
     neotape_format
     neotape_protocol
     neotape_signature
@@ -148,7 +137,6 @@ neotape_executable(neotape_extractor neotape-extractor neotape_extractor_cmd.cpp
 )
 neotape_executable(neotape_inspect neotape-inspect neotape_inspect_cmd.cpp
     neotape_common
-    neotape_fec
     neotape_format
     neotape_signature
     neotape_tape

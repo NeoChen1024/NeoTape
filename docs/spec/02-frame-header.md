@@ -73,9 +73,9 @@ The `signature` and `frame_hash` fields are defined in [docs/spec/00-format-comm
 ### `sideband_data`
 
 - `sideband_data` is a 128-byte optional area whose meaning is defined by `channel_type`. The `SIDEBAND` flag signals that the area carries meaningful data; when `SIDEBAND` is clear, writers MUST write all 128 bytes as zero and readers MUST verify that they are zero, without interpreting them as sideband data.
-- In `header_version=1`, `ch_content`, `ch_metadata`, and `archive_end` MUST NOT set `SIDEBAND` and MUST zero-fill `sideband_data`. `ch_fec` MUST set `SIDEBAND = 1` and MUST encode the FEC group descriptor defined in [docs/spec/04-fec-channel.md](04-fec-channel.md). Future `channel_type` values (4–254) may define their own sideband encoding, internal structure, and per-frame consistency rules.
+- In `header_version=1`, no channel defines sideband data: every frame MUST clear `SIDEBAND` and MUST zero-fill `sideband_data`. Future `channel_type` values may define their own sideband encoding, internal structure, and per-frame consistency rules.
 - `sideband_data` is included in `frame_hash` like every other fixed header field; the canonical image only zeroes `signature` and `frame_hash`. Consequently it is integrity-protected by `frame_hash` and, when `SIGNED` is set, by the Ed25519 signature.
-- Readers MUST apply the descriptor validation required by [05-validation.md](05-validation.md), even when they do not use FEC for repair. Unsupported channels or descriptor versions MUST NOT be accepted as understood data; salvage readers may skip their independently framed records. All sideband bytes are included in `frame_hash` verification.
+- Unsupported channels MUST NOT be accepted as understood data; salvage readers may skip their independently framed records. All sideband bytes are included in `frame_hash` verification.
 
 ## Channel Types
 
@@ -85,11 +85,12 @@ The `channel_type` field identifies the frame's role:
 | ----- | --------------- | ---------------------------------------------------- |
 | 1     | `ch_content`  | Payload bytes belonging to the slice content stream. |
 | 2     | `ch_metadata` | Advisory metadata bytes for the slice.               |
-| 3     | `ch_fec`      | FEC repair-symbol bytes for protected `ch_content`.  |
 | 255   | `archive_end` | Clean end-of-archive marker.                         |
 
-Values 0 and 4–254 are reserved for future channels. Validation behavior for
-unknown channels is defined in [docs/spec/05-validation.md](05-validation.md).
+Values 0 and 3–254 are reserved for future channels. Value 3 was used by the
+retired `ch_fec` repair channel and is rejected like any other reserved value.
+Validation behavior for unknown channels is defined in
+[docs/spec/05-validation.md](05-validation.md).
 Salvage mode MAY skip independently framed records of unknown channels; it
 MUST NOT emit their payloads or claim complete sequence validation.
 
@@ -101,21 +102,11 @@ MUST NOT emit their payloads or claim complete sequence validation.
 | ---- | ------------- | ------------------------------------------------------------------------------------------------------ |
 | 0    | `END`       | Last frame of the current channel within the slice.                                                    |
 | 1    | `SIGNED`    | `signature` contains an 8-byte key ID plus Ed25519 signature over `NeoTape-frame\0 \|\| frame_hash`. |
-| 2    | `SIDEBAND`  | `sideband_data` carries meaningful, channel-type-defined data. MUST be set for `ch_fec` and clear for `ch_content`, `ch_metadata`, and `archive_end` in `header_version=1`; when clear, `sideband_data` MUST be all zero. |
-| 3    | `FEC_PROTECTED` | Only valid on `ch_content`. Marks this frame as real protected source material for a following `ch_fec` group. |
-| 4-62 | _reserved_  | Must be zero.                                                                                          |
+| 2    | `SIDEBAND`  | `sideband_data` carries meaningful, channel-type-defined data. No `header_version=1` channel defines sideband data, so this bit MUST be clear; when clear, `sideband_data` MUST be all zero. |
+| 3-62 | _reserved_  | Must be zero. Bit 3 was the retired `FEC_PROTECTED` flag.                                              |
 | 63   | `CLEAN_END` | Only valid for `archive_end`. Must be `1` on a valid end-of-archive frame.                          |
 
 The `archive_end` control frame sets `END = 1`, and `CLEAN_END = 1`.
-
-`FEC_PROTECTED` semantics:
-
-- `FEC_PROTECTED` MAY be set only on `ch_content` frames.
-- `ch_metadata`, `ch_fec`, and `archive_end` MUST clear `FEC_PROTECTED`.
-- When set, the frame is real protected source material in a following
-  `ch_fec` group.
-- When clear, the frame is not protected by `ch_fec`, and no later `ch_fec`
-  frame may claim it as protected source material.
 
 ## Channel Semantics
 
@@ -123,33 +114,12 @@ Channel ordering, completion, and sequence rules describe logical frames.
 Physical retries do not create new logical frames; readers apply replay
 comparison and suppression under [05-validation.md](05-validation.md#replayed-records).
 
-### `ch_content` / `ch_metadata` / `ch_fec`
+### `ch_content` / `ch_metadata`
 
 - `END` marks the final frame of the current channel within the slice.
-- Within each slice, metadata frames precede all non-metadata frames: zero or more `ch_metadata` frames MAY appear first, followed by one or more payload-bearing runs containing `ch_content` and optionally `ch_fec`. A slice MUST contain at least one frame across its channels. Writers MUST NOT place `ch_metadata` after the first `ch_content` or `ch_fec` frame within the same slice.
+- Within each slice, metadata frames precede all non-metadata frames: zero or more `ch_metadata` frames MAY appear first, followed by one or more `ch_content` frames. A slice MUST contain at least one frame across its channels. Writers MUST NOT place `ch_metadata` after the first `ch_content` frame within the same slice.
 - A slice MAY contain only metadata. Such a slice has one or more `ch_metadata` frames and no `ch_content` frames.
-- Each slice MAY contain at most one contiguous `ch_metadata` run. `ch_content` and `ch_fec` need not be physically contiguous: after metadata, the writer MAY alternate repeated content runs and FEC runs within the same slice. The preferred layout for the defined FEC profile is repeated local `32C + 4F` runs.
-- `ch_fec` frames describe protected `ch_content` ranges within the same slice. They MUST NOT appear before the first `ch_content` frame of that slice.
-- A protected content run is a contiguous run of `ch_content` frames with
-  `FEC_PROTECTED = 1` that is described by one immediately following `ch_fec`
-  group.
-- A writer MUST immediately follow each protected content run with one matching
-  `ch_fec` group. No later `ch_content` frame may appear before that group's
-  `ch_fec` frames.
-- For each `ch_fec` group, `source_content_frame_start` MUST equal the
-  `channel_frame_seq_num` of the first frame in the protected run.
-- For each `ch_fec` group, `source_frame_count` MUST equal the number of real
-  `ch_content` frames in the protected run.
-- Every real `ch_content` frame in the protected range described by a `ch_fec`
-  group MUST have `FEC_PROTECTED = 1`.
-- Within one slice, a writer that starts emitting `FEC_PROTECTED = 1`
-  `ch_content` frames MUST continue using protected runs for all later
-  `ch_content` frames in that slice. It MUST NOT switch later content frames in
-  the same slice back to `FEC_PROTECTED = 0`.
-- Within one archive, if any `ch_content` frame uses `FEC_PROTECTED = 1`, a
-  conforming writer MUST use the same protected-run discipline for all later
-  `ch_content` frames in the archive, except that a slice may contain no
-  `ch_content` at all.
+- Each slice MAY contain at most one contiguous `ch_metadata` run.
 - `channel_frame_seq_num` is scoped to `(slice_seq_num, channel_type)`. It starts at 0 on the first frame of that channel in the slice and increments only within that channel, even if frames of other channels appear in between. The sequence does not continue across different `channel_type` values.
 
 ### `archive_end`
@@ -166,7 +136,7 @@ comparison and suppression under [05-validation.md](05-validation.md#replayed-re
 ```
 Archive (archive_uuid)
   ├── Slice (slice_seq_num)
-  │   └── Channel (ch_metadata / ch_content / ch_fec)
+  │   └── Channel (ch_metadata / ch_content)
   │       └── Frame (global_frame_seq_num, channel_frame_seq_num)
   └── Archive End control frame
 
@@ -177,7 +147,7 @@ A slice may span volumes; a frame may not.
 - **Archive** — authoritative logical backup instance, identified by `archive_uuid`.
 - **Volume** — backend-defined container; not an authoritative logical record. `volume_seq_num` is advisory.
 - **Slice** — unit of ordering; identified by `slice_seq_num`. May span frames and backend volumes.
-- **Channel** — partitions a slice into `ch_metadata`, `ch_content`, and optional `ch_fec`. Metadata precedes all non-metadata frames.
+- **Channel** — partitions a slice into `ch_metadata` and `ch_content`. Metadata precedes all content frames.
 - **Frame** — concrete transport record. Every frame has exactly one `channel_type`.
 
 ## Sequence Numbering
@@ -191,7 +161,7 @@ A slice may span volumes; a frame may not.
 ```
 [optional recovery bundle]
 [optional filemark]
-Slice 0 tape file  (ch_metadata / ch_content / optional ch_fec frames)
+Slice 0 tape file  (ch_metadata / ch_content frames)
 filemark
 Slice 1 tape file
 filemark
@@ -209,8 +179,8 @@ Within a backend volume, all frames SHOULD carry the same `volume_seq_num`. `vol
 1. Read one backend record/tape block, parse its fixed 512-byte header.
 2. Decode `volume_block_size_kib`; validate record size when the backend exposes it.
 3. Apply the relevant validation rules from [docs/spec/05-validation.md](05-validation.md).
-4. Dispatch by `channel_type`: `ch_content` — emit payload bytes; `ch_metadata` — skip or parse advisory bytes; `ch_fec` — skip in normal mode or hand to a repair-capable reader; `archive_end` — verify `CLEAN_END` and finish.
-5. Validate `sideband_data` according to its channel and flag rules, including zero requirements when `SIDEBAND` is clear; always include it in `frame_hash` verification.
+4. Dispatch by `channel_type`: `ch_content` — emit payload bytes; `ch_metadata` — skip or parse advisory bytes; `archive_end` — verify `CLEAN_END` and finish.
+5. Verify that `SIDEBAND` is clear and `sideband_data` is all zero; always include it in `frame_hash` verification.
 
 Archive continuity rules, `archive_end` checks, and mode-specific exceptions
 are centralized in [docs/spec/05-validation.md](05-validation.md).

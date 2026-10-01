@@ -23,8 +23,8 @@ using neotape::test::require_success;
 
 } // namespace
 
-TEST_CASE("FEC extraction stays below a slice-sized address-space limit",
-          "[integration][fec][bounded-memory][large][socket]") {
+TEST_CASE("extraction stays below a slice-sized address-space limit",
+          "[integration][bounded-memory][large][socket]") {
     TemporaryDirectory temporary;
     fs::path const input = temporary.path() / "input.bin";
     fs::path const output = temporary.path() / "output.bin";
@@ -39,7 +39,7 @@ TEST_CASE("FEC extraction stays below a slice-sized address-space limit",
     Process raw_store(ProcessOptions{
         {NEOTAPE_RAW_STORE, "--listen", "unix://" + raw_socket.string(),
          "--input", input.string(), "--volume-block-size", "1048576",
-         "--archive-name", "bounded-memory-test", "--fec"}});
+         "--archive-name", "bounded-memory-test"}});
     REQUIRE(wait_for_unix_socket(raw_socket, raw_store, 5s));
     require_success(
         Process::run(ProcessOptions{{NEOTAPE_WRITE, "--source",

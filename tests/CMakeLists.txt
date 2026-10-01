@@ -36,12 +36,10 @@ if(BUILD_TESTING)
     neotape_unit_test(test_format test_format.cpp neotape_format)
     neotape_unit_test(test_validate test_validate.cpp neotape_validation neotape_frame_builder)
     neotape_unit_test(test_signature test_signature.cpp
-        neotape_frame_builder neotape_fec neotape_signature)
+        neotape_frame_builder neotape_signature)
     target_compile_definitions(test_signature PRIVATE
         NEOTAPE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
     )
-    neotape_unit_test(test_fec test_fec.cpp
-        neotape_fec neotape_frame_builder neotape_signature)
 
     add_library(neotape_test_support STATIC
         support/process.cpp
@@ -126,16 +124,5 @@ set_tests_properties(${test_bounded_memory_integration_TESTS}
         "${CMAKE_CURRENT_BINARY_DIR}/large_test_labels.cmake")
     target_compile_definitions(test_bounded_memory_integration PRIVATE
         NEOTAPE_CMP="${NEOTAPE_CMP_EXECUTABLE}"
-    )
-endif()
-
-if(NEOTAPE_BUILD_BENCHMARKS)
-    add_executable(benchmark_fec benchmark_fec.cpp)
-    target_include_directories(benchmark_fec PRIVATE "${PROJECT_SOURCE_DIR}/include")
-    target_link_libraries(benchmark_fec PRIVATE
-        neotape_build_options
-        neotape_common
-        neotape_fec
-        neotape_format
     )
 endif()

@@ -28,15 +28,12 @@ metadata_only_slice =
 payload_slice =
     [ one or more leading ch_metadata frames ]
     + one or more ch_content frames
-    + optional ch_fec groups immediately following protected content runs
 ```
 
 At least one frame must be present across all channels. Each slice MAY contain
 at most one contiguous `ch_metadata` run. Metadata, when present, precedes all
-non-metadata frames. A metadata-only slice MUST NOT contain `ch_content` or
-`ch_fec`; a payload slice MUST contain at least one `ch_content` frame.
-
-After the optional leading metadata run, the writer emits one or more `ch_content` frames. It MAY then emit one or more `ch_fec` frames describing a protected contiguous range of the immediately preceding `ch_content` stream, and later resume `ch_content` again within the same slice. This relaxed grammar allows repeated local FEC runs such as `32C + 4F`, `32C + 4F`, `32C + 4F` within a single slice.
+non-metadata frames. A metadata-only slice MUST NOT contain `ch_content`; a
+payload slice MUST contain at least one `ch_content` frame.
 
 A slice MAY span multiple archive volumes. Sequence continuity is maintained across volume boundaries: `global_frame_seq_num`, `slice_seq_num`, and `channel_frame_seq_num` do not reset at a volume boundary.
 
@@ -48,25 +45,16 @@ The `channel_type` field identifies the frame's channel:
 | ----- | --------------- | ------------------------------------------------------------ |
 | 1     | `ch_content`  | Payload bytes belonging to the slice content stream.         |
 | 2     | `ch_metadata` | Advisory metadata bytes for the slice.                       |
-| 3     | `ch_fec`      | FEC repair symbols for protected `ch_content` ranges.        |
 | 255   | `archive_end` | Clean end-of-archive marker.                                 |
 
-Values 0 and 4–254 are reserved for future channels. Validation behavior for
+Values 0 and 3–254 are reserved for future channels. Validation behavior for
 unknown channels is defined in [docs/spec/05-validation.md](05-validation.md).
 
-A normal payload reader (e.g. `neotape restore`) MUST emit only `ch_content` frame payload bytes. It MUST NOT emit `ch_metadata` or `ch_fec` bytes to stdout.
+A normal payload reader (e.g. `neotape restore`) MUST emit only `ch_content` frame payload bytes. It MUST NOT emit `ch_metadata` bytes to stdout.
 
 `ch_metadata` frames are advisory in normal restore mode. The restore-mode
 exception for already-identified `ch_metadata` validation failures is defined
 in [docs/spec/05-validation.md](05-validation.md).
-
-`ch_fec` frames are also advisory in normal restore mode:
-
-- A normal payload reader validates and skips `ch_fec` frames according to
-  its mode; it MUST NOT emit their payload bytes.
-- A repair-capable reader MAY buffer `ch_content` plus `ch_fec` for one FEC
-  group and reconstruct missing or damaged content before emission, subject to
-  the FEC verification rules in [docs/spec/05-validation.md](05-validation.md).
 
 ## Channel Group Boundaries
 
@@ -83,11 +71,6 @@ These rules apply to the current `channel_type` stream within the slice:
 | `>0`                    | `1` | Final frame of a multi-frame channel stream. |
 
 The `archive_end` frame sets `END = 1`, `CLEAN_END = 1`, and `channel_frame_seq_num = 0`.
-
-For the local `32C + 4F` layout, `END` does not mark the end of each FEC
-group. It marks the final `ch_fec` frame of the slice. Likewise, the final
-`ch_content` frame of the slice carries `END` for `ch_content`, even if
-earlier content runs were already followed by FEC frames.
 
 ## Per-Frame Integrity
 
@@ -112,19 +95,18 @@ The authoritative continuity rules are defined in
 
 ## Metadata Channel Ordering
 
-Within each slice, metadata frames MUST precede all non-metadata frames. Writers MUST NOT place `ch_metadata` after `ch_content` or `ch_fec` within the same slice. `ch_fec` frames MUST describe a protected contiguous range of prior `ch_content` from the same slice and MUST NOT appear before the first `ch_content` frame. `channel_frame_seq_num` is scoped per-channel and does not continue across different `channel_type` values.
+Within each slice, metadata frames MUST precede all non-metadata frames. Writers MUST NOT place `ch_metadata` after `ch_content` within the same slice. `channel_frame_seq_num` is scoped per-channel and does not continue across different `channel_type` values.
 
 ## Slice Completion
 
 The writer decides when to close a slice. When it closes:
 
-1. The final frame of every channel present in the slice carries `END`. With
-   interleaved channels, a channel's final frame may occur before the final
-   physical frame of the slice.
+1. The final frame of every channel present in the slice carries `END`. A
+   leading metadata run reaches `END` before the first content frame.
 2. The writer MUST NOT emit another frame for a channel after that channel has
    reached `END`.
 3. The writer MUST NOT follow with `ch_metadata` frames once any `ch_content`
-   or `ch_fec` frame has been written in that slice.
+   frame has been written in that slice.
 4. After all frames are committed, the writer writes a filemark to close the
    slice tape file.
 

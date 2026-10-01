@@ -102,8 +102,6 @@ ChannelType get_channel_type(uint8_t value) {
         return ChannelType::CH_CONTENT;
     case static_cast<uint8_t>(ChannelType::CH_METADATA):
         return ChannelType::CH_METADATA;
-    case static_cast<uint8_t>(ChannelType::CH_FEC):
-        return ChannelType::CH_FEC;
     case static_cast<uint8_t>(ChannelType::ARCHIVE_END):
         return ChannelType::ARCHIVE_END;
     default:
@@ -222,8 +220,6 @@ std::string channel_type_name(ChannelType type) {
         return "CH_CONTENT";
     case ChannelType::CH_METADATA:
         return "CH_METADATA";
-    case ChannelType::CH_FEC:
-        return "CH_FEC";
     case ChannelType::ARCHIVE_END:
         return "ARCHIVE_END";
     }
@@ -327,26 +323,18 @@ void validate_header(const FrameHeader &header) {
 
     constexpr uint64_t allowed_flags =
         frame_flag_end | frame_flag_signed | frame_flag_sideband |
-        frame_flag_fec_protected | frame_flag_clean_end;
+        frame_flag_clean_end;
     if ((header.flags & ~allowed_flags) != 0) {
         throw std::runtime_error("reserved frame flag bits set");
     }
 
     bool const has_sideband_data = std::ranges::any_of(
         header.sideband_data, [](uint8_t byte) { return byte != 0; });
-    if (header.channel_type == ChannelType::CH_FEC) {
-        if (!has_frame_flag_sideband(header.flags)) {
-            throw std::runtime_error("ch_fec frame must set SIDEBAND");
-        }
-    } else if (has_frame_flag_sideband(header.flags) || has_sideband_data) {
+    // No header-version-1 channel defines sideband data; the area stays
+    // reserved for a future channel_type.
+    if (has_frame_flag_sideband(header.flags) || has_sideband_data) {
         throw std::runtime_error(
-            "sideband is only valid on ch_fec frames in header version 1");
-    }
-
-    if (has_frame_flag_fec_protected(header.flags) &&
-        header.channel_type != ChannelType::CH_CONTENT) {
-        throw std::runtime_error(
-            "FEC_PROTECTED is only valid on ch_content frames");
+            "no channel uses sideband data in header version 1");
     }
 
     if (header.channel_type == ChannelType::ARCHIVE_END) {

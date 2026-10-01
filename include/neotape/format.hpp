@@ -26,14 +26,12 @@ using SidebandBytes = std::array<uint8_t, sideband_size>;
 enum class ChannelType : uint8_t {
     CH_CONTENT = 1,
     CH_METADATA = 2,
-    CH_FEC = 3,
     ARCHIVE_END = 255,
 };
 
 inline constexpr uint64_t frame_flag_end = 1ULL << 0;
 inline constexpr uint64_t frame_flag_signed = 1ULL << 1;
 inline constexpr uint64_t frame_flag_sideband = 1ULL << 2;
-inline constexpr uint64_t frame_flag_fec_protected = 1ULL << 3;
 inline constexpr uint64_t frame_flag_clean_end = 1ULL << 63;
 
 constexpr bool has_frame_flag_end(uint64_t flags) {
@@ -44,9 +42,6 @@ constexpr bool has_frame_flag_signed(uint64_t flags) {
 }
 constexpr bool has_frame_flag_sideband(uint64_t flags) {
     return (flags & frame_flag_sideband) != 0;
-}
-constexpr bool has_frame_flag_fec_protected(uint64_t flags) {
-    return (flags & frame_flag_fec_protected) != 0;
 }
 constexpr bool has_frame_flag_clean_end(uint64_t flags) {
     return (flags & frame_flag_clean_end) != 0;

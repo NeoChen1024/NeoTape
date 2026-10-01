@@ -17,7 +17,7 @@ int main(int argc, char **argv) {
         std::ifstream input(argv[1], std::ios::binary);
         std::vector<std::vector<std::byte>> records;
         std::vector<neotape::FrameHeader> headers;
-        std::vector<size_t> content, repair;
+        std::vector<size_t> content;
         for (;;) {
             neotape::HeaderBytes head{};
             input.read(reinterpret_cast<char *>(head.data()), head.size());
@@ -37,15 +37,12 @@ int main(int argc, char **argv) {
                 throw std::runtime_error("short record");
             if (header.channel_type == neotape::ChannelType::CH_CONTENT)
                 content.push_back(records.size());
-            if (header.channel_type == neotape::ChannelType::CH_FEC)
-                repair.push_back(records.size());
             headers.push_back(header);
             records.push_back(std::move(record));
         }
-        if (content.size() < 32 || repair.size() < 4 ||
-            !neotape::has_frame_flag_end(headers[content.back()].flags) ||
-            !neotape::has_frame_flag_end(headers[repair.back()].flags))
-            throw std::runtime_error("fixture lacks a complete FEC slice");
+        if (content.size() < 2 ||
+            !neotape::has_frame_flag_end(headers[content.back()].flags))
+            throw std::runtime_error("fixture lacks a complete content slice");
         fs::path root(argv[2]);
         if (!fs::create_directory(root))
             throw std::runtime_error("case directory exists");
@@ -59,22 +56,14 @@ int main(int argc, char **argv) {
             expected.write(
                 reinterpret_cast<const char *>(records[index].data()) + 512,
                 headers[index].frame_payload_size);
-        for (auto name :
-             {"baseline", "missing-content", "missing-repair", "missing-both",
-              "missing-final-repair", "too-many-missing", "damaged-header",
-              "bad-signature", "conflicting-replay"}) {
+        for (auto name : {"baseline", "missing-content", "damaged-header",
+                          "bad-signature", "conflicting-replay"}) {
             std::string scenario(name);
             auto directory = root / scenario;
             fs::create_directory(directory);
             std::set<size_t> dropped;
-            if (scenario == "missing-content" || scenario == "missing-both")
+            if (scenario == "missing-content")
                 dropped.insert(content[1]);
-            if (scenario == "missing-repair" || scenario == "missing-both")
-                dropped.insert(repair[0]);
-            if (scenario == "missing-final-repair")
-                dropped.insert(repair.back());
-            if (scenario == "too-many-missing")
-                dropped.insert(content.begin(), content.begin() + 5);
             std::ofstream output(directory / "neotape-000000.slice-000000.nts",
                                  std::ios::binary);
             for (size_t i = 0; i < records.size(); ++i) {
@@ -100,7 +89,7 @@ int main(int argc, char **argv) {
             ending.write(reinterpret_cast<const char *>(end.data()),
                          end.size());
         }
-        std::cout << "cases=9 records=" << records.size() << '\n';
+        std::cout << "cases=5 records=" << records.size() << '\n';
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';
         return 1;

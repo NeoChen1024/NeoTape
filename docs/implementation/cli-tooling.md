@@ -117,12 +117,9 @@ build/dev/bin/neotape-read --source tape:/dev/nst0 --connect tcp://tapehost:9000
 build/dev/bin/neotape-read --source spool:./in --connect tcp://tapehost:9000
 ```
 
-FEC correction is automatic during normal extraction whenever the stream
-contains `FEC_PROTECTED` content and matching `ch_fec` groups; no extractor
-flag is required. `--salvage` changes consistency and unrepairable-group
-fallback policy, not whether decoding runs. See
-[fec-restore-behavior.md](fec-restore-behavior.md) for the state flow and error
-policy.
+Normal extraction rejects any missing or damaged content record.
+`--salvage` skips invalid records and relaxes archive-level consistency; the
+output then has gaps and is reported as not fully verified.
 
 ## Reader (TCP client)
 
@@ -157,7 +154,7 @@ build/dev/bin/neotape-inspect --source tape:/dev/nst0
 The compliance report applies the full conformance rules from
 [05-validation.md](05-validation.md), including per-frame structure and
 integrity, archive identity consistency, sequence continuity, channel ordering,
-`archive_end` rules, and FEC-group consistency when `ch_fec` is present.
+and `archive_end` rules.
 
 ## Scan tool
 
@@ -207,7 +204,7 @@ Frame counters use explicit names:
 - `committed_frames` counts unique frames acknowledged by the writer.
 - `frame_transmissions` counts all frame records sent, including retransmits.
 - `forwarded_frames` counts records sent by one reader invocation.
-- `processed_frames` counts records handled by the extractor, excluding suppressed retries; it is not a claim that unavailable FEC records were individually verified.
+- `processed_frames` counts records handled by the extractor, excluding suppressed retries.
 
 While `neotape-write` is active it updates an mbuffer-style status line once
 per second:

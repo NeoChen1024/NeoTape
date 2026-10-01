@@ -30,7 +30,6 @@ struct Options {
     uint32_t volume_block_size = 4 * 1024 * 1024;
     string archive_name = "raw";
     uint64_t retention_frame_count = 256;
-    bool fec_enabled = false;
     std::optional<string> sign_secret_key_file;
     std::optional<string> sign_passphrase_file;
     bool debug = false;
@@ -55,7 +54,6 @@ void usage(const char *prog) {
         "usage: {} -l|--listen <tcp://host:port|unix://path>\n"
         "       [-i|--input <file|->] [-b|--volume-block-size <SIZE>]\n"
         "       [-n|--archive-name <name>] [-r|--retention-frame-count <N>]\n"
-        "       [-F|--fec]\n"
         "       [-k|--sign-secret-key <file.sec>]\n"
         "       [-K|--sign-passphrase-file <path>]\n"
         "       [-d|--debug] [-h]\n"
@@ -73,14 +71,13 @@ Options parse_args(int argc, char **argv) {
         {"debug", no_argument, nullptr, 'd'},
         {"sign-secret-key", required_argument, nullptr, 'k'},
         {"sign-passphrase-file", required_argument, nullptr, 'K'},
-        {"fec", no_argument, nullptr, 'F'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
     Options opts;
     int c = 0;
     try {
-        while ((c = getopt_long(argc, argv, "l:i:b:n:r:dk:K:Fh", long_opts,
+        while ((c = getopt_long(argc, argv, "l:i:b:n:r:dk:K:h", long_opts,
                                 nullptr)) != -1) {
             switch (c) {
             case 'l':
@@ -110,9 +107,6 @@ Options parse_args(int argc, char **argv) {
                 break;
             case 'K':
                 opts.sign_passphrase_file = optarg;
-                break;
-            case 'F':
-                opts.fec_enabled = true;
                 break;
             case 'h':
                 usage(argv[0]);
@@ -166,7 +160,7 @@ void produce_raw_frames(FILE *input, const string &archive_uuid,
                         const Options &opts,
                         neotape::VolumeRecordQueue &queue) {
     neotape::ContentFrameBuilder builder(opts.volume_block_size, archive_uuid,
-                                         opts.archive_name, opts.fec_enabled);
+                                         opts.archive_name);
     std::vector<std::byte> buf(1024ULL * 1024ULL);
     for (;;) {
         size_t const n = std::fread(buf.data(), 1, buf.size(), input);

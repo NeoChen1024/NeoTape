@@ -6,7 +6,7 @@ This document collects extension ideas for future NeoTape versions. They are not
 
 ## Additional Channel Types
 
-Extend `channel_type` beyond `ch_content`, `ch_metadata`, `ch_fec`, and `archive_end`. Values 0 and 4–254 are reserved.
+Extend `channel_type` beyond `ch_content`, `ch_metadata`, and `archive_end`. Values 0 and 3–254 are reserved.
 
 New `channel_type` values would be allocated by future specification versions.
 Each extension would need to define allowed ordering, interaction with existing
@@ -17,7 +17,7 @@ permit arbitrary interleaving.
 
 The 128-byte `sideband_data` area in the fixed header (see [02-frame-header.md](02-frame-header.md)) is reserved for channel-type-specific extensions. The `SIDEBAND` flag marks a frame as carrying meaningful sideband data; the encoding, internal layout, and per-frame consistency rules are defined by the `channel_type` that uses it.
 
-In `header_version=1`, `ch_fec` is the only defined `channel_type` that sets `SIDEBAND`; `ch_content`, `ch_metadata`, and `archive_end` still require `sideband_data` to be all zero. Candidate future uses, each gated on a new `channel_type` allocation, include:
+In `header_version=1`, no defined `channel_type` sets `SIDEBAND`; every frame requires `sideband_data` to be all zero. Candidate future uses, each gated on a new `channel_type` allocation, include:
 
 - Per-frame Merkle/proof nodes for real-time verification.
 - Partial-restore index pointers.
@@ -48,3 +48,18 @@ Open questions:
 - Distinguishing intentional reopen from accidental overwrite.
 - Whether the previous Archive End frame should be recoverable.
 - Interaction with multi-archive media and append-only safety policy.
+
+## Repair Channels
+
+`header_version=1` previously defined a `ch_fec` channel (value 3) carrying
+local RS(32,4) repair records after every 32 content records, together with a
+`FEC_PROTECTED` flag (bit 3). It was removed because the failures it covered,
+an isolated one to four unreadable records, are rare on LTO: the drive's
+read-after-write verification and dataset-level ECC leave either no residual
+error or a damaged region far larger than one group.
+
+A future repair channel must work within the streaming model: one drive,
+sequential volumes, bounded memory, and no seeking back. Redundancy across
+volumes (RAIT-style parity) needs either several drives writing in parallel
+or a volume-sized disk staging area, and is outside that model. Operators who
+need media redundancy should write independent copies.

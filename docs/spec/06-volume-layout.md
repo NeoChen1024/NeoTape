@@ -13,7 +13,7 @@ For the fixed header layout and channel type definitions, see [docs/spec/02-fram
 ```
 Archive (archive_uuid)
   ├── Slice (slice_seq_num)
-  │   └── Channel (ch_metadata / ch_content / ch_fec)
+  │   └── Channel (ch_metadata / ch_content)
   │       └── Frame (global_frame_seq_num, channel_frame_seq_num)
   └── Archive End control frame
 
@@ -24,7 +24,7 @@ A slice may span volumes; a frame may not.
 - **Archive** is the authoritative logical backup instance, identified by `archive_uuid`.
 - **Volume** is a backend-defined physical or virtual container. It is not an authoritative logical record in the NeoTape stream. `volume_seq_num` is advisory and combines with `archive_label` to form an operator-facing display label.
 - **Slice** is the unit of logical ordering within an archive. It is identified by `slice_seq_num` and may span frames and backend volumes.
-- **Channel** partitions a slice into `ch_metadata`, `ch_content`, and optional `ch_fec`. Metadata, when present, precedes all non-metadata frames. A slice may contain only metadata.
+- **Channel** partitions a slice into `ch_metadata` and `ch_content`. Metadata, when present, precedes all content frames. A slice may contain only metadata.
 - **Frame** is the concrete transport record. Every frame has exactly one `channel_type`, one `global_frame_seq_num`, and one `channel_frame_seq_num`.
 
 ## Physical Placement
@@ -40,7 +40,6 @@ Physical Medium (LTO tape)
   │     │     │     ├── payload bytes
   │     │     │     └── zero padding
   │     │     ├── ch_content Frame (NeoTape record)
-  │     │     ├── ch_fec Frame (optional, NeoTape record)
   │     │     ├── ...
   │     │     └── final channel frame(s) with END
   │     ├── filemark
@@ -74,9 +73,8 @@ File 0:   Slice 0 tape file
           │  (optional)
           ├─ ch_content Frame (slice=0, channel-frame-seq=0)
           ├─ ch_content Frame (slice=0, channel-frame-seq=1)
-          ├─ ch_fec Frame (optional, slice=0, channel-frame-seq=0)
           ├─ ...
-          └─ final `ch_content` or `ch_fec` Frame(s) with END
+          └─ final `ch_content` Frame with END
 filemark
 File 1:   Slice 1 tape file
           ...
@@ -85,7 +83,7 @@ File N:   Archive End frame (END, CLEAN_END)
 filemark
 ```
 
-Within a slice tape file, each frame occupies one complete fixed-size record, including padding. Filemarks delimit tape files, not individual frames. Metadata frames, when present, precede all non-metadata frames. `ch_content` and `ch_fec` MAY then appear as repeated runs within the same slice tape file. A slice MUST contain at least one frame across its channels.
+Within a slice tape file, each frame occupies one complete fixed-size record, including padding. Filemarks delimit tape files, not individual frames. Metadata frames, when present, precede all content frames. A slice MUST contain at least one frame across its channels.
 
 ## Multi-Volume Tape Layout
 
@@ -150,8 +148,7 @@ metadata-only Slice[k] =
 
 payload Slice[k] =
     [ one leading ch_metadata run ] +
-    one or more ch_content frames +
-    optional ch_fec repair groups immediately following protected content runs
+    one or more ch_content frames
 ```
 
 The complete normative slice grammar is defined in

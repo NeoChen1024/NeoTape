@@ -145,8 +145,6 @@ string channel_abbrev(ChannelType t) {
         return "content ";
     case ChannelType::CH_METADATA:
         return "metadata";
-    case ChannelType::CH_FEC:
-        return "fec     ";
     case ChannelType::ARCHIVE_END:
         return "arch_end";
     }
@@ -168,7 +166,6 @@ struct Stats {
     uint64_t total_frames = 0;
     uint64_t content_frames = 0;
     uint64_t metadata_frames = 0;
-    uint64_t fec_frames = 0;
     uint64_t archive_end_frames = 0;
     uint64_t filemarks = 0;
     uint64_t errors = 0;
@@ -279,9 +276,6 @@ int do_inspect(const Options &opts) {
         case ChannelType::CH_METADATA:
             ++stats.metadata_frames;
             break;
-        case ChannelType::CH_FEC:
-            ++stats.fec_frames;
-            break;
         case ChannelType::ARCHIVE_END:
             ++stats.archive_end_frames;
             break;
@@ -324,7 +318,6 @@ int do_inspect(const Options &opts) {
     std::cout << format("  Total frames:     {}\n", stats.total_frames);
     std::cout << format("  Content frames:   {}\n", stats.content_frames);
     std::cout << format("  Metadata frames:  {}\n", stats.metadata_frames);
-    std::cout << format("  FEC frames:       {}\n", stats.fec_frames);
     std::cout << format("  Archive_end:      {}\n", stats.archive_end_frames);
     std::cout << format("  Filemarks:        {}\n", stats.filemarks);
     std::cout << format("  Unsigned frames:  {}\n", stats.unsigned_frames);

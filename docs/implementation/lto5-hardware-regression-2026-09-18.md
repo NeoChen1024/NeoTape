@@ -2,6 +2,10 @@
 
 Status: completed hardware regression; observations, not format guarantees.
 
+The `ch_fec` channel exercised here was later removed from the format; the FEC
+findings below are historical. The current hardware harness runs the same
+signed multi-volume flow without FEC.
+
 ## Environment and input
 
 - Device: `/dev/tapeB -> /dev/nst0`, IBM ULTRIUM-HH5, firmware H971.

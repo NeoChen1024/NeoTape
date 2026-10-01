@@ -10,6 +10,10 @@
   Makefile is retained afterward.
 - Test policy: C++ unit and process-level integration tests use Catch2. CTest is
   the project-wide test runner.
+- Later change: the `ch_fec` channel was removed from the format, taking the
+  bundled ISA-L dependency, `NEOTAPE_BUILD_BENCHMARKS`, and the `benchmark`
+  preset with it. The checklist and verification notes below record the
+  migration as it was completed.
 
 ## Goals
 
@@ -34,14 +38,10 @@
 - `BUILD_TESTING` controls all test targets. When it is on, Catch2 3 is a
   required system dependency; when it is off, configuring NeoTape does not
   search for Catch2.
-- Benchmarks are controlled separately by `NEOTAPE_BUILD_BENCHMARKS` and are
-  not part of the default CTest suite.
 - Integration tests use a reusable C++ process harness with RAII cleanup,
   deadlines, captured output, temporary directories, and Unix-socket readiness
   checks. Tests receive executable paths from CMake and never assume `./bin`.
-- Bundled BLAKE3, ISA-L, and signify remain the production dependency sources.
-  ISA-L may continue to use its upstream make-based build internally, but its
-  artifacts live in the CMake build tree and are exposed through a CMake target.
+- Bundled BLAKE3 and signify remain the production dependency sources.
 - `-march=native` is opt-in through `NEOTAPE_NATIVE_ARCH`; it is not a project
   default.
 
@@ -50,7 +50,6 @@
 Third-party targets:
 
 - `NeoTape::Blake3`
-- `NeoTape::Isal`
 - `NeoTape::Signify`
 - `LibArchive::LibArchive`
 - `Threads::Threads`
@@ -61,7 +60,6 @@ through links rather than executable-specific object lists:
 - common utilities
 - frame format and hashing
 - socket and TCP protocol
-- FEC
 - signatures
 - validation
 - tape/spool I/O
