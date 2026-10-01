@@ -90,7 +90,7 @@ The `channel_type` field identifies the frame's role:
 Values 0 and 3–254 are reserved for future channels. Value 3 was used by the
 retired `ch_fec` repair channel and is rejected like any other reserved value.
 Validation behavior for unknown channels is defined in
-[docs/spec/05-validation.md](05-validation.md).
+[docs/spec/04-validation.md](04-validation.md).
 Salvage mode MAY skip independently framed records of unknown channels; it
 MUST NOT emit their payloads or claim complete sequence validation.
 
@@ -112,7 +112,7 @@ The `archive_end` control frame sets `END = 1`, and `CLEAN_END = 1`.
 
 Channel ordering, completion, and sequence rules describe logical frames.
 Physical retries do not create new logical frames; readers apply replay
-comparison and suppression under [05-validation.md](05-validation.md#replayed-records).
+comparison and suppression under [04-validation.md](04-validation.md#replayed-records).
 
 ### `ch_content` / `ch_metadata`
 
@@ -178,9 +178,9 @@ Within a backend volume, all frames SHOULD carry the same `volume_seq_num`. `vol
 
 1. Read one backend record/tape block, parse its fixed 512-byte header.
 2. Decode `volume_block_size_kib`; validate record size when the backend exposes it.
-3. Apply the relevant validation rules from [docs/spec/05-validation.md](05-validation.md).
+3. Apply the relevant validation rules from [docs/spec/04-validation.md](04-validation.md).
 4. Dispatch by `channel_type`: `ch_content` — emit payload bytes; `ch_metadata` — skip or parse advisory bytes; `archive_end` — verify `CLEAN_END` and finish.
 5. Verify that `SIDEBAND` is clear and `sideband_data` is all zero; always include it in `frame_hash` verification.
 
 Archive continuity rules, `archive_end` checks, and mode-specific exceptions
-are centralized in [docs/spec/05-validation.md](05-validation.md).
+are centralized in [docs/spec/04-validation.md](04-validation.md).

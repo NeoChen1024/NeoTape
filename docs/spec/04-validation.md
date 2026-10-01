@@ -27,7 +27,7 @@ field semantics remain in:
 - [00-format-common.md](00-format-common.md)
 - [02-frame-header.md](02-frame-header.md)
 - [03-frames-and-slices.md](03-frames-and-slices.md)
-- [06-volume-layout.md](06-volume-layout.md)
+- [05-volume-layout.md](05-volume-layout.md)
 
 ## Validation Levels
 

@@ -107,7 +107,7 @@ An unexpected disconnect is not an implicit `archive_end`. A recoverable
 missing tape block may be skipped only when the backend can advance to a known
 record boundary; subsequent frame sequence numbers expose the gap. Reader
 MUST report the read failure. Extractor rejects the resulting gap unless the
-salvage rules in [05-validation.md](05-validation.md) are active. If the next boundary cannot be established,
+salvage rules in [04-validation.md](04-validation.md) are active. If the next boundary cannot be established,
 Reader MUST stop and report an error.
 
 ## Error handling
@@ -129,7 +129,7 @@ buffering a protected group until its recovery commitment is verified. Whole
 archive completion can only be established after a valid `archive_end` and
 completion of the applicable continuity checks. Both pipelines apply the
 relevant shared rules in
-[docs/spec/05-validation.md](05-validation.md).
+[docs/spec/04-validation.md](04-validation.md).
 
 On fatal validation failure the endpoint that detected the failure SHOULD send
 `error` with a human-readable message and close the connection.
@@ -140,7 +140,7 @@ The Archiver persists archive-generation and acknowledgement state across
 Writer disconnects. The Extractor persists archive-validation state across
 Reader disconnects. In the reading pipeline, when a new Reader connects, its
 first new logical frame MUST continue prior state. Verified replays are
-handled under [05-validation.md](05-validation.md).
+handled under [04-validation.md](04-validation.md).
 Unexplained gaps, conflicting replays, or identity mismatches cause the
 Extractor to send `error` and close the connection outside salvage mode.
 
@@ -160,7 +160,7 @@ unacknowledged suffix on the next volume, starting immediately after its last
 acknowledged frame. Reissued frames preserve all logical data and header fields
 except the new `volume_seq_num` and recomputed `frame_hash` and `signature`.
 Readers MUST NOT emit verified replays twice; comparison and acceptance rules
-are defined in [05-validation.md](05-validation.md#replayed-records).
+are defined in [04-validation.md](04-validation.md#replayed-records).
 
 The same lost-ACK ambiguity can occur in the reading pipeline. A reconnecting
 Reader may resend an uncertain suffix, which the Extractor verifies and

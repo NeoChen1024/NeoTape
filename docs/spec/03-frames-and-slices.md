@@ -48,13 +48,13 @@ The `channel_type` field identifies the frame's channel:
 | 255   | `archive_end` | Clean end-of-archive marker.                                 |
 
 Values 0 and 3–254 are reserved for future channels. Validation behavior for
-unknown channels is defined in [docs/spec/05-validation.md](05-validation.md).
+unknown channels is defined in [docs/spec/04-validation.md](04-validation.md).
 
 A normal payload reader (e.g. `neotape restore`) MUST emit only `ch_content` frame payload bytes. It MUST NOT emit `ch_metadata` bytes to stdout.
 
 `ch_metadata` frames are advisory in normal restore mode. The restore-mode
 exception for already-identified `ch_metadata` validation failures is defined
-in [docs/spec/05-validation.md](05-validation.md).
+in [docs/spec/04-validation.md](04-validation.md).
 
 ## Channel Group Boundaries
 
@@ -80,7 +80,7 @@ Each frame is individually integrity-checked by `frame_hash`, a BLAKE3 digest ov
 
 Channel ordering, completion, and sequence rules describe logical frames.
 Physical retries do not create new logical frames; readers apply replay
-comparison and suppression under [05-validation.md](05-validation.md#replayed-records).
+comparison and suppression under [04-validation.md](04-validation.md#replayed-records).
 
 - `global_frame_seq_num` — starts at 0 and increments by 1 for every frame in the archive, including `archive_end`. Does not reset at volume boundaries.
 - `slice_seq_num` — starts at 0 for the first slice, increments by 1 for each new slice. All frames in the same slice carry the same value, even across volumes. `archive_end` uses the canonical control-frame value `0`.
@@ -88,10 +88,10 @@ comparison and suppression under [05-validation.md](05-validation.md#replayed-re
 
 All three are `uint64`. Writers assign contiguous logical sequence numbers
 within each scope. Readers apply the verified replay and unavailable-record
-recovery rules in [05-validation.md](05-validation.md); physical replays do
+recovery rules in [04-validation.md](04-validation.md); physical replays do
 not introduce new logical frames.
 The authoritative continuity rules are defined in
-[docs/spec/05-validation.md](05-validation.md).
+[docs/spec/04-validation.md](04-validation.md).
 
 ## Metadata Channel Ordering
 

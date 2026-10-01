@@ -74,7 +74,7 @@ They MUST report an error and stop; lexical tie-breaking is not allowed.
 
 Writers MUST allocate consecutive file numbers. Readers MAY continue across
 missing file numbers only while reporting the missing tape-file boundary and
-applying the recovery rules in [05-validation.md](05-validation.md); filename
+applying the recovery rules in [04-validation.md](04-validation.md); filename
 gaps alone do not establish which frames or payload bytes are missing.
 
 Frame headers are authoritative for archive identity and logical sequence.
@@ -102,5 +102,5 @@ Spool files MUST preserve the same `volume_block_size_kib` semantics as tape mod
 A reader SHOULD be able to accept either a tape device path or a spool directory path. When reading from a spool directory, the reader SHOULD validate:
 
 - the same shared validation rules defined in
-  [docs/spec/05-validation.md](05-validation.md), plus
+  [docs/spec/04-validation.md](04-validation.md), plus
 - spool-specific file enumeration and ordering rules from this chapter

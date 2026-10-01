@@ -22,14 +22,14 @@ docs/
     01-terminology.md               Shared terms and definitions
     02-frame-header.md              Unified 512-byte header layout and flags
     03-frames-and-slices.md         Frame model, channels, and sequence numbering
-    05-validation.md                Shared conformance and validation rules
-    06-volume-layout.md             Logical and physical volume layout
-    07-spool-dir.md                 Spool directory format
-    08-tcp-protocol.md              TCP/UDS protocol and writer auth handshake
-    09-security.md                  Trust model, path safety, frame signing
-    10-plan-metadata.md             Plan metadata emitted by `neotape-plan`
-    11-appendix-layout-examples.md  Single-volume and multi-volume examples
-    12-future-extensions.md         Reserved extension space and ideas
+    04-validation.md                Shared conformance and validation rules
+    05-volume-layout.md             Logical and physical volume layout
+    06-spool-dir.md                 Spool directory format
+    07-tcp-protocol.md              TCP/UDS protocol and writer auth handshake
+    08-security.md                  Trust model, path safety, frame signing
+    09-plan-metadata.md             Plan metadata emitted by `neotape-plan`
+    10-appendix-layout-examples.md  Single-volume and multi-volume examples
+    11-future-extensions.md         Reserved extension space and ideas
 
   implementation/                   Implementation-specific notes
     2026-09-refactor.md             CLI/streaming refactor plan and progress
@@ -57,10 +57,10 @@ and the TCP/Unix-domain socket protocol.
 
 Security- and transport-related behavior is split intentionally:
 
-- `09-security.md` covers trust model, path safety, and frame signing.
-- `08-tcp-protocol.md` covers the writer/reader request-response protocol,
+- `08-security.md` covers trust model, path safety, and frame signing.
+- `07-tcp-protocol.md` covers the writer/reader request-response protocol,
   including writer-side challenge-response authentication of the source server.
-- `05-validation.md` centralizes the conformance checks shared by readers,
+- `04-validation.md` centralizes the conformance checks shared by readers,
   extractors, spool readers, TCP receivers, and `neotape-inspect`.
 
 ### `implementation/`

@@ -180,8 +180,8 @@ When the writer encounters EOT (physical end of tape) or reaches the configured 
    next frame. A committed frame MUST NOT be repeated merely because a
    following filemark could not be written. If acknowledgement was lost, the
    producer MAY replay the unacknowledged suffix as specified in
-   [08-tcp-protocol.md](08-tcp-protocol.md). Readers handle verified duplicate
-   records under [05-validation.md](05-validation.md#replayed-records).
+   [07-tcp-protocol.md](07-tcp-protocol.md). Readers handle verified duplicate
+   records under [04-validation.md](04-validation.md#replayed-records).
 3. **END frame committed, slice-level filemark not yet written:** The logical
    slice frame stream is complete. The next volume proceeds to the next slice
    or Archive End frame. The missing filemark is a media-layout anomaly.

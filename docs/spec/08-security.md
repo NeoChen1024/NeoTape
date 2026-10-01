@@ -33,7 +33,7 @@ order. The context string includes its trailing NUL byte. When the `SIGNED`
 flag is set and the signature verifies against a trusted public key, it
 provides authenticity and tamper resistance. When the flag is clear, the
 entire `signature` field MUST be zero. The validation modes and their
-accept/reject rules are defined in [05-validation.md](05-validation.md).
+accept/reject rules are defined in [04-validation.md](04-validation.md).
 
 ## Executable Content
 
@@ -49,7 +49,7 @@ When restoring payload bytes through a downstream tool (e.g. bsdtar), path safet
 
 ## Transport Security
 
-The NeoTape TCP protocol ([`08-tcp-protocol.md`](08-tcp-protocol.md)) is
+The NeoTape TCP protocol ([`07-tcp-protocol.md`](07-tcp-protocol.md)) is
 plaintext and provides no confidentiality. Its base mode provides no peer
 authentication. The optional challenge-response mode provides one-way
 Archiver authentication to a Writer configured with a trusted public key, but
@@ -64,7 +64,7 @@ will fail verification regardless of transport.
 Challenge-response uses a fresh nonce to prevent replay of an old
 `auth_response`. Frame sequence validation rejects conflicting duplicates and unexplained
 reordering within the archive state being validated. Verified retry replays
-are suppressed under [05-validation.md](05-validation.md#replayed-records),
+are suppressed under [04-validation.md](04-validation.md#replayed-records),
 without emitting their payload twice. Neither mechanism proves archive
 freshness or prevents replay of a complete, otherwise-valid old archive; a
 deployment requiring that property must independently enforce an expected

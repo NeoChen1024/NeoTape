@@ -78,8 +78,8 @@ implementation-specific notes (mt-pax architecture, build notes).
 
 Optional signify-compatible frame signing, signed-frame verification, and
 writer-side source authentication are implemented. See
-[`docs/spec/09-security.md`](docs/spec/09-security.md) and
-[`docs/spec/08-tcp-protocol.md`](docs/spec/08-tcp-protocol.md).
+[`docs/spec/08-security.md`](docs/spec/08-security.md) and
+[`docs/spec/07-tcp-protocol.md`](docs/spec/07-tcp-protocol.md).
 
 ## Dependencies
 

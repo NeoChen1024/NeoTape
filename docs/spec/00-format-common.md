@@ -160,7 +160,7 @@ Fields explicitly defined as using the NeoTape fixed timestamp encoding MUST
 use UTC and MUST be encoded as a 20-byte NUL-terminated string. This rule does
 not apply to fields whose defining chapter specifies another representation,
 such as the decimal Unix timestamp `<mtime>` field in
-[10-plan-metadata.md](10-plan-metadata.md).
+[09-plan-metadata.md](09-plan-metadata.md).
 
 The timestamp text before the NUL byte MUST match this exact `strftime` format:
 

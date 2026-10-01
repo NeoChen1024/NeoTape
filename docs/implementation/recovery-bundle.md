@@ -90,7 +90,7 @@ This design is deliberate:
 
 ## Relationship to Spec
 
-The format spec (`docs/spec/07-spool-dir.md`, `docs/spec/11-appendix-layout-examples.md`)
+The format spec (`docs/spec/06-spool-dir.md`, `docs/spec/10-appendix-layout-examples.md`)
 defines the optional recovery bundle as a plain pax archive named
 `recovery-bundle.tar`, placed at the spool root or written as the first tape
 file before the first slice; readers must skip it when locating the first

@@ -232,7 +232,7 @@ Regular files stand in for tape files, preserving the same logical record order
 and frame semantics as tape mode.
 
 The authoritative concrete directory layout, filename grammar, and reader model
-for spool mode are defined in [07-spool-dir.md](07-spool-dir.md).
+for spool mode are defined in [06-spool-dir.md](06-spool-dir.md).
 
 ### Spool File
 
@@ -243,7 +243,7 @@ file. In spool mode, a file boundary is the equivalent of a tape filemark.
 
 The conceptual model of treating a spool directory as an ordered, tape-like
 sequence of files. Ordering, archive boundaries, and record framing follow
-[07-spool-dir.md](07-spool-dir.md).
+[06-spool-dir.md](06-spool-dir.md).
 
 ## Common Acronyms
 

@@ -97,13 +97,13 @@ build/dev/bin/neotape-plan -C /data -o home.plan photos docs
 ```
 
 Generates the record-oriented plan metadata stream consumed by
-`neotape-archiver --plan`; see [10-plan-metadata.md](10-plan-metadata.md).
+`neotape-archiver --plan`; see [09-plan-metadata.md](../spec/09-plan-metadata.md).
 
 ## Extractor / Reader (reading pipeline)
 
 The extractor and reader are a long-running server / short-lived client pair for
 reading NeoTape archives back. The extractor applies the shared validation rules
-from [05-validation.md](05-validation.md) and reassembles the pax content
+from [04-validation.md](../spec/04-validation.md) and reassembles the pax content
 stream:
 
 ```sh
@@ -152,7 +152,7 @@ build/dev/bin/neotape-inspect --source tape:/dev/nst0
 ```
 
 The compliance report applies the full conformance rules from
-[05-validation.md](05-validation.md), including per-frame structure and
+[04-validation.md](../spec/04-validation.md), including per-frame structure and
 integrity, archive identity consistency, sequence continuity, channel ordering,
 and `archive_end` rules.
 
