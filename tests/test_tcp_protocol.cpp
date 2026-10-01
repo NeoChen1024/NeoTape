@@ -6,6 +6,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <fcntl.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <span>
@@ -53,26 +54,23 @@ constexpr std::array wire_types{
 TEST_CASE("protocol message type bytes are stable", "[unit][protocol]") {
     auto const [type, byte] = GENERATE(from_range(wire_types));
     CAPTURE(byte);
-    Pipe pipe;
-    neotape::tcp::write_message(pipe.fds[1], Message{type});
-    pipe.finish();
-    std::array<uint8_t, 10> actual{};
-    REQUIRE(::read(pipe.fds[0], actual.data(), actual.size()) == 9);
-    std::array<uint8_t, 10> expected{byte, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-    REQUIRE(actual == expected);
-}
+    std::array<uint8_t, 9> const wire{byte, 0, 0, 0, 0, 0, 0, 0, 0};
 
-TEST_CASE("protocol reader accepts fixed message type bytes",
-          "[unit][protocol]") {
-    auto const [type, byte] = GENERATE(from_range(wire_types));
-    Pipe pipe;
-    pipe.send(std::array<uint8_t, 9>{byte, 0, 0, 0, 0, 0, 0, 0, 0});
-    pipe.finish();
-    auto const message = neotape::tcp::read_message(pipe.fds[0]);
+    Pipe written;
+    neotape::tcp::write_message(written.fds[1], Message{type});
+    written.finish();
+    std::array<uint8_t, 10> actual{};
+    REQUIRE(::read(written.fds[0], actual.data(), actual.size()) == 9);
+    REQUIRE(std::ranges::equal(std::span(actual).first(9), wire));
+
+    Pipe received;
+    received.send(wire);
+    received.finish();
+    auto const message = neotape::tcp::read_message(received.fds[0]);
     REQUIRE(message.has_value());
     REQUIRE(message->type == type);
     REQUIRE(message->payload.empty());
-    REQUIRE_FALSE(neotape::tcp::read_message(pipe.fds[0]).has_value());
+    REQUIRE_FALSE(neotape::tcp::read_message(received.fds[0]).has_value());
 }
 
 TEST_CASE("protocol length and payload match a fixed wire vector",
