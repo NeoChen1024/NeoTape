@@ -4,14 +4,12 @@
 #include "neotape/tape.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <format>
-#include <fstream>
 #include <getopt.h>
 #include <iostream>
 #include <memory>
@@ -107,22 +105,6 @@ Options parse_args(int argc, char **argv) {
     return opts;
 }
 
-FrameHeader read_first_spool_frame(const fs::path &path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error(format("open {}", path.string()));
-    }
-
-    std::array<uint8_t, neotape::fixed_header_size> bytes{};
-    if (!in.read(reinterpret_cast<char *>(bytes.data()),
-                 static_cast<std::streamsize>(bytes.size()))) {
-        throw std::runtime_error(
-            format("short header read from {}", path.filename().string()));
-    }
-
-    return neotape::parse_fixed_header(bytes.data(), bytes.size());
-}
-
 template <typename Handler>
 void record_first_frame(vector<string> &issues, uint64_t tapefile_num,
                         const uint8_t *data, std::size_t size,
@@ -146,7 +128,7 @@ vector<string> scan_spool_source(const fs::path &root, Handler &&handle) {
         uint64_t file_num = 0;
         neotape::parse_spool_file_name(file, file_num);
         try {
-            FrameHeader const header = read_first_spool_frame(file);
+            FrameHeader const header = neotape::read_spool_file_header(file);
             handle(FirstFrame{file_num, header});
         } catch (const std::exception &e) {
             issues.push_back(format("tapefile #{} ({}): {}", file_num,

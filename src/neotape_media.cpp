@@ -7,6 +7,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <format>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <unistd.h>
@@ -26,6 +27,15 @@ MediaLocator parse_media(std::string_view text, bool allow_null) {
     throw std::invalid_argument(
         allow_null ? "target must be tape:<device>, spool:<dir>, or null"
                    : "source must be tape:<device> or spool:<dir>");
+}
+
+FrameHeader read_spool_file_header(const fs::path &path) {
+    std::ifstream in(path, std::ios::binary);
+    HeaderBytes bytes{};
+    if (!in.read(reinterpret_cast<char *>(bytes.data()), bytes.size()))
+        throw std::runtime_error(
+            format("short header read from {}", path.string()));
+    return parse_fixed_header(bytes.data(), bytes.size());
 }
 
 namespace {

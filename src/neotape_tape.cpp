@@ -10,7 +10,6 @@
 #include <cstring>
 #include <fcntl.h>
 #include <format>
-#include <fstream>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -51,20 +50,6 @@ fs::path spool_final_path(const fs::path &root, uint64_t file_num,
 
 fs::path spool_temp_path(const fs::path &root, uint64_t file_num) {
     return root / format("{}{:06}.pending", spool_prefix, file_num);
-}
-
-neotape::FrameHeader parse_spool_header_file(const fs::path &path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error(format("open {}", path.string()));
-    }
-
-    std::vector<uint8_t> bytes(neotape::fixed_header_size);
-    if (!in.read(reinterpret_cast<char *>(bytes.data()),
-                 static_cast<std::streamsize>(bytes.size()))) {
-        throw std::runtime_error(format("short read from {}", path.string()));
-    }
-    return neotape::parse_fixed_header(bytes.data(), bytes.size());
 }
 
 int open_fd(const fs::path &path, int flags) {
@@ -315,7 +300,7 @@ void SpoolTapeDevice::finalize_current_file() {
         return;
     }
 
-    auto header = parse_spool_header_file(current_path_);
+    auto header = neotape::read_spool_file_header(current_path_);
     current_block_size_ = neotape::decoded_block_size(header);
     fs::path const final_path =
         spool_final_path(root_, current_file_num_, header);

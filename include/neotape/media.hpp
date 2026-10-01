@@ -13,6 +13,8 @@ MediaLocator parse_media(std::string_view text, bool allow_null = false);
 bool parse_spool_file_name(const std::filesystem::path &path, uint64_t &number);
 std::vector<std::filesystem::path>
 scan_spool_files(const std::filesystem::path &root);
+// Parse the fixed header of the first record in one spool file.
+FrameHeader read_spool_file_header(const std::filesystem::path &path);
 
 enum class RecordEvent { record, filemark, end };
 struct MediaRecord {
