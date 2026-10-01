@@ -14,6 +14,9 @@
 
 namespace {
 
+using neotape::fail;
+using neotape::usage_error;
+
 namespace fs = std::filesystem;
 using std::format;
 using std::string;
@@ -37,11 +40,6 @@ void usage(const char *prog) {
         "       [-B|--output-buffer-size <SIZE>]\n"
         "SIZE accepts K, M, G, or T binary suffixes (for example 4M or 16G).\n",
         prog, prog);
-}
-
-[[noreturn]] void fail(const string &message) {
-    neotape::write_diagnostic(format("mt-pax: {}", message));
-    std::exit(1);
 }
 
 CliOptions parse_args(int argc, char **argv) {
@@ -138,6 +136,7 @@ CliOptions parse_args(int argc, char **argv) {
 } // namespace
 
 int main(int argc, char **argv) {
+    neotape::program_name = "mt-pax";
     try {
         neotape::ensure_utf8_ctype_locale();
         CliOptions opts = parse_args(argc, argv);

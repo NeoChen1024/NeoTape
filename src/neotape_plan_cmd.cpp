@@ -38,6 +38,9 @@
 
 namespace {
 
+using neotape::fail;
+using neotape::usage_error;
+
 // ====================== Planner State ============================
 
 namespace fs = std::filesystem;
@@ -85,11 +88,6 @@ struct ScanTotals {
 };
 
 // ====================== Diagnostics & CLI ========================
-
-[[noreturn]] void fail(const string &message) {
-    std::cerr << format("neotape-plan: {}\n", message);
-    std::exit(1);
-}
 
 void warn(const string &message) {
     std::cerr << format("neotape-plan: warning: {}\n", message);
@@ -838,6 +836,7 @@ void run_plan(Options &opts) {
 } // namespace
 
 int main(int argc, char **argv) {
+    neotape::program_name = "neotape-plan";
     try {
         Options opts = parse_args(argc, argv);
         run_plan(opts);

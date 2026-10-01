@@ -26,6 +26,9 @@
 
 namespace {
 
+using neotape::fail;
+using neotape::usage_error;
+
 using neotape::connect_to_server;
 using neotape::FdGuard;
 using neotape::uint64_to_le_bytes;
@@ -71,25 +74,15 @@ string_view target_kind_name(TargetLocator::Kind kind) {
 void report_volume_capacity_reached(TargetLocator::Kind kind,
                                     uint64_t committed_frames) {
     if (kind == TargetLocator::tape) {
-        neotape::write_diagnostic(
-            format("neotape-write: tape volume boundary reached: committed_frames={}",
-                   committed_frames));
+        neotape::write_diagnostic(format(
+            "neotape-write: tape volume boundary reached: committed_frames={}",
+            committed_frames));
         return;
     }
     neotape::write_diagnostic(
         format("neotape-write: volume capacity reached: target={} "
                "committed_frames={}",
                target_kind_name(kind), committed_frames));
-}
-
-[[noreturn]] void fail(const string &msg) {
-    neotape::write_diagnostic(format("neotape-write: {}", msg));
-    std::exit(1);
-}
-
-[[noreturn]] void usage_error(const string &msg) {
-    std::cerr << format("neotape-write: {}\n", msg);
-    std::exit(2);
 }
 
 void usage(const char *prog) {
@@ -405,6 +398,7 @@ uint64_t write_tape_recovery_bundle(mt::TapeDevice &dev, const fs::path &source,
 } // namespace
 
 int main(int argc, char **argv) {
+    neotape::program_name = "neotape-write";
     // Report socket failures through the session rather than SIGPIPE.
     std::signal(SIGPIPE, SIG_IGN);
 

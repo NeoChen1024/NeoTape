@@ -12,18 +12,11 @@
 
 namespace {
 
+using neotape::fail;
+using neotape::usage_error;
+
 using std::format;
 using std::string;
-
-[[noreturn]] void fail(const string &msg) {
-    std::cerr << format("neotape-extractor: {}\n", msg);
-    std::exit(1);
-}
-
-[[noreturn]] void usage_error(const string &msg) {
-    std::cerr << format("neotape-extractor: {}\n", msg);
-    std::exit(2);
-}
 
 void usage(const char *prog) {
     std::cerr << format(
@@ -104,6 +97,7 @@ Options parse_args(int argc, char **argv) {
 } // namespace
 
 int main(int argc, char **argv) {
+    neotape::program_name = "neotape-extractor";
     try {
         neotape::ensure_utf8_ctype_locale();
         Options opts = parse_args(argc, argv);

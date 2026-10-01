@@ -45,6 +45,18 @@ void write_diagnostic(string_view message) {
     }
 }
 
+std::string_view program_name = "neotape";
+
+void fail(string_view message) {
+    write_diagnostic(std::format("{}: {}", program_name, message));
+    std::exit(1);
+}
+
+void usage_error(string_view message) {
+    write_diagnostic(std::format("{}: {}", program_name, message));
+    std::exit(2);
+}
+
 void write_progress(string_view message) {
     std::scoped_lock const lock(diagnostic_mutex);
     std::cerr << '\r' << message;

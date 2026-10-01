@@ -15,6 +15,9 @@
 
 namespace {
 
+using neotape::fail;
+using neotape::usage_error;
+
 using std::format;
 using std::string;
 
@@ -28,11 +31,6 @@ struct Options {
     std::optional<string> sign_passphrase_file;
     bool debug = false;
 };
-
-[[noreturn]] void fail(const string &msg) {
-    neotape::write_diagnostic(format("neotape-archiver: {}", msg));
-    std::exit(1);
-}
 
 void usage(const char *prog) {
     std::cerr << format(
@@ -70,8 +68,8 @@ Options parse_args(int argc, char **argv) {
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "l:b:n:C:P:j:B:p:r:dk:K:vxh",
-                            long_opts, nullptr)) != -1) {
+    while ((c = getopt_long(argc, argv, "l:b:n:C:P:j:B:p:r:dk:K:vxh", long_opts,
+                            nullptr)) != -1) {
         try {
             switch (c) {
             case 'l':
@@ -164,6 +162,7 @@ Options parse_args(int argc, char **argv) {
 } // namespace
 
 int main(int argc, char **argv) {
+    neotape::program_name = "neotape-archiver";
     try {
         neotape::ensure_utf8_ctype_locale();
         Options opts = parse_args(argc, argv);

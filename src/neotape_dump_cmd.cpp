@@ -1,3 +1,4 @@
+#include "neotape/common.hpp"
 #include "neotape/format.hpp"
 #include "neotape/media.hpp"
 #include "neotape/tape.hpp"
@@ -17,6 +18,9 @@
 
 namespace {
 
+using neotape::fail;
+using neotape::usage_error;
+
 using std::format;
 using std::string;
 
@@ -27,16 +31,6 @@ struct Options {
     fs::path target;
     bool verbose = false;
 };
-
-[[noreturn]] void fail(const string &message) {
-    std::cerr << format("neotape-dump: {}\n", message);
-    std::exit(1);
-}
-
-[[noreturn]] void usage_error(const string &message) {
-    std::cerr << format("neotape-dump: {}\n", message);
-    std::exit(2);
-}
 
 void usage(const char *prog) {
     std::cerr << format("usage: {} -s|--source <tape:/dev/nst0> "
@@ -177,6 +171,7 @@ int do_dump(const Options &opts) {
 } // namespace
 
 int main(int argc, char **argv) {
+    neotape::program_name = "neotape-dump";
     try {
         return do_dump(parse_args(argc, argv));
     } catch (const std::exception &error) {

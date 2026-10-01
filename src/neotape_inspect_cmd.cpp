@@ -26,6 +26,9 @@
 
 namespace {
 
+using neotape::fail;
+using neotape::usage_error;
+
 using neotape::ChannelType;
 using neotape::FrameHeader;
 using neotape::FrameValidator;
@@ -51,16 +54,6 @@ struct Options {
     vector<string> verify_pubkey_paths;
     vector<neotape::SignifyPublicKey> verify_keys;
 };
-
-[[noreturn]] void fail(const string &msg) {
-    std::cerr << format("neotape-inspect: {}\n", msg);
-    std::exit(1);
-}
-
-[[noreturn]] void usage_error(const string &msg) {
-    std::cerr << format("neotape-inspect: {}\n", msg);
-    std::exit(2);
-}
 
 void usage(const char *prog) {
     std::cerr << format("usage: {} -s|--source <spool:./dir|tape:/dev/nst0>\n"
@@ -342,6 +335,7 @@ int do_inspect(const Options &opts) {
 } // namespace
 
 int main(int argc, char **argv) {
+    neotape::program_name = "neotape-inspect";
     try {
         Options opts = parse_args(argc, argv);
         for (const string &path : opts.verify_pubkey_paths) {

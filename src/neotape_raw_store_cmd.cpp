@@ -21,6 +21,9 @@
 
 namespace {
 
+using neotape::fail;
+using neotape::usage_error;
+
 using std::format;
 using std::string;
 
@@ -34,16 +37,6 @@ struct Options {
     std::optional<string> sign_passphrase_file;
     bool debug = false;
 };
-
-[[noreturn]] void fail(const string &msg) {
-    neotape::write_diagnostic(format("neotape-raw-store: {}", msg));
-    std::exit(1);
-}
-
-[[noreturn]] void usage_error(const string &msg) {
-    std::cerr << format("neotape-raw-store: {}\n", msg);
-    std::exit(2);
-}
 
 [[noreturn]] void fail_errno(const string &context) {
     fail(format("{}: {}", context, std::strerror(errno)));
@@ -226,6 +219,7 @@ neotape::VolumeServerSummary run_raw_store(FILE *input, const Options &opts) {
 } // namespace
 
 int main(int argc, char **argv) {
+    neotape::program_name = "neotape-raw-store";
     try {
         Options opts = parse_args(argc, argv);
         neotape::g_debug = opts.debug;

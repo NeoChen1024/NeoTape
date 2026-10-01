@@ -14,6 +14,12 @@ namespace neotape {
 
 extern bool g_debug;
 
+// Executable name that prefixes fatal diagnostics; each main() sets it first.
+extern std::string_view program_name;
+// Report and exit: status 1 for runtime failures, 2 for usage errors.
+[[noreturn]] void fail(std::string_view message);
+[[noreturn]] void usage_error(std::string_view message);
+
 // Serialize diagnostics with the live progress display.  Ordinary messages
 // terminate an active progress line before they are written.
 void write_diagnostic(std::string_view message);

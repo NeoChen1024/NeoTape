@@ -1,3 +1,4 @@
+#include "neotape/common.hpp"
 #include "neotape/format.hpp"
 #include "neotape/media.hpp"
 #include "neotape/tape.hpp"
@@ -20,6 +21,9 @@
 #include <vector>
 
 namespace {
+
+using neotape::fail;
+using neotape::usage_error;
 
 using neotape::FrameHeader;
 using std::format;
@@ -60,16 +64,6 @@ struct ArchiveEntry {
     string archive_label;
     uint64_t first_tapefile_num = 0;
 };
-
-[[noreturn]] void fail(const string &msg) {
-    std::cerr << format("neotape-scan: {}\n", msg);
-    std::exit(1);
-}
-
-[[noreturn]] void usage_error(const string &msg) {
-    std::cerr << format("neotape-scan: {}\n", msg);
-    std::exit(2);
-}
 
 void usage(const char *prog) {
     std::cerr << format("usage: {} -s|--source <spool:./dir|tape:/dev/nst0>\n"
@@ -263,6 +257,7 @@ int do_scan(const Options &opts) {
 } // namespace
 
 int main(int argc, char **argv) {
+    neotape::program_name = "neotape-scan";
     try {
         Options const opts = parse_args(argc, argv);
         return do_scan(opts);

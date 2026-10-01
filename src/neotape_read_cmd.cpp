@@ -22,6 +22,9 @@
 
 namespace {
 
+using neotape::fail;
+using neotape::usage_error;
+
 using neotape::connect_to_server;
 using neotape::FdGuard;
 using neotape::tcp::Message;
@@ -37,16 +40,6 @@ struct Options {
     SourceLocator source;
     string connect_address;
 };
-
-[[noreturn]] void fail(const string &msg) {
-    std::cerr << format("neotape-read: {}\n", msg);
-    std::exit(1);
-}
-
-[[noreturn]] void usage_error(const string &msg) {
-    std::cerr << format("neotape-read: {}\n", msg);
-    std::exit(2);
-}
 
 void usage(const char *prog) {
     std::cerr << format(
@@ -93,6 +86,7 @@ Options parse_args(int argc, char **argv) {
 } // namespace
 
 int main(int argc, char **argv) {
+    neotape::program_name = "neotape-read";
     std::signal(SIGPIPE, SIG_IGN);
 
     try {
