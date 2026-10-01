@@ -233,12 +233,13 @@ MediaRecord RecordReader::next() {
                     try {
                         auto const *data =
                             reinterpret_cast<const uint8_t *>(buffer_.data());
-                        auto const header = parse_fixed_header(data, n);
-                        if (verify_frame_hash(data, n, header.frame_hash))
+                        auto const frame = check_frame(data, n);
+                        if (frame.hash_ok)
                             tape_read_size_ =
-                                header.channel_type == ChannelType::ARCHIVE_END
+                                frame.header.channel_type ==
+                                        ChannelType::ARCHIVE_END
                                     ? max_block_size
-                                    : decoded_block_size(header);
+                                    : decoded_block_size(frame.header);
                     } catch (const std::exception &) {
                         // Non-NeoTape prefixes and unavailable headers do not
                         // establish a new record size.
@@ -317,9 +318,9 @@ MediaRecord RecordReader::next() {
     try {
         auto const *data =
             reinterpret_cast<const uint8_t *>(result.record.data());
-        auto header = parse_fixed_header(data, result.record.size());
-        if (verify_frame_hash(data, result.record.size(), header.frame_hash))
-            valid_header = std::move(header);
+        auto frame = check_frame(data, result.record.size());
+        if (frame.hash_ok)
+            valid_header = std::move(frame.header);
     } catch (const std::exception &) {
         // Retain known framing across an unavailable header.
     }

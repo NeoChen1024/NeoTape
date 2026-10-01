@@ -77,31 +77,11 @@ struct ExtractorState {
 //   - the frame is still structurally validated for sequence continuity
 //
 // On archive_end, sets state.saw_archive_end and the caller should return.
-[[nodiscard]] bool process_frame(ExtractorState &state,
-                                 const vector<std::byte> &record,
-                                 FILE *output) {
-    const auto *data = reinterpret_cast<const uint8_t *>(record.data());
-    FrameHeader header;
-    try {
-        header = parse_fixed_header(data, record.size());
-    } catch (const std::exception &error) {
-        std::cerr << format("neotape-extractor: {}{}\n",
-                            state.salvage ? "salvage cannot skip frame: " : "",
-                            error.what());
-        return false;
-    }
-
+[[nodiscard]] bool process_frame(ExtractorState &state, const uint8_t *data,
+                                 const CheckedFrame &frame, FILE *output) {
+    FrameHeader const &header = frame.header;
     uint64_t const prev_slice_seq = state.validator.current_slice_seq_num;
-    bool const hash_ok =
-        verify_frame_hash(data, record.size(), header.frame_hash);
-    bool const signature_present =
-        std::ranges::any_of(header.signature, [](uint8_t b) { return b != 0; });
-    if (signature_present != has_frame_flag_signed(header.flags) ||
-        (state.require_signed && !has_frame_flag_signed(header.flags))) {
-        std::cerr << "neotape-extractor: signature policy violation\n";
-        return false;
-    }
-    if (!hash_ok && !state.verify_keys.empty() &&
+    if (!frame.hash_ok && !state.verify_keys.empty() &&
         has_frame_flag_signed(header.flags)) {
         std::cerr << "neotape-extractor: signed frame hash mismatch\n";
         return false;
@@ -123,10 +103,8 @@ struct ExtractorState {
     }
 
     auto const validation =
-        state.salvage ? state.validator.validate_salvage_frame(header, data,
-                                                               record.size())
-                      : state.validator.validate_restore_frame(header, data,
-                                                               record.size());
+        state.salvage ? state.validator.validate_salvage_frame(frame, data)
+                      : state.validator.validate_restore_frame(frame, data);
     if (validation.status == RestoreFrameValidationStatus::fatal) {
         std::cerr << format("neotape-extractor: {}{}\n",
                             state.salvage ? "salvage skipped frame: " : "",
@@ -198,9 +176,15 @@ struct ExtractorState {
             switch (resp->type) {
             case MessageType::frame_record: {
                 NEOTAPE_DEBUG("extractor: received frame_record\n");
+                const auto *data =
+                    reinterpret_cast<const uint8_t *>(resp->payload.data());
                 bool accepted = false;
+                uint64_t gseq = 0;
                 try {
-                    accepted = process_frame(state, resp->payload, output);
+                    CheckedFrame const frame =
+                        check_frame(data, resp->payload.size());
+                    gseq = frame.header.global_frame_seq_num;
+                    accepted = process_frame(state, data, frame, output);
                 } catch (const std::exception &error) {
                     std::cerr
                         << format("neotape-extractor: {}\n", error.what());
@@ -210,13 +194,6 @@ struct ExtractorState {
                     send_error(client, "frame validation failed");
                     return false;
                 }
-
-                // Parse header again to get the global seq for the ack.
-                const auto *data =
-                    reinterpret_cast<const uint8_t *>(resp->payload.data());
-                const FrameHeader header =
-                    parse_fixed_header(data, resp->payload.size());
-                const uint64_t gseq = header.global_frame_seq_num;
 
                 if (state.saw_archive_end) {
                     NEOTAPE_DEBUG("extractor: ack archive_end global_seq={}\n",

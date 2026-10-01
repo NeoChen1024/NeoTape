@@ -49,10 +49,9 @@ int main(int argc, char **argv) {
             }
             auto const *data =
                 reinterpret_cast<const uint8_t *>(record.record.data());
-            neotape::FrameHeader header;
+            neotape::CheckedFrame frame;
             try {
-                header =
-                    neotape::parse_fixed_header(data, record.record.size());
+                frame = neotape::check_frame(data, record.record.size());
             } catch (...) {
                 if (saw_frame)
                     throw;
@@ -65,9 +64,9 @@ int main(int argc, char **argv) {
             if (ended)
                 throw std::runtime_error("unexpected record after archive_end");
             saw_frame = true;
-            if (!neotape::verify_frame_hash(data, record.record.size(),
-                                            header.frame_hash))
+            if (!frame.hash_ok)
                 throw std::runtime_error("readback frame hash mismatch");
+            auto const &header = frame.header;
             auto signature =
                 neotape::validate_frame_signature(header, {key}, true);
             if (signature.error)

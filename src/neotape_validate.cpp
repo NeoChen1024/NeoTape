@@ -54,13 +54,12 @@ void FrameValidator::seed_for_stream_start(const FrameHeader &header) {
             header.channel_frame_seq_num;
 }
 
-void FrameValidator::remember_record(const FrameHeader &header,
-                                     const uint8_t *data, std::size_t size,
-                                     bool skip_hash) {
-    if (skip_hash)
+void FrameValidator::remember_record(const CheckedFrame &frame) {
+    if (!frame.hash_ok)
         return;
-    replay_history_.emplace_back(header.global_frame_seq_num,
-                                 compute_replay_hash(data, size));
+    replay_history_.push_back({frame.header.global_frame_seq_num,
+                               frame.header.volume_seq_num,
+                               frame.header.frame_hash});
     constexpr std::size_t retry_history_records = 8192;
     if (replay_history_.size() > retry_history_records)
         replay_history_.pop_front();
@@ -68,21 +67,22 @@ void FrameValidator::remember_record(const FrameHeader &header,
 
 void FrameValidator::begin_connection() { replay_next_.reset(); }
 
-std::optional<string> FrameValidator::check_replay(const FrameHeader &header,
-                                                   const uint8_t *raw_data,
-                                                   std::size_t record_size,
-                                                   bool skip_hash) {
+std::optional<string> FrameValidator::check_replay(const CheckedFrame &frame,
+                                                   const uint8_t *data) {
+    FrameHeader const &header = frame.header;
     if (header.global_frame_seq_num < expected_global_frame_seq) {
-        if (skip_hash ||
-            !verify_frame_hash(raw_data, record_size, header.frame_hash))
+        if (!frame.hash_ok)
             return "replay failed frame integrity";
         auto const found =
             std::ranges::find_if(replay_history_, [&](const auto &entry) {
-                return entry.first == header.global_frame_seq_num;
+                return entry.global_seq == header.global_frame_seq_num;
             });
         if (found == replay_history_.end())
             return "cannot verify replay: prior comparison state unavailable";
-        if (found->second != compute_replay_hash(raw_data, record_size))
+        // Every byte except the volume ordinal, signature, and hash must
+        // match: re-hash the retry as if written on the original volume.
+        if (frame_hash_with_volume_seq(data, decoded_block_size(header),
+                                       found->volume_seq) != found->frame_hash)
             return "conflicting replay record";
         if (replay_next_ && *replay_next_ != header.global_frame_seq_num)
             return "non-contiguous replay suffix";
@@ -97,16 +97,12 @@ std::optional<string> FrameValidator::check_replay(const FrameHeader &header,
     return std::nullopt;
 }
 
-std::optional<string> FrameValidator::validate(const FrameHeader &header,
-                                               const uint8_t *raw_data,
-                                               std::size_t record_size,
-                                               bool skip_hash) {
+std::optional<string> FrameValidator::validate(const CheckedFrame &frame,
+                                               const uint8_t *data,
+                                               bool allow_bad_hash) {
+    FrameHeader const &header = frame.header;
     last_was_replay = false;
-    bool const signature_present =
-        std::ranges::any_of(header.signature, [](uint8_t b) { return b != 0; });
-    if (signature_present != has_frame_flag_signed(header.flags))
-        return "SIGNED flag and signature bytes are inconsistent";
-    if (auto error = check_replay(header, raw_data, record_size, skip_hash))
+    if (auto error = check_replay(frame, data))
         return error;
     if (last_was_replay)
         return std::nullopt;
@@ -119,20 +115,12 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
     bool const had_previous_frame = saw_any_frame;
 
     const uint32_t block_size = decoded_block_size(header);
-
-    // --- record size match ---
-    if (record_size != block_size) {
-        return format("record size {} != decoded block size {}", record_size,
+    if (!frame.size_ok)
+        return format("record size does not match decoded block size {}",
                       block_size);
-    }
-
-    // --- frame_hash (may be skipped for advisory metadata frames) ---
-    if (!skip_hash) {
-        if (!verify_frame_hash(raw_data, record_size, header.frame_hash)) {
-            return format("frame hash mismatch at global_seq={}",
-                          header.global_frame_seq_num);
-        }
-    }
+    if (!frame.hash_ok && !allow_bad_hash)
+        return format("frame hash mismatch at global_seq={}",
+                      header.global_frame_seq_num);
 
     // --- volume_block_size consistency ---
     if (volume_block_size == 0) {
@@ -172,19 +160,8 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
                           "at global_seq={}",
                           header.global_frame_seq_num);
         }
-        if (!has_frame_flag_clean_end(header.flags)) {
-            return "archive_end frame missing CLEAN_END";
-        }
-        if (header.slice_seq_num != 0) {
-            return format("archive_end slice_seq_num {} != 0",
-                          header.slice_seq_num);
-        }
-        if (header.channel_frame_seq_num != 0) {
-            return format("archive_end channel_frame_seq_num {} != 0",
-                          header.channel_frame_seq_num);
-        }
         saw_archive_end = true;
-        remember_record(header, raw_data, record_size, skip_hash);
+        remember_record(frame);
         return std::nullopt;
     }
 
@@ -230,13 +207,6 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
     next_channel_seq[index] = header.channel_frame_seq_num + 1;
     channel_ended[index] = has_frame_flag_end(header.flags);
 
-    uint32_t const payload_capacity = block_size - fixed_header_size;
-    if (!has_frame_flag_end(header.flags) &&
-        header.frame_payload_size != payload_capacity) {
-        return format("non-END {} payload must fill the record",
-                      channel_type_name(header.channel_type));
-    }
-
     if (header.channel_type == ChannelType::CH_METADATA) {
         if (saw_non_metadata_in_slice) {
             return "metadata frame after content in same slice";
@@ -245,74 +215,49 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
         saw_non_metadata_in_slice = true;
     }
 
-    remember_record(header, raw_data, record_size, skip_hash);
-    return std::nullopt; // OK
+    remember_record(frame);
+    return std::nullopt;
 }
 
 RestoreFrameValidation
-FrameValidator::validate_restore_frame(const FrameHeader &header,
-                                       const uint8_t *raw_data,
-                                       std::size_t record_size) {
-    if (header.channel_type == ChannelType::CH_METADATA) {
-        bool const hash_ok =
-            verify_frame_hash(raw_data, record_size, header.frame_hash);
-        if (auto err = validate(header, raw_data, record_size, !hash_ok);
-            err.has_value()) {
-            return make_restore_validation(RestoreFrameValidationStatus::fatal,
-                                           std::move(*err));
-        }
-        if (!hash_ok) {
-            return make_restore_validation(
-                RestoreFrameValidationStatus::warning,
-                format("metadata frame hash mismatch at global_seq={}",
-                       header.global_frame_seq_num));
-        }
-        return make_restore_validation(RestoreFrameValidationStatus::ok);
-    }
-
-    if (auto err = validate(header, raw_data, record_size); err.has_value()) {
+FrameValidator::validate_restore_frame(const CheckedFrame &frame,
+                                       const uint8_t *data) {
+    // A metadata-only hash failure is advisory once the frame is otherwise
+    // structurally placed in the stream.
+    bool const advisory = frame.header.channel_type == ChannelType::CH_METADATA;
+    if (auto err = validate(frame, data, advisory))
         return make_restore_validation(RestoreFrameValidationStatus::fatal,
                                        std::move(*err));
-    }
+    if (!frame.hash_ok)
+        return make_restore_validation(
+            RestoreFrameValidationStatus::warning,
+            format("metadata frame hash mismatch at global_seq={}",
+                   frame.header.global_frame_seq_num));
     return make_restore_validation(RestoreFrameValidationStatus::ok);
 }
 
 RestoreFrameValidation
-FrameValidator::validate_salvage_frame(const FrameHeader &header,
-                                       const uint8_t *raw_data,
-                                       std::size_t record_size) {
+FrameValidator::validate_salvage_frame(const CheckedFrame &frame,
+                                       const uint8_t *data) {
+    FrameHeader const &header = frame.header;
     last_was_replay = false;
-    uint32_t const block_size = decoded_block_size(header);
-    if (record_size != block_size) {
+    if (!frame.size_ok || !frame.hash_ok)
         return make_restore_validation(
             RestoreFrameValidationStatus::fatal,
-            format("record size {} != decoded block size {}", record_size,
-                   block_size));
-    }
-    if (!verify_frame_hash(raw_data, record_size, header.frame_hash)) {
-        return make_restore_validation(
-            RestoreFrameValidationStatus::fatal,
-            format("frame hash mismatch at global_seq={}",
+            format("frame {} at global_seq={}",
+                   frame.size_ok ? "hash mismatch" : "size mismatch",
                    header.global_frame_seq_num));
-    }
-    bool const signature_present = std::ranges::any_of(
-        header.signature, [](uint8_t byte) { return byte != 0; });
-    if (has_frame_flag_signed(header.flags) != signature_present) {
-        return make_restore_validation(
-            RestoreFrameValidationStatus::fatal,
-            "SIGNED flag and signature bytes are inconsistent");
-    }
     if (archive_uuid != header.archive_uuid) {
         replay_history_.clear();
         replay_next_.reset();
         expected_global_frame_seq = 0;
         archive_uuid = header.archive_uuid;
     }
-    if (auto error = check_replay(header, raw_data, record_size, false))
+    if (auto error = check_replay(frame, data))
         return make_restore_validation(RestoreFrameValidationStatus::fatal,
                                        *error);
     if (!last_was_replay) {
-        remember_record(header, raw_data, record_size, false);
+        remember_record(frame);
         expected_global_frame_seq = header.global_frame_seq_num + 1;
     }
     return make_restore_validation(RestoreFrameValidationStatus::ok);

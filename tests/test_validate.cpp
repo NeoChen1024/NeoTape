@@ -62,26 +62,33 @@ FrameHeader make_archive_end_header(uint64_t global_seq_num) {
 vector<std::byte> build_record(FrameHeader header,
                                const vector<std::byte> &payload = {}) {
     REQUIRE(payload.size() == header.frame_payload_size);
-
     vector<std::byte> record(neotape::decoded_block_size(header), std::byte{0});
-    neotape::HeaderBytes bytes = neotape::serialize_frame_header(header);
-    std::transform(bytes.begin(), bytes.end(), record.begin(),
-                   [](uint8_t value) { return static_cast<std::byte>(value); });
-    std::copy(payload.begin(), payload.end(),
-              record.begin() +
-                  static_cast<std::ptrdiff_t>(neotape::fixed_header_size));
-
-    header.frame_hash = neotape::compute_frame_hash(
-        reinterpret_cast<const uint8_t *>(record.data()), record.size());
-    bytes = neotape::serialize_frame_header(header);
-    std::transform(bytes.begin(), bytes.end(), record.begin(),
-                   [](uint8_t value) { return static_cast<std::byte>(value); });
+    std::ranges::copy(payload, record.begin() + neotape::fixed_header_size);
+    neotape::finalize_record(header, record);
     return record;
 }
 
-FrameHeader parse_header(const vector<std::byte> &record) {
-    return neotape::parse_fixed_header(
-        reinterpret_cast<const uint8_t *>(record.data()), record.size());
+const uint8_t *bytes(const vector<std::byte> &record) {
+    return reinterpret_cast<const uint8_t *>(record.data());
+}
+
+neotape::CheckedFrame check(const vector<std::byte> &record) {
+    return neotape::check_frame(bytes(record), record.size());
+}
+
+std::optional<string> feed(FrameValidator &validator,
+                           const vector<std::byte> &record) {
+    return validator.validate(check(record), bytes(record));
+}
+
+RestoreFrameValidation restore(FrameValidator &validator,
+                               const vector<std::byte> &record) {
+    return validator.validate_restore_frame(check(record), bytes(record));
+}
+
+RestoreFrameValidation salvage(FrameValidator &validator,
+                               const vector<std::byte> &record) {
+    return validator.validate_salvage_frame(check(record), bytes(record));
 }
 
 TEST_CASE("validate: restore mode metadata hash warning",
@@ -96,12 +103,8 @@ TEST_CASE("validate: restore mode metadata hash warning",
                      metadata_payload);
     metadata_record[neotape::fixed_header_size] ^= std::byte{0x01};
 
-    FrameHeader const metadata_header = parse_header(metadata_record);
     RestoreFrameValidation const metadata_result =
-        validator.validate_restore_frame(
-            metadata_header,
-            reinterpret_cast<const uint8_t *>(metadata_record.data()),
-            metadata_record.size());
+        restore(validator, metadata_record);
     REQUIRE(metadata_result.status == RestoreFrameValidationStatus::warning);
     REQUIRE_THAT(metadata_result.message, Catch::Matchers::ContainsSubstring(
                                               "metadata frame hash mismatch"));
@@ -112,21 +115,13 @@ TEST_CASE("validate: restore mode metadata hash warning",
         build_record(make_content_header(1, 0, 0, content_payload.size(),
                                          neotape::frame_flag_end),
                      content_payload);
-    FrameHeader const content_header = parse_header(content_record);
     RestoreFrameValidation const content_result =
-        validator.validate_restore_frame(
-            content_header,
-            reinterpret_cast<const uint8_t *>(content_record.data()),
-            content_record.size());
+        restore(validator, content_record);
     REQUIRE(content_result.status == RestoreFrameValidationStatus::ok);
 
     auto archive_end_record = build_record(make_archive_end_header(2));
-    FrameHeader const archive_end_header = parse_header(archive_end_record);
     RestoreFrameValidation const archive_end_result =
-        validator.validate_restore_frame(
-            archive_end_header,
-            reinterpret_cast<const uint8_t *>(archive_end_record.data()),
-            archive_end_record.size());
+        restore(validator, archive_end_record);
     REQUIRE(archive_end_result.status == RestoreFrameValidationStatus::ok);
     REQUIRE(validator.saw_archive_end);
 }
@@ -140,10 +135,7 @@ TEST_CASE("validate: restore mode metadata structural failure is fatal",
         build_record(make_metadata_header(0, 0, 0, metadata_payload.size(),
                                           neotape::frame_flag_end),
                      metadata_payload);
-    auto first_result = validator.validate_restore_frame(
-        parse_header(first_record),
-        reinterpret_cast<const uint8_t *>(first_record.data()),
-        first_record.size());
+    auto first_result = restore(validator, first_record);
     REQUIRE(first_result.status == RestoreFrameValidationStatus::ok);
 
     FrameHeader second_header = make_metadata_header(
@@ -151,10 +143,7 @@ TEST_CASE("validate: restore mode metadata structural failure is fatal",
     second_header.archive_uuid = "00000000-0000-4000-8000-000000000999";
     auto second_record = build_record(second_header, metadata_payload);
     RestoreFrameValidation const second_result =
-        validator.validate_restore_frame(
-            parse_header(second_record),
-            reinterpret_cast<const uint8_t *>(second_record.data()),
-            second_record.size());
+        restore(validator, second_record);
     REQUIRE(second_result.status == RestoreFrameValidationStatus::fatal);
     REQUIRE_THAT(second_result.message,
                  Catch::Matchers::ContainsSubstring("archive_uuid mismatch"));
@@ -169,9 +158,7 @@ TEST_CASE(
     auto record = build_record(
         make_content_header(0, 0, 1, payload.size(), neotape::frame_flag_end),
         payload);
-    auto const error = validator.validate(
-        parse_header(record), reinterpret_cast<const uint8_t *>(record.data()),
-        record.size());
+    auto const error = feed(validator, record);
     REQUIRE(error.has_value());
     REQUIRE_THAT(*error, Catch::Matchers::ContainsSubstring(
                              "channel_frame_seq_num 1 != expected 0"));
@@ -186,20 +173,12 @@ TEST_CASE(
     auto first_record = build_record(
         make_content_header(0, 0, 0, payload.size(), neotape::frame_flag_end),
         payload);
-    REQUIRE(
-        !validator
-             .validate(parse_header(first_record),
-                       reinterpret_cast<const uint8_t *>(first_record.data()),
-                       first_record.size())
-             .has_value());
+    REQUIRE(!feed(validator, first_record).has_value());
 
     auto second_record = build_record(
         make_content_header(1, 1, 1, payload.size(), neotape::frame_flag_end),
         payload);
-    auto const error = validator.validate(
-        parse_header(second_record),
-        reinterpret_cast<const uint8_t *>(second_record.data()),
-        second_record.size());
+    auto const error = feed(validator, second_record);
     REQUIRE(error.has_value());
     REQUIRE_THAT(*error, Catch::Matchers::ContainsSubstring(
                              "channel_frame_seq_num 1 != expected 0"));
@@ -213,18 +192,10 @@ TEST_CASE("validate: validator rejects archive end without preceding end",
                                     std::byte{'b'});
     auto content_record =
         build_record(make_content_header(0, 0, 0, payload.size(), 0), payload);
-    REQUIRE(
-        !validator
-             .validate(parse_header(content_record),
-                       reinterpret_cast<const uint8_t *>(content_record.data()),
-                       content_record.size())
-             .has_value());
+    REQUIRE(!feed(validator, content_record).has_value());
 
     auto archive_end_record = build_record(make_archive_end_header(1));
-    auto const error = validator.validate(
-        parse_header(archive_end_record),
-        reinterpret_cast<const uint8_t *>(archive_end_record.data()),
-        archive_end_record.size());
+    auto const error = feed(validator, archive_end_record);
     REQUIRE(error.has_value());
     REQUIRE_THAT(*error,
                  Catch::Matchers::ContainsSubstring(
@@ -239,20 +210,12 @@ TEST_CASE("validate: validator rejects multiple groups in same slice",
     auto first_record = build_record(
         make_content_header(0, 0, 0, payload.size(), neotape::frame_flag_end),
         payload);
-    REQUIRE(
-        !validator
-             .validate(parse_header(first_record),
-                       reinterpret_cast<const uint8_t *>(first_record.data()),
-                       first_record.size())
-             .has_value());
+    REQUIRE(!feed(validator, first_record).has_value());
 
     auto second_record = build_record(
         make_content_header(1, 0, 0, payload.size(), neotape::frame_flag_end),
         payload);
-    auto const error = validator.validate(
-        parse_header(second_record),
-        reinterpret_cast<const uint8_t *>(second_record.data()),
-        second_record.size());
+    auto const error = feed(validator, second_record);
     REQUIRE(error.has_value());
     REQUIRE_THAT(*error, Catch::Matchers::ContainsSubstring(
                              "CH_CONTENT frame after channel END"));
@@ -266,24 +229,16 @@ TEST_CASE("validate: validator seed accepts volume local start and rejects gap",
     vector<std::byte> const full_payload(payload_capacity, std::byte{'s'});
     auto first_record = build_record(
         make_content_header(42, 3, 7, payload_capacity, 0), full_payload);
-    FrameHeader const first_header = parse_header(first_record);
+    FrameHeader const first_header = check(first_record).header;
     validator.seed_for_stream_start(first_header);
-    REQUIRE(
-        !validator
-             .validate(first_header,
-                       reinterpret_cast<const uint8_t *>(first_record.data()),
-                       first_record.size())
-             .has_value());
+    REQUIRE(!feed(validator, first_record).has_value());
 
     vector<std::byte> const final_payload = {std::byte{'x'}};
     auto gap_record =
         build_record(make_content_header(44, 3, 8, final_payload.size(),
                                          neotape::frame_flag_end),
                      final_payload);
-    auto const error =
-        validator.validate(parse_header(gap_record),
-                           reinterpret_cast<const uint8_t *>(gap_record.data()),
-                           gap_record.size());
+    auto const error = feed(validator, gap_record);
     REQUIRE(error.has_value());
     REQUIRE_THAT(*error, Catch::Matchers::ContainsSubstring(
                              "global_frame_seq_num 44 != expected 43"));
@@ -299,15 +254,11 @@ TEST_CASE("validate: salvage relaxes consistency but keeps integrity",
     header.archive_uuid = "00000000-0000-4000-8000-999999999999";
     auto record = build_record(header, payload);
 
-    RestoreFrameValidation result = validator.validate_salvage_frame(
-        parse_header(record), reinterpret_cast<const uint8_t *>(record.data()),
-        record.size());
+    RestoreFrameValidation result = salvage(validator, record);
     REQUIRE(result.status == RestoreFrameValidationStatus::ok);
 
     record[neotape::fixed_header_size] ^= std::byte{1};
-    result = validator.validate_salvage_frame(
-        parse_header(record), reinterpret_cast<const uint8_t *>(record.data()),
-        record.size());
+    result = salvage(validator, record);
     REQUIRE(result.status == RestoreFrameValidationStatus::fatal);
     REQUIRE_THAT(result.message,
                  Catch::Matchers::ContainsSubstring("frame hash mismatch"));
@@ -322,36 +273,14 @@ TEST_CASE("validate: replayed end marker does not reopen archive",
         build_record(make_content_header(0, 0, 0, 0, neotape::frame_flag_end));
     auto ending = build_record(make_archive_end_header(1));
     for (auto const &record : {content, ending, content, ending}) {
-        REQUIRE_FALSE(validator.validate(
-            parse_header(record),
-            reinterpret_cast<const uint8_t *>(record.data()), record.size()));
+        REQUIRE_FALSE(feed(validator, record));
     }
     REQUIRE(validator.last_was_replay);
     REQUIRE(validator.expected_global_frame_seq == 2);
     REQUIRE(validator.saw_archive_end);
     auto appended =
         build_record(make_content_header(2, 1, 0, 0, neotape::frame_flag_end));
-    REQUIRE(validator
-                .validate(parse_header(appended),
-                          reinterpret_cast<const uint8_t *>(appended.data()),
-                          appended.size())
-                .has_value());
-}
-
-TEST_CASE("validate: unsigned replay must still have zero signature bytes",
-          "[unit][validation][replay]") {
-    FrameValidator validator;
-    auto record =
-        build_record(make_content_header(0, 0, 0, 0, neotape::frame_flag_end));
-    REQUIRE_FALSE(validator.validate(
-        parse_header(record), reinterpret_cast<const uint8_t *>(record.data()),
-        record.size()));
-    record[408] = std::byte{1}; // Signature is excluded from the frame hash.
-    REQUIRE(validator
-                .validate(parse_header(record),
-                          reinterpret_cast<const uint8_t *>(record.data()),
-                          record.size())
-                .has_value());
+    REQUIRE(feed(validator, appended).has_value());
 }
 
 TEST_CASE("validate: block size cannot change on a new volume",
@@ -359,18 +288,12 @@ TEST_CASE("validate: block size cannot change on a new volume",
     FrameValidator validator;
     auto first =
         build_record(make_content_header(0, 0, 0, 0, neotape::frame_flag_end));
-    REQUIRE_FALSE(validator.validate(
-        parse_header(first), reinterpret_cast<const uint8_t *>(first.data()),
-        first.size()));
+    REQUIRE_FALSE(feed(validator, first));
     auto next_header = make_content_header(1, 1, 0, 0, neotape::frame_flag_end);
     next_header.volume_seq_num = 2;
     next_header.volume_block_size_kib = 8;
     auto next = build_record(next_header);
-    REQUIRE(validator
-                .validate(parse_header(next),
-                          reinterpret_cast<const uint8_t *>(next.data()),
-                          next.size())
-                .has_value());
+    REQUIRE(feed(validator, next).has_value());
 }
 
 TEST_CASE("validate: volume can begin at every content position",
@@ -385,7 +308,7 @@ TEST_CASE("validate: volume can begin at every content position",
     for (auto &frame : tail)
         records.push_back(std::move(frame));
     for (auto &frame : records) {
-        auto header = parse_header(frame.record);
+        auto header = check(frame.record).header;
         neotape::finalize_record(header, frame.record);
     }
     auto ending = neotape::build_archive_end_record(
@@ -394,19 +317,14 @@ TEST_CASE("validate: volume can begin at every content position",
     for (size_t begin = 1; begin < records.size(); ++begin) {
         CAPTURE(begin);
         FrameValidator validator;
-        validator.seed_for_stream_start(parse_header(records[begin].record));
+        validator.seed_for_stream_start(check(records[begin].record).header);
         for (size_t index = begin; index < records.size(); ++index) {
             CAPTURE(index);
             auto const &record = records[index].record;
-            auto error = validator.validate(
-                parse_header(record),
-                reinterpret_cast<const uint8_t *>(record.data()),
-                record.size());
+            auto error = feed(validator, record);
             CAPTURE(error);
             REQUIRE_FALSE(error);
         }
-        REQUIRE_FALSE(validator.validate(
-            parse_header(ending),
-            reinterpret_cast<const uint8_t *>(ending.data()), ending.size()));
+        REQUIRE_FALSE(feed(validator, ending));
     }
 }

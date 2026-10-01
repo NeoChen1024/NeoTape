@@ -152,7 +152,10 @@ TEST_CASE("salvage skips a corrupt frame with warnings",
 
 TEST_CASE("retry records with new volume hashes are emitted once",
           "[integration][replay][socket]") {
-    bool const conflict = GENERATE(false, true);
+    enum class Retry { equivalent, changed_payload, unsigned_signature_bytes };
+    auto const mode = GENERATE(Retry::equivalent, Retry::changed_payload,
+                               Retry::unsigned_signature_bytes);
+    bool const rejected = mode != Retry::equivalent;
     TemporaryDirectory temporary;
     auto input = temporary.path() / "input";
     auto spool = temporary.path() / "spool";
@@ -166,23 +169,30 @@ TEST_CASE("retry records with new volume hashes are emitted once",
         auto *data = reinterpret_cast<uint8_t *>(retry.data() + offset);
         auto header = neotape::parse_fixed_header(data, 4096);
         header.volume_seq_num = 2;
-        if (conflict && offset == 0)
+        if (mode == Retry::changed_payload && offset == 0)
             data[512] ^= 1;
         auto encoded = neotape::serialize_frame_header(header);
         std::copy(encoded.begin(), encoded.end(), data);
         header.frame_hash = neotape::compute_frame_hash(data, 4096);
         encoded = neotape::serialize_frame_header(header);
         std::copy(encoded.begin(), encoded.end(), data);
+        // Signature bytes are outside the frame hash, so only the signature
+        // policy can catch them on an otherwise equivalent unsigned retry.
+        if (mode == Retry::unsigned_signature_bytes && offset == 0)
+            data[408] = 1;
     }
     std::ofstream(file, std::ios::binary | std::ios::trunc)
         << original.substr(0, 4096 * 3) << retry << original.substr(4096 * 3);
     auto restored = extract(temporary.path() / "restore.sock", spool, output,
-                            false, !conflict);
+                            false, !rejected);
     INFO(restored.standard_error);
     REQUIRE_FALSE(restored.timed_out);
-    if (conflict) {
+    if (rejected) {
         REQUIRE(restored.exit_code != 0);
-        REQUIRE(restored.standard_error.find("conflicting replay") !=
+        REQUIRE(restored.standard_error.find(
+                    mode == Retry::changed_payload
+                        ? "conflicting replay"
+                        : "non-zero signature bytes without SIGNED flag") !=
                 std::string::npos);
     } else {
         require_success(restored);
@@ -192,8 +202,7 @@ TEST_CASE("retry records with new volume hashes are emitted once",
     }
 }
 
-TEST_CASE("sequence gaps remain fatal",
-          "[integration][recovery][socket]") {
+TEST_CASE("sequence gaps remain fatal", "[integration][recovery][socket]") {
     TemporaryDirectory temporary;
     auto input = temporary.path() / "input";
     auto spool = temporary.path() / "spool";

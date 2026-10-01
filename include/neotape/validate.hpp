@@ -56,38 +56,30 @@ struct FrameValidator {
     // still validated normally by the next validate() call.
     void seed_for_stream_start(const FrameHeader &header);
 
-    // Validate one frame.  Returns error description or std::nullopt.
+    // Validate one frame's place in the archive. Returns an error
+    // description or std::nullopt.
     //
-    // header    — result of parse_fixed_header(raw_data, record_size)
-    // raw_data  — pointer to the full record bytes (for hash check)
-    // record_size — number of bytes in the record
-    // skip_hash — when true, skip frame_hash verification while retaining
-    //             structural/state validation. Used for advisory metadata
-    //             whose hash failure restore mode downgrades to a warning.
+    // `frame` comes from check_frame(data, size); `data` is only re-read to
+    // compare a replayed record. allow_bad_hash admits a frame whose hash
+    // failed for state tracking only (restore-mode advisory metadata).
     //
     // last_was_replay identifies an equivalent physical retry; callers must
     // still apply signature policy, then suppress repeated output. After
     // archive_end, only equivalent replays are accepted within this context.
-    std::optional<std::string> validate(const FrameHeader &header,
-                                        const uint8_t *raw_data,
-                                        std::size_t record_size,
-                                        bool skip_hash = false);
+    std::optional<std::string> validate(const CheckedFrame &frame,
+                                        const uint8_t *data,
+                                        bool allow_bad_hash = false);
 
-    // Validate one frame using restore-mode policy.
-    //
-    // Metadata frames are still checked for archive identity and sequencing,
-    // but a metadata-only frame_hash mismatch is downgraded to a warning.
-    // Callers enforce signature policy before using that exception.
-    RestoreFrameValidation validate_restore_frame(const FrameHeader &header,
-                                                  const uint8_t *raw_data,
-                                                  std::size_t record_size);
+    // Restore-mode policy: a metadata-only frame_hash mismatch is downgraded
+    // to a warning. Callers enforce signature policy before relying on it.
+    RestoreFrameValidation validate_restore_frame(const CheckedFrame &frame,
+                                                  const uint8_t *data);
 
     // Salvage mode keeps frame integrity and unambiguous record framing
     // mandatory, but deliberately does not enforce archive identity,
     // sequencing, channel ordering, or clean-completion consistency.
-    RestoreFrameValidation validate_salvage_frame(const FrameHeader &header,
-                                                  const uint8_t *raw_data,
-                                                  std::size_t record_size);
+    RestoreFrameValidation validate_salvage_frame(const CheckedFrame &frame,
+                                                  const uint8_t *data);
 
     // Reset to initial state (for inspecting a new archive).
     void reset();
@@ -95,13 +87,16 @@ struct FrameValidator {
   private:
     // Keep retry memory bounded even for multi-day archives. Older retries
     // fail explicitly instead of being silently treated as equivalent.
-    std::deque<std::pair<uint64_t, Hash>> replay_history_;
+    struct ReplayIdentity {
+        uint64_t global_seq;
+        uint64_t volume_seq;
+        Hash frame_hash;
+    };
+    std::deque<ReplayIdentity> replay_history_;
     std::optional<uint64_t> replay_next_;
-    std::optional<std::string> check_replay(const FrameHeader &header,
-                                            const uint8_t *data,
-                                            std::size_t size, bool skip_hash);
-    void remember_record(const FrameHeader &header, const uint8_t *data,
-                         std::size_t size, bool skip_hash);
+    std::optional<std::string> check_replay(const CheckedFrame &frame,
+                                            const uint8_t *data);
+    void remember_record(const CheckedFrame &frame);
 };
 
 } // namespace neotape

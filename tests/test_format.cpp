@@ -242,3 +242,51 @@ TEST_CASE("format: frame hash canonicalization", "[unit][format]") {
 }
 
 } // namespace
+
+TEST_CASE("format: record check reports size and hash independently",
+          "[unit][format]") {
+    neotape::FrameHeader header = make_content_header();
+    std::vector<uint8_t> record(4096, 0);
+    auto bytes = neotape::serialize_frame_header(header);
+    std::copy(bytes.begin(), bytes.end(), record.begin());
+    header.frame_hash =
+        neotape::compute_frame_hash(record.data(), record.size());
+    bytes = neotape::serialize_frame_header(header);
+    std::copy(bytes.begin(), bytes.end(), record.begin());
+
+    auto frame = neotape::check_frame(record.data(), record.size());
+    REQUIRE(frame.size_ok);
+    REQUIRE(frame.hash_ok);
+
+    // A longer physical record is a framing error, not a hash comparison.
+    std::vector<uint8_t> longer = record;
+    longer.push_back(0);
+    frame = neotape::check_frame(longer.data(), longer.size());
+    REQUIRE_FALSE(frame.size_ok);
+    REQUIRE_FALSE(frame.hash_ok);
+
+    std::vector<uint8_t> damaged = record;
+    damaged[600] ^= 1;
+    frame = neotape::check_frame(damaged.data(), damaged.size());
+    REQUIRE(frame.size_ok);
+    REQUIRE_FALSE(frame.hash_ok);
+}
+
+TEST_CASE("format: replay identity ignores only the volume ordinal",
+          "[unit][format]") {
+    neotape::FrameHeader const header = make_content_header();
+    std::vector<uint8_t> record(4096, 0);
+    auto const bytes = neotape::serialize_frame_header(header);
+    std::copy(bytes.begin(), bytes.end(), record.begin());
+    record[512] = 0x5a;
+
+    // Independent canonical image: volume_seq_num (offset 114) rewritten to
+    // 7, signature and frame_hash (offsets 408..511) zeroed.
+    std::vector<uint8_t> canonical = record;
+    for (std::size_t i = 0; i < 8; ++i)
+        canonical[114 + i] = i == 0 ? 7 : 0;
+    std::fill(canonical.begin() + 408, canonical.begin() + 512, 0);
+    REQUIRE(
+        neotape::frame_hash_with_volume_seq(record.data(), record.size(), 7) ==
+        neotape::blake3_hash(canonical.data(), canonical.size()));
+}

@@ -151,13 +151,6 @@ string channel_abbrev(ChannelType t) {
     return "?";
 }
 
-string hash_status(const neotape::Hash &expected, const neotape::Hash &actual) {
-    if (expected == actual) {
-        return "OK";
-    }
-    return "MISMATCH";
-}
-
 // -----------------------------------------------------------------------
 // Main
 // -----------------------------------------------------------------------
@@ -223,9 +216,9 @@ int do_inspect(const Options &opts) {
 
         // Parse header.
         const auto *data = reinterpret_cast<const uint8_t *>(rr.record.data());
-        FrameHeader header;
+        neotape::CheckedFrame frame;
         try {
-            header = neotape::parse_fixed_header(data, rr.record.size());
+            frame = neotape::check_frame(data, rr.record.size());
         } catch (const std::exception &e) {
             ++stats.errors;
             issues.push_back(format("Frame #{}: header parse error: {}",
@@ -238,8 +231,7 @@ int do_inspect(const Options &opts) {
             continue;
         }
 
-        uint32_t const block_size = neotape::decoded_block_size(header);
-
+        FrameHeader const &header = frame.header;
         // Validate via shared FrameValidator.
         if (frame_number == 1) {
             // A spool or tape scan may begin at any volume boundary, not
@@ -247,7 +239,7 @@ int do_inspect(const Options &opts) {
             starts_at_zero = header.global_frame_seq_num == 0;
             validator.seed_for_stream_start(header);
         }
-        auto err = validator.validate(header, data, rr.record.size());
+        auto err = validator.validate(frame, data);
         if (err.has_value()) {
             ++stats.errors;
             issues.push_back(format("Frame #{}: {}", frame_number, *err));
@@ -255,18 +247,6 @@ int do_inspect(const Options &opts) {
 
         if (!err && validator.last_was_replay)
             ++replayed_frames;
-
-        // Verify frame_hash explicitly for display.
-        neotape::Hash const computed =
-            neotape::compute_frame_hash(data, rr.record.size());
-
-        bool const record_size_ok = rr.record.size() == block_size;
-        if (!record_size_ok) {
-            ++stats.errors;
-            issues.push_back(
-                format("Frame #{}: record size {} != block size {}",
-                       frame_number, rr.record.size(), block_size));
-        }
 
         stats.total_payload_bytes += header.frame_payload_size;
         switch (header.channel_type) {
@@ -308,7 +288,7 @@ int do_inspect(const Options &opts) {
             header.global_frame_seq_num, header.slice_seq_num,
             channel_abbrev(header.channel_type), header.channel_frame_seq_num,
             header.frame_payload_size, flags_str(header.flags),
-            hash_status(header.frame_hash, computed));
+            frame.hash_ok ? "OK" : "MISMATCH");
     }
 
     print_separator();

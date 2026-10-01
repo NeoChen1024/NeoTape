@@ -63,23 +63,33 @@ struct FrameHeader {
     Hash frame_hash{};
 };
 
+// Both directions enforce every frame-local header rule and throw
+// std::runtime_error on violation.
 HeaderBytes serialize_frame_header(const FrameHeader &header);
-FrameHeader parse_frame_header(const uint8_t *data, std::size_t size);
 FrameHeader parse_fixed_header(const uint8_t *data, std::size_t size);
 
 std::string channel_type_name(ChannelType type);
 std::string hash_hex(const Hash &hash);
 Hash blake3_hash(const uint8_t *data, std::size_t size);
+// BLAKE3 over the canonical image of a complete record.
 Hash compute_frame_hash(const uint8_t *data, std::size_t size);
-// Logical retry identity excludes only volume ordinal, signature, and hash.
-Hash compute_replay_hash(const uint8_t *data, std::size_t size);
+// The frame_hash the record would carry on volume `volume_seq_num`. A replay
+// is equivalent to an accepted frame exactly when this matches the accepted
+// frame's hash under its own volume ordinal.
+Hash frame_hash_with_volume_seq(const uint8_t *data, std::size_t size,
+                                uint64_t volume_seq_num);
 uint32_t decoded_block_size(const FrameHeader &header);
 bool valid_block_size(uint32_t block_size);
 
-// Stateless per-frame header validation.  Throws std::runtime_error.
-void validate_header(const FrameHeader &header);
-bool verify_frame_hash(const uint8_t *data, std::size_t size,
-                       const Hash &expected);
+// Record-level integrity, computed once per received record. Throws only when
+// the fixed header itself is invalid; the signature policy is applied
+// separately by validate_frame_signature().
+struct CheckedFrame {
+    FrameHeader header;
+    bool size_ok = false; // record length equals the decoded block size
+    bool hash_ok = false; // implies size_ok
+};
+CheckedFrame check_frame(const uint8_t *data, std::size_t size);
 std::string make_uuid_v4();
 
 } // namespace neotape

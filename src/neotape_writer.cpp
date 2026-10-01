@@ -206,7 +206,8 @@ WriteResult write_volume(int fd, RecordSink &sink,
                 item.bytes = std::move(message->payload);
                 auto data =
                     reinterpret_cast<const uint8_t *>(item.bytes.data());
-                item.header = parse_fixed_header(data, item.bytes.size());
+                CheckedFrame const frame = check_frame(data, item.bytes.size());
+                item.header = frame.header;
                 if (!seeded) {
                     validator.seed_for_stream_start(item.header);
                     seeded = true;
@@ -217,8 +218,7 @@ WriteResult write_volume(int fd, RecordSink &sink,
                         item.header.archive_label, item.header.volume_seq_num,
                         item.header.slice_seq_num);
                 }
-                if (auto e = validator.validate(item.header, data,
-                                                item.bytes.size()))
+                if (auto e = validator.validate(frame, data))
                     throw std::runtime_error(*e);
                 auto signature =
                     validate_frame_signature(item.header, keys, !keys.empty());

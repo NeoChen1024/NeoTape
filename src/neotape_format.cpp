@@ -138,6 +138,64 @@ bool valid_block_size(uint32_t block_size) {
            block_size % 1024U == 0;
 }
 
+namespace {
+
+// Stateless frame-local rules: anything decidable from one header alone.
+void validate_header(const FrameHeader &header) {
+    const uint32_t block_size = decoded_block_size(header);
+    if (!valid_block_size(block_size)) {
+        throw std::runtime_error("invalid volume block size");
+    }
+    if (header.frame_payload_size > block_size - fixed_header_size) {
+        throw std::runtime_error(
+            "frame payload size exceeds block payload capacity");
+    }
+
+    constexpr uint64_t allowed_flags = frame_flag_end | frame_flag_signed |
+                                       frame_flag_sideband |
+                                       frame_flag_clean_end;
+    if ((header.flags & ~allowed_flags) != 0) {
+        throw std::runtime_error("reserved frame flag bits set");
+    }
+
+    bool const has_sideband_data = std::ranges::any_of(
+        header.sideband_data, [](uint8_t byte) { return byte != 0; });
+    // No header-version-1 channel defines sideband data; the area stays
+    // reserved for a future channel_type.
+    if (has_frame_flag_sideband(header.flags) || has_sideband_data) {
+        throw std::runtime_error(
+            "no channel uses sideband data in header version 1");
+    }
+
+    if (header.channel_type == ChannelType::ARCHIVE_END) {
+        if (!has_frame_flag_end(header.flags) ||
+            !has_frame_flag_clean_end(header.flags)) {
+            throw std::runtime_error(
+                "archive-end frame missing required flags");
+        }
+        if (header.slice_seq_num != 0) {
+            throw std::runtime_error(
+                "archive-end frame has non-zero slice_seq_num");
+        }
+        if (header.channel_frame_seq_num != 0) {
+            throw std::runtime_error(
+                "archive-end frame channel_frame_seq_num must be zero");
+        }
+    } else {
+        if (has_frame_flag_clean_end(header.flags)) {
+            throw std::runtime_error(
+                "CLEAN_END is only valid on archive-end frames");
+        }
+        if (!has_frame_flag_end(header.flags) &&
+            header.frame_payload_size != block_size - fixed_header_size) {
+            throw std::runtime_error(
+                "non-END frame payload must fill the record");
+        }
+    }
+}
+
+} // namespace
+
 HeaderBytes serialize_frame_header(const FrameHeader &header) {
     validate_serialized_signature(header);
 
@@ -169,7 +227,7 @@ HeaderBytes serialize_frame_header(const FrameHeader &header) {
     return bytes;
 }
 
-FrameHeader parse_frame_header(const uint8_t *data, std::size_t size) {
+FrameHeader parse_fixed_header(const uint8_t *data, std::size_t size) {
     if (size < fixed_header_size) {
         throw std::runtime_error("short fixed header");
     }
@@ -204,12 +262,8 @@ FrameHeader parse_frame_header(const uint8_t *data, std::size_t size) {
               data + off_frame_hash + header.frame_hash.size(),
               header.frame_hash.begin());
 
-    neotape::validate_header(header);
+    validate_header(header);
     return header;
-}
-
-FrameHeader parse_fixed_header(const uint8_t *data, std::size_t size) {
-    return parse_frame_header(data, size);
 }
 
 std::string channel_type_name(ChannelType type) {
@@ -235,46 +289,36 @@ Hash blake3_hash(const uint8_t *data, std::size_t size) {
     return hash;
 }
 
-Hash compute_replay_hash(const uint8_t *data, std::size_t size) {
-    auto const header = parse_fixed_header(data, size);
-    if (size != decoded_block_size(header))
-        throw std::runtime_error("replay record size mismatch");
+Hash frame_hash_with_volume_seq(const uint8_t *data, std::size_t size,
+                                uint64_t volume_seq_num) {
+    if (size < fixed_header_size)
+        throw std::runtime_error("record shorter than the fixed header");
     HeaderBytes canonical;
     std::copy_n(data, fixed_header_size, canonical.begin());
-    std::fill_n(canonical.begin() + off_volume_seq_num, 8, 0);
+    put_u64(canonical, off_volume_seq_num, volume_seq_num);
     std::fill(canonical.begin() + off_signature, canonical.end(), 0);
+
+    Hash hash{};
     blake3_hasher hasher;
     blake3_hasher_init(&hasher);
     blake3_hasher_update(&hasher, canonical.data(), canonical.size());
     blake3_hasher_update(&hasher, data + fixed_header_size,
                          size - fixed_header_size);
-    Hash result{};
-    blake3_hasher_finalize(&hasher, result.data(), result.size());
-    return result;
+    blake3_hasher_finalize(&hasher, hash.data(), hash.size());
+    return hash;
 }
 
 Hash compute_frame_hash(const uint8_t *data, std::size_t size) {
-    FrameHeader const header = parse_fixed_header(data, size);
-    if (size != decoded_block_size(header)) {
-        throw std::runtime_error(
-            "record size does not match decoded block size");
-    }
+    return frame_hash_with_volume_seq(data, size,
+                                      get_u64(data, off_volume_seq_num));
+}
 
-    Hash hash{};
-    blake3_hasher hasher;
-    blake3_hasher_init(&hasher);
-    blake3_hasher_update(&hasher, data, off_signature);
-
-    std::array<uint8_t, fixed_header_size - off_signature> zero_bytes{};
-    blake3_hasher_update(&hasher, zero_bytes.data(), zero_bytes.size());
-
-    if (size > fixed_header_size) {
-        blake3_hasher_update(
-            &hasher, data + static_cast<std::ptrdiff_t>(fixed_header_size),
-            size - fixed_header_size);
-    }
-    blake3_hasher_finalize(&hasher, hash.data(), hash.size());
-    return hash;
+CheckedFrame check_frame(const uint8_t *data, std::size_t size) {
+    CheckedFrame frame{parse_fixed_header(data, size)};
+    frame.size_ok = size == decoded_block_size(frame.header);
+    frame.hash_ok = frame.size_ok &&
+                    compute_frame_hash(data, size) == frame.header.frame_hash;
+    return frame;
 }
 
 std::string make_uuid_v4() {
@@ -291,57 +335,6 @@ std::string make_uuid_v4() {
                        bytes[5], bytes[6], bytes[7], bytes[8], bytes[9],
                        bytes[10], bytes[11], bytes[12], bytes[13], bytes[14],
                        bytes[15]);
-}
-
-void validate_header(const FrameHeader &header) {
-    const uint32_t block_size = decoded_block_size(header);
-    if (!valid_block_size(block_size)) {
-        throw std::runtime_error("invalid volume block size");
-    }
-    if (header.frame_payload_size > block_size - fixed_header_size) {
-        throw std::runtime_error(
-            "frame payload size exceeds block payload capacity");
-    }
-
-    constexpr uint64_t allowed_flags =
-        frame_flag_end | frame_flag_signed | frame_flag_sideband |
-        frame_flag_clean_end;
-    if ((header.flags & ~allowed_flags) != 0) {
-        throw std::runtime_error("reserved frame flag bits set");
-    }
-
-    bool const has_sideband_data = std::ranges::any_of(
-        header.sideband_data, [](uint8_t byte) { return byte != 0; });
-    // No header-version-1 channel defines sideband data; the area stays
-    // reserved for a future channel_type.
-    if (has_frame_flag_sideband(header.flags) || has_sideband_data) {
-        throw std::runtime_error(
-            "no channel uses sideband data in header version 1");
-    }
-
-    if (header.channel_type == ChannelType::ARCHIVE_END) {
-        if (!has_frame_flag_end(header.flags) ||
-            !has_frame_flag_clean_end(header.flags)) {
-            throw std::runtime_error(
-                "archive-end frame missing required flags");
-        }
-        if (header.slice_seq_num != 0) {
-            throw std::runtime_error(
-                "archive-end frame has non-zero slice_seq_num");
-        }
-        if (header.channel_frame_seq_num != 0) {
-            throw std::runtime_error(
-                "archive-end frame channel_frame_seq_num must be zero");
-        }
-    } else if (has_frame_flag_clean_end(header.flags)) {
-        throw std::runtime_error(
-            "CLEAN_END is only valid on archive-end frames");
-    }
-}
-
-bool verify_frame_hash(const uint8_t *data, std::size_t size,
-                       const Hash &expected) {
-    return compute_frame_hash(data, size) == expected;
 }
 
 } // namespace neotape
