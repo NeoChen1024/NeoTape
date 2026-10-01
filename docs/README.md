@@ -1,7 +1,7 @@
 # NeoTape Documentation
 
-This directory is the entry point for the active NeoTape specification,
-implementation notes, and archived review material.
+This directory is the entry point for the active NeoTape specification and
+implementation notes.
 
 ## Specification Precedence
 
@@ -41,10 +41,6 @@ docs/
     phase-3.5-mt-pax-writer.md      Historical mt-pax writer phase notes
     recovery-bundle.md              BOT recovery bundle packaging strategy
     cmake-build-system.md           CMake migration decisions and verification
-
-  archive/                          Historical review and migration notes
-    2026-06-17-project-review-findings.md
-    2026-06-17-spec-consistency-review.md
 ```
 
 ## Document Layers
@@ -71,16 +67,12 @@ behavior, mt-pax architecture, and local engineering conventions.
 CLI usage and operator workflows live in `docs/implementation/cli-tooling.md`,
 not in `docs/spec/`.
 
-### `archive/`
-
-Use `docs/archive/` for historical review documents and migration notes that
-are useful context but are no longer the active spec.
-
 ## Splitting Guidance
 
 - Put stable format commitments in `spec/`.
 - Put implementation tradeoffs, local behavior notes, and architecture detail
   in `implementation/`.
-- Put superseded reviews or one-off migration notes in `archive/`.
+- Delete superseded reviews and one-off migration notes; git history keeps
+  them.
 - Keep each file centered on one topic that is likely to change together.
 - Prefer cross-links over repeating the same rule in multiple files.
