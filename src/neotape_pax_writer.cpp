@@ -249,6 +249,18 @@ struct BBSink {
     bool drop_mode = false;
 };
 
+// Returns false when the destination buffer has been closed.
+bool flush_sink(BBSink &sink) {
+    size_t const chunk_size = sink.accum.size();
+    if (!sink.dest->push(std::move(sink.accum))) {
+        return false;
+    }
+    sink.stats->input_bytes.fetch_add(chunk_size, std::memory_order_relaxed);
+    sink.accum = {};
+    sink.accum.reserve(STREAM_FLUSH_THRESH);
+    return true;
+}
+
 la_ssize_t bb_sink_write(archive * /*unused*/, void *client, const void *data,
                          size_t len) {
     auto *sink = static_cast<BBSink *>(client);
@@ -258,15 +270,8 @@ la_ssize_t bb_sink_write(archive * /*unused*/, void *client, const void *data,
 
     const auto *bytes = static_cast<const std::byte *>(data);
     sink->accum.insert(sink->accum.end(), bytes, bytes + len);
-    if (sink->accum.size() >= STREAM_FLUSH_THRESH) {
-        size_t chunk_size = sink->accum.size();
-        if (!sink->dest->push(std::move(sink->accum))) {
-            return -1;
-        }
-        sink->stats->input_bytes.fetch_add(chunk_size,
-                                           std::memory_order_relaxed);
-        sink->accum = {};
-        sink->accum.reserve(STREAM_FLUSH_THRESH);
+    if (sink->accum.size() >= STREAM_FLUSH_THRESH && !flush_sink(*sink)) {
+        return -1;
     }
     return static_cast<la_ssize_t>(len);
 }
@@ -484,7 +489,8 @@ la_ssize_t drop_write(archive * /*unused*/, void *client, const void *data,
 
 int drop_close(archive * /*unused*/, void * /*unused*/) { return ARCHIVE_OK; }
 
-using ArchiveWriteHandle = std::unique_ptr<archive, decltype(&archive_write_free)>;
+using ArchiveWriteHandle =
+    std::unique_ptr<archive, decltype(&archive_write_free)>;
 
 ArchiveWriteHandle make_pax_writer() {
     ArchiveWriteHandle writer(archive_write_new(), archive_write_free);
@@ -492,7 +498,8 @@ ArchiveWriteHandle make_pax_writer() {
     if (a == nullptr) {
         throw std::runtime_error("pax: cannot allocate archive writer");
     }
-    check_archive_throw(archive_write_add_filter_none(a), a, "set uncompressed");
+    check_archive_throw(archive_write_add_filter_none(a), a,
+                        "set uncompressed");
     check_archive_throw(archive_write_set_format_pax(a), a, "set pax format");
     check_archive_throw(
         archive_write_set_options(a, "xattrheader=ALL,hdrcharset=BINARY"), a,
@@ -502,6 +509,24 @@ ArchiveWriteHandle make_pax_writer() {
     check_archive_throw(archive_write_set_bytes_in_last_block(a, 1), a,
                         "set last block");
     return writer;
+}
+
+// Returns false when libarchive rejected the header with a warning; the
+// entry is then skipped rather than failing the archive.
+bool write_entry(archive *a, archive_entry *entry, int fd) {
+    int const r = archive_write_header(a, entry);
+    if (r == ARCHIVE_FATAL) {
+        throw_archive("write header", a);
+    }
+    if (r < ARCHIVE_OK) {
+        warn_archive("write header", a);
+        return false;
+    }
+    if (fd >= 0) {
+        copy_file_data(a, entry, fd);
+    }
+    check_archive_throw(archive_write_finish_entry(a), a, "finish entry");
+    return true;
 }
 
 vector<std::byte> serialize_entry(archive_entry *entry, int fd) {
@@ -521,21 +546,12 @@ vector<std::byte> serialize_entry(archive_entry *entry, int fd) {
         archive_write_open(a, &ctx, drop_open, drop_write, drop_close), a,
         "open per-entry writer");
 
-    int const r = archive_write_header(a, entry);
-    if (r == ARCHIVE_FATAL) {
-        throw_archive("write header", a);
-    }
-    if (r < ARCHIVE_OK) {
-        warn_archive("write header", a);
-        ctx.drop = true;
+    bool const written = write_entry(a, entry, fd);
+    ctx.drop = true;
+    if (!written) {
         archive_write_close(a);
         return {};
     }
-    if (fd >= 0) {
-        copy_file_data(a, entry, fd);
-    }
-    check_archive_throw(archive_write_finish_entry(a), a, "finish entry");
-    ctx.drop = true;
     check_archive_throw(archive_write_close(a), a, "close writer");
     return std::move(ctx.buf);
 }
@@ -550,30 +566,14 @@ void stream_large_entry(BBSink &sink, archive_entry *entry, int fd) {
         archive_write_open(a, &sink, drop_open, bb_sink_write, bb_sink_close),
         a, "open streaming writer");
 
-    int const r = archive_write_header(a, entry);
-    if (r == ARCHIVE_FATAL) {
-        throw_archive("write header", a);
-    }
-    if (r < ARCHIVE_OK) {
-        warn_archive("write header", a);
+    if (!write_entry(a, entry, fd)) {
         sink.drop_mode = true;
         sink.accum.clear();
-        sink.accum.reserve(STREAM_FLUSH_THRESH);
         archive_write_close(a);
         return;
     }
-    copy_file_data(a, entry, fd);
-    check_archive_throw(archive_write_finish_entry(a), a, "finish entry");
-
-    if (!sink.accum.empty()) {
-        size_t chunk_size = sink.accum.size();
-        if (!sink.dest->push(std::move(sink.accum))) {
-            throw std::runtime_error("pax: streaming output buffer closed");
-        }
-        sink.stats->input_bytes.fetch_add(chunk_size,
-                                          std::memory_order_relaxed);
-        sink.accum = {};
-        sink.accum.reserve(STREAM_FLUSH_THRESH);
+    if (!sink.accum.empty() && !flush_sink(sink)) {
+        throw std::runtime_error("pax: streaming output buffer closed");
     }
 
     sink.drop_mode = true;
