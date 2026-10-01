@@ -4,8 +4,6 @@ build/
 .codex/
 .vscode/
 __pycache__/
-*_generated.hpp
-*_generated.cpp
 .cache/
 testing/
 out/

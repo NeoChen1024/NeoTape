@@ -145,21 +145,6 @@ leading two `Ed` bytes. When `SIGNED` is clear, the entire field must be zero.
 
 ## Encoding Rules
 
-### Fixed Timestamp Format
-
-Fields explicitly defined as using the NeoTape fixed timestamp encoding use
-UTC, encoded as exactly 20 bytes:
-
-```text
-YYYY-MM-DDTHH:MM:SS\0
-```
-
-19 ASCII bytes matching `strftime("%Y-%m-%dT%H:%M:%S")` followed by one NUL
-byte. No timezone suffixes, fractional seconds, or locale-specific text. This
-rule does not apply to fields explicitly defined with another representation,
-such as plan metadata `<mtime>`. The unified Frame Header does not contain
-timestamp fields.
-
 ### nt_uuid
 
 37-byte NUL-terminated UUID string per RFC 4122. Fixed size allows simple offset-based header parsing.

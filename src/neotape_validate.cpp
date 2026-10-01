@@ -48,11 +48,6 @@ void FrameValidator::seed_for_stream_start(const FrameHeader &header) {
     reset();
     expected_global_frame_seq = header.global_frame_seq_num;
     current_slice_seq_num = header.slice_seq_num;
-    last_channel_type = header.channel_type;
-    current_phase =
-        header.channel_type == ChannelType::CH_CONTENT    ? Phase::content
-        : header.channel_type == ChannelType::CH_METADATA ? Phase::metadata
-                                                          : Phase::none;
     stream_start_seeded = true;
     if (header.channel_type != ChannelType::ARCHIVE_END)
         next_channel_seq[channel_index(header.channel_type)] =
@@ -168,9 +163,7 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
     expected_global_frame_seq = header.global_frame_seq_num + 1;
 
     // Volume ordinals are advisory; gaps and backward values do not change
-    // archive identity or logical continuity.
-    expected_volume_seq_num = header.volume_seq_num;
-    saw_first_volume_seq = true;
+    // archive identity or logical continuity, so volume_seq_num is unchecked.
 
     // --- archive_end ---
     if (header.channel_type == ChannelType::ARCHIVE_END) {
@@ -216,7 +209,6 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
                           header.global_frame_seq_num);
         }
         current_slice_seq_num = header.slice_seq_num;
-        current_phase = Phase::none;
         next_channel_seq.fill(0);
         channel_seen.fill(false);
         channel_ended.fill(false);
@@ -249,14 +241,9 @@ std::optional<string> FrameValidator::validate(const FrameHeader &header,
         if (saw_non_metadata_in_slice) {
             return "metadata frame after content in same slice";
         }
-        current_phase = Phase::metadata;
     } else {
         saw_non_metadata_in_slice = true;
-        current_phase = Phase::content;
     }
-
-    last_channel_type = header.channel_type;
-    last_frame_had_end = has_frame_flag_end(header.flags);
 
     remember_record(header, raw_data, record_size, skip_hash);
     return std::nullopt; // OK
@@ -338,16 +325,10 @@ void FrameValidator::reset() {
     archive_uuid.clear();
     archive_label.clear();
     expected_global_frame_seq = 0;
-    expected_volume_seq_num = 0;
     current_slice_seq_num = 0;
     volume_block_size = 0;
-    last_channel_type = {};
-    expected_channel_frame_seq_num = 0;
-    current_phase = Phase::none;
-    saw_first_volume_seq = false;
     saw_any_frame = false;
     saw_archive_end = false;
-    last_frame_had_end = false;
     next_channel_seq.fill(0);
     channel_seen.fill(false);
     channel_ended.fill(false);

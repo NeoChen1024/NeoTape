@@ -20,7 +20,6 @@ class BoundedBuffer {
     std::vector<std::byte> pop();
     std::vector<std::byte> pop_after_fill(size_t min_bytes);
     void close();
-    bool drained() const;
     size_t size_bytes() const;
     size_t capacity_bytes() const;
 

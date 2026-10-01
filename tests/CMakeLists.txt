@@ -36,7 +36,7 @@ if(BUILD_TESTING)
     neotape_unit_test(test_format test_format.cpp neotape_format)
     neotape_unit_test(test_validate test_validate.cpp neotape_validation neotape_frame_builder)
     neotape_unit_test(test_signature test_signature.cpp
-        neotape_frame_builder neotape_signature)
+        neotape_frame_builder neotape_signature NeoTape::Signify)
     target_compile_definitions(test_signature PRIVATE
         NEOTAPE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
     )

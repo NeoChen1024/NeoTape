@@ -49,8 +49,8 @@ path.
 
 ## Symlinks
 
-`has_trailing_slash` / `strip_trailing_slashes` were previously used to
-detect symlinks-to-directories added via libarchive.  This is no longer
+Trailing-slash checks were previously used to detect
+symlinks-to-directories added via libarchive.  This is no longer
 needed at the `SourceSpec` level — the chdir + `openat` approach handles this
 transparently.  If a trailing-slash-aware entry is needed by libarchive,
 handle it at the writer layer, not in shared path logic.

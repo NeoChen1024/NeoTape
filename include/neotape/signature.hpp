@@ -56,7 +56,6 @@ std::string prompt_signify_passphrase(const std::string &path);
 AuthNonceBytes random_auth_nonce();
 
 KeyIdBytes signature_key_id(const SignatureBytes &signature);
-std::string key_id_hex(std::span<const uint8_t> key_id);
 SignatureBytes sign_frame_hash(const SignifySecretKey &key, const Hash &hash);
 bool verify_frame_hash_signature(const SignatureBytes &signature,
                                  const Hash &hash, const SignifyPublicKey &key);

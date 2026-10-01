@@ -5,9 +5,7 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstring>
-#include <ctime>
 #include <format>
 #include <random>
 #include <stdexcept>
@@ -277,22 +275,6 @@ Hash compute_frame_hash(const uint8_t *data, std::size_t size) {
     }
     blake3_hasher_finalize(&hasher, hash.data(), hash.size());
     return hash;
-}
-
-std::string utc_timestamp_now() {
-    std::time_t now =
-        std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    std::tm utc{};
-    if (gmtime_r(&now, &utc) == nullptr) {
-        throw std::runtime_error("gmtime_r failed");
-    }
-
-    std::array<char, 20> buffer{};
-    if (std::strftime(buffer.data(), buffer.size(), "%Y-%m-%dT%H:%M:%S",
-                      &utc) != 19) {
-        throw std::runtime_error("strftime failed");
-    }
-    return std::string(buffer.data(), 19);
 }
 
 std::string make_uuid_v4() {

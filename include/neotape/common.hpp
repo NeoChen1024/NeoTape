@@ -42,7 +42,6 @@ struct SourceSpec {
     std::filesystem::path open_path;
 };
 
-bool has_trailing_slash(std::string_view path);
 std::string strip_trailing_slashes(std::string_view path);
 SourceSpec make_source_spec(const std::string &arg);
 std::string archive_path_for_source(const SourceSpec &spec,

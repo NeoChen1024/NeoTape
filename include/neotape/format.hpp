@@ -80,7 +80,6 @@ bool valid_block_size(uint32_t block_size);
 void validate_header(const FrameHeader &header);
 bool verify_frame_hash(const uint8_t *data, std::size_t size,
                        const Hash &expected);
-std::string utc_timestamp_now();
 std::string make_uuid_v4();
 
 } // namespace neotape

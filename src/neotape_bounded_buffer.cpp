@@ -54,11 +54,6 @@ void BoundedBuffer::close() {
     not_full_.notify_all();
 }
 
-bool BoundedBuffer::drained() const {
-    std::scoped_lock const lock(mtx_);
-    return closed_ && buf_.empty();
-}
-
 size_t BoundedBuffer::size_bytes() const {
     std::scoped_lock const lock(mtx_);
     return total_bytes_;

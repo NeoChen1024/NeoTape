@@ -187,10 +187,6 @@ void ensure_utf8_ctype_locale() {
 
 namespace fs = std::filesystem;
 
-bool has_trailing_slash(string_view path) {
-    return path.size() > 1 && path.back() == '/';
-}
-
 string strip_trailing_slashes(string_view path) {
     while (path.size() > 1 && path.back() == '/') {
         path.remove_suffix(1);

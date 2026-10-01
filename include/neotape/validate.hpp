@@ -39,17 +39,10 @@ struct FrameValidator {
     std::string archive_uuid;
     std::string archive_label;
     uint64_t expected_global_frame_seq = 0;
-    uint64_t expected_volume_seq_num = 0;
     uint64_t current_slice_seq_num = 0;
     uint32_t volume_block_size = 0; // decoded bytes
-    ChannelType last_channel_type{};
-    uint64_t expected_channel_frame_seq_num = 0;
-    enum class Phase { none, metadata, content };
-    Phase current_phase = Phase::none;
-    bool saw_first_volume_seq = false;
     bool saw_any_frame = false;
     bool saw_archive_end = false;
-    bool last_frame_had_end = false;
 
     // Each slice channel keeps an independent sequence stream and END state.
     std::array<uint64_t, 2> next_channel_seq{};

@@ -328,10 +328,6 @@ KeyIdBytes signature_key_id(const SignatureBytes &signature) {
     return key_id;
 }
 
-std::string key_id_hex(std::span<const uint8_t> key_id) {
-    return hex_encode(key_id);
-}
-
 SignatureBytes sign_frame_hash(const SignifySecretKey &key, const Hash &hash) {
     vector<uint8_t> message = frame_signature_message(hash);
     DetachedSignatureBytes const detached = sign_detached_message(key, message);
