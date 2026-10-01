@@ -268,6 +268,41 @@ struct LstatResult {
     string warning;
 };
 
+// An unreadable path yields a warning; a directory on another device under
+// --one-file-system is skipped silently. Both leave ok false.
+LstatResult stat_entry(size_t index, const fs::path &path,
+                       const neotape::SourceSpec &spec, bool one_file_system,
+                       std::optional<dev_t> root_device) {
+    LstatResult r{};
+    r.index = index;
+    struct stat st{};
+    if (lstat(path.c_str(), &st) != 0) {
+        r.warning =
+            format("lstat {}: {}", display_path(path), std::strerror(errno));
+        return r;
+    }
+    if (one_file_system && root_device.has_value() && S_ISDIR(st.st_mode) &&
+        st.st_dev != *root_device)
+        return r;
+    r.ok = true;
+    r.meta = EntryMeta{
+        .source_path = path,
+        .archive_path =
+            neotape::archive_path_for_source(spec, path.generic_string()),
+        .kind = kind_from_mode(st.st_mode),
+        .disk_bytes = disk_bytes_from_stat(st),
+        .apparent_bytes = apparent_bytes_from_stat(st),
+        .device = st.st_dev,
+        .inode = st.st_ino,
+        .mtime = static_cast<int64_t>(st.st_mtime),
+        .uid = st.st_uid,
+        .uname = {},
+        .gid = st.st_gid,
+        .gname = {},
+    };
+    return r;
+}
+
 class WorkerPool {
     neotape::ClosableQueue<LstatWork> jobs_;
     neotape::ClosableQueue<LstatResult> results_;
@@ -276,41 +311,8 @@ class WorkerPool {
 
     static LstatResult run_lstat(const LstatWork &w) {
         try {
-            struct stat st{};
-            if (lstat(w.path.c_str(), &st) != 0) {
-                LstatResult r{};
-                r.index = w.index;
-                r.warning = format("lstat {}: {}", display_path(w.path),
-                                   std::strerror(errno));
-                return r;
-            }
-
-            if (w.one_file_system && w.root_device.has_value() &&
-                S_ISDIR(st.st_mode) && st.st_dev != *w.root_device) {
-                LstatResult r{};
-                r.index = w.index;
-                return r;
-            }
-
-            LstatResult r{};
-            r.index = w.index;
-            r.ok = true;
-            r.meta = EntryMeta{
-                .source_path = w.path,
-                .archive_path = neotape::archive_path_for_source(
-                    *w.spec, w.path.generic_string()),
-                .kind = kind_from_mode(st.st_mode),
-                .disk_bytes = disk_bytes_from_stat(st),
-                .apparent_bytes = apparent_bytes_from_stat(st),
-                .device = st.st_dev,
-                .inode = st.st_ino,
-                .mtime = static_cast<int64_t>(st.st_mtime),
-                .uid = st.st_uid,
-                .uname = {},
-                .gid = st.st_gid,
-                .gname = {},
-            };
-            return r;
+            return stat_entry(w.index, w.path, *w.spec, w.one_file_system,
+                              w.root_device);
         } catch (...) {
             LstatResult r{};
             r.index = w.index;
@@ -610,46 +612,6 @@ class PlannerScanner {
         }
     }
 
-    LstatResult stat_child(size_t index, const fs::path &path,
-                           const neotape::SourceSpec &spec,
-                           std::optional<dev_t> root_device) const {
-        struct stat st{};
-        if (lstat(path.c_str(), &st) != 0) {
-            LstatResult r{};
-            r.index = index;
-            r.warning = format("lstat {}: {}", display_path(path),
-                               std::strerror(errno));
-            return r;
-        }
-
-        if (opts_.one_file_system && root_device.has_value() &&
-            S_ISDIR(st.st_mode) && st.st_dev != *root_device) {
-            LstatResult r{};
-            r.index = index;
-            return r;
-        }
-
-        LstatResult r{};
-        r.index = index;
-        r.ok = true;
-        r.meta = EntryMeta{
-            .source_path = path,
-            .archive_path =
-                neotape::archive_path_for_source(spec, path.generic_string()),
-            .kind = kind_from_mode(st.st_mode),
-            .disk_bytes = disk_bytes_from_stat(st),
-            .apparent_bytes = apparent_bytes_from_stat(st),
-            .device = st.st_dev,
-            .inode = st.st_ino,
-            .mtime = static_cast<int64_t>(st.st_mtime),
-            .uid = st.st_uid,
-            .uname = {},
-            .gid = st.st_gid,
-            .gname = {},
-        };
-        return r;
-    }
-
     vector<LstatResult> stat_children(const vector<fs::path> &children,
                                       const neotape::SourceSpec &spec,
                                       std::optional<dev_t> root_device) {
@@ -661,7 +623,8 @@ class PlannerScanner {
         vector<LstatResult> results;
         results.reserve(children.size());
         for (size_t i = 0; i < children.size(); ++i) {
-            results.push_back(stat_child(i, children[i], spec, root_device));
+            results.push_back(stat_entry(i, children[i], spec,
+                                         opts_.one_file_system, root_device));
         }
         return results;
     }
@@ -713,33 +676,16 @@ class PlannerScanner {
           totals_(totals), slice_sizes_(slice_sizes), pool_(pool) {}
 
     void scan_source(const neotape::SourceSpec &spec) {
-        struct stat st{};
-        if (lstat(spec.open_path.c_str(), &st) != 0) {
-            fail(format("lstat {}: {}", display_path(spec.open_path),
-                        std::strerror(errno)));
-        }
-
-        std::optional<dev_t> const root_device = st.st_dev;
-        EntryMeta root_meta{
-            .source_path = spec.open_path,
-            .archive_path = neotape::archive_path_for_source(
-                spec, spec.open_path.generic_string()),
-            .kind = kind_from_mode(st.st_mode),
-            .disk_bytes = disk_bytes_from_stat(st),
-            .apparent_bytes = apparent_bytes_from_stat(st),
-            .device = st.st_dev,
-            .inode = st.st_ino,
-            .mtime = static_cast<int64_t>(st.st_mtime),
-            .uid = st.st_uid,
-            .uname = {},
-            .gid = st.st_gid,
-            .gname = {},
-        };
+        LstatResult root = stat_entry(0, spec.open_path, spec, false, {});
+        if (!root.ok)
+            fail(root.warning);
+        EntryMeta &root_meta = root.meta;
+        std::optional<dev_t> const root_device = root_meta.device;
         resolve_names(root_meta);
         add_to_slice(current_slice_, root_meta, opts_, slice_num_, totals_,
                      slice_sizes_);
 
-        if (!S_ISDIR(st.st_mode)) {
+        if (root_meta.kind != 'd') {
             return;
         }
 
