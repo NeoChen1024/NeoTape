@@ -219,6 +219,11 @@ Position TapeDevice::tell() { return do_tell(); }
 // -- markers -----------------------------------------------------------
 
 void TapeDevice::write_filemark(int count) { do_mtop(MTWEOF, count); }
+
+// -- drive control -----------------------------------------------------
+
+// The Linux st driver treats block size 0 as variable block mode.
+void TapeDevice::set_variable_block_mode() { do_mtop(MTSETBLK, 0); }
 // -- status queries ----------------------------------------------------
 
 Status TapeDevice::status() { return do_status(); }

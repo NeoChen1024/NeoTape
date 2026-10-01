@@ -6,6 +6,8 @@
 #include <cerrno>
 #include <fcntl.h>
 #include <unistd.h>
+#include <utility>
+#include <vector>
 
 namespace {
 int target_fd = -1;
@@ -120,4 +122,19 @@ TEST_CASE("tape flush errors leave the just-written record unacknowledged",
     // A success return would let the session ACK data whose flush failed.
     REQUIRE_THROWS_AS(sink.write(record), mt::Error);
     REQUIRE(device.writes == 1);
+}
+
+TEST_CASE("tape requests variable block mode from the st driver",
+          "[unit][tape]") {
+    struct Recorder : mt::TapeDevice {
+        Recorder() : TapeDevice(-1, "recording-tape", true) {}
+        std::vector<std::pair<int, int>> operations;
+        void do_mtop(int op, int count) override {
+            operations.emplace_back(op, count);
+        }
+    } device;
+    device.set_variable_block_mode();
+    // <linux/mtio.h>: MTSETBLK is 20; the st driver reads block size 0 as
+    // variable block mode.
+    REQUIRE(device.operations == std::vector<std::pair<int, int>>{{20, 0}});
 }

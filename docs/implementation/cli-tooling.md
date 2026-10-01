@@ -185,6 +185,11 @@ colon only, so locator paths may contain additional colons.
 | `tcp:` | `tcp://host:port` | `neotape-archiver --listen`, `neotape-raw-store --listen`, `neotape-extractor --listen`, `neotape-write --source`, `neotape-read --connect` |
 | `unix:` | `unix:///path/socket` | `neotape-archiver --listen`, `neotape-raw-store --listen`, `neotape-extractor --listen`, `neotape-write --source`, `neotape-read --connect` |
 
+Opening a `tape:` locator for reading or writing first requests variable
+block mode (`MTSETBLK 0`), so each record is one physical tape block. A drive
+that refuses it produces a warning and stays in its current mode; it then
+works only if its fixed block size equals every record size used.
+
 ## Output conventions
 
 | Stream | Content |

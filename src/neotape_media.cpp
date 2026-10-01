@@ -162,6 +162,15 @@ RecordReader::RecordReader(const MediaLocator &source) {
         int flags = ::fcntl(tape_->fd(), F_GETFL, 0);
         if (flags < 0 || ::fcntl(tape_->fd(), F_SETFL, flags & ~O_NONBLOCK) < 0)
             throw std::runtime_error(format("fcntl: {}", std::strerror(errno)));
+        // Drives without variable block mode can still be read when their
+        // fixed block size matches the recorded block size.
+        try {
+            tape_->set_variable_block_mode();
+        } catch (const mt::Error &e) {
+            std::cerr << format(
+                "neotape: warning: variable block mode unavailable: {}\n",
+                e.what());
+        }
         tape_->rewind();
         buffer_.resize(max_block_size);
     } else if (source.kind == MediaLocator::spool) {

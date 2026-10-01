@@ -110,6 +110,12 @@ class TapeDevice {
 
     void write_filemark(int count = 1);
 
+    // -- drive control -------------------------------------------------
+
+    // Request variable block mode so each read()/write() transfers exactly
+    // one record of any size. Throws Error when the drive refuses it.
+    void set_variable_block_mode();
+
     // -- status queries ------------------------------------------------
 
     Status status();

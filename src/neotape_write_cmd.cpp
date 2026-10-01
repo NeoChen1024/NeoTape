@@ -428,6 +428,16 @@ int main(int argc, char **argv) {
             std::unique_ptr<mt::TapeDevice> dev;
             if (opts.target.kind == TargetLocator::tape) {
                 dev = std::make_unique<mt::TapeDevice>(opts.target.path, true);
+                // Drives without variable block mode can still work when
+                // their fixed block size matches every record written.
+                try {
+                    dev->set_variable_block_mode();
+                } catch (const mt::Error &e) {
+                    neotape::write_diagnostic(
+                        format("neotape-write: warning: variable block mode "
+                               "unavailable: {}",
+                               e.what()));
+                }
             } else if (opts.target.kind == TargetLocator::spool) {
                 fs::path const spool_root(opts.target.path);
                 fs::path const installed_bundle =
