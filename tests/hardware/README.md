@@ -22,18 +22,25 @@ without modifying the source. It records independent SHA-256 digests, preserves
 file modes and symlink targets, and creates a six-slice plan (depending on the
 source sizes). The run directory needs space for the snapshot, captured records,
 restored pax stream, and extracted files: allow approximately 160 GiB.
+With `--in-place` it hashes every file of SOURCE where it is and plans SOURCE
+itself instead of a copy; the operator must keep SOURCE unmodified until the
+source comparison finishes.
 
 `run_lto5.py --device DEVICE --root RUN_DIRECTORY --repo REPOSITORY
 --bin-dir OPTIMIZED_BIN_DIRECTORY` performs:
 
 1. `mt compression 0`, followed by a 257 MiB software-capacity volume including
-   a recovery bundle; the proxy withholds ACK 255.
-2. One readback/capture of that volume into a persistent extractor.
-3. Overwrite of the same partition with the archive continuation until real EOT.
-4. Readback/capture before overwriting with the final archive tail.
-5. Final readback, external bsdtar extraction, and comparison with the source
-   manifest.
-6. `mt compression 1` in `finally`, including failure and handled termination.
+   a recovery bundle; the proxy withholds ACK 255. The drive is first put in
+   fixed 512-byte block mode, and both the writer and the reader must restore
+   variable block mode themselves.
+2. One readback/capture of that volume into a persistent extractor, then
+   `neotape-inspect` and `neotape-scan` of the tape. Both report the BOT
+   recovery bundle tapefile as a non-NeoTape issue.
+3. Repeated overwrites of the same partition with the archive continuation,
+   each until real EOT, with a readback/capture before every overwrite.
+4. The final archive tail, its readback, inspect and scan, external bsdtar
+   extraction, and comparison with the source manifest.
+5. `mt compression 1` in `finally`, including failure and handled termination.
 
 The controller checks Partition 0 and ONLINE before starting. Do not run other
 tape commands concurrently. SIGKILL or machine failure bypasses Python cleanup;
@@ -54,4 +61,6 @@ public test fixtures, not keys for real backups.
 
 Finally run `audit_run.py RUN_DIRECTORY` to compare producer ACKs, readback
 record counts, normalized retry equality, and the source-comparison result.
+Besides ACK 255, a record whose post-write status failed at real EOT is
+retried on the next volume; every retry must match after normalization.
 Keep controller logs and raw captures when any check fails.

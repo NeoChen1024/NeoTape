@@ -123,6 +123,14 @@ def main():
         if result.returncode not in accepted:
             raise RuntimeError(f"{label} failed; see {label}.log")
         return result.returncode
+    def command_output(label, arguments):
+        command(label, arguments, timeout=60)
+        return (root / f"{label}.log").read_text()
+    def force_fixed_block():
+        command("setblk-512", ["mt", "-f", opts.device, "setblk", "512"], timeout=60)
+    def require_variable_block(status, who):
+        if "Tape block size 0 bytes" not in status:
+            raise RuntimeError(f"{who} did not restore variable block mode")
     def server(label, arguments):
         log = (root / f"{label}.log").open("w")
         logs.append(log)
@@ -146,7 +154,7 @@ def main():
             "--plan", root / "source.plan", "--volume-block-size", "1M",
             "--sign-secret-key", secret, "--retention-frame-count", "64",
             "--output-buffer-size", "256M", "--io-thread", "8",
-            "--archive-name", "lto5-hardware-20260918", "--debug"])
+            "--archive-name", "lto5-hardware-20261002", "--debug"])
         wait_socket(root / "archiver.sock", archiver)
         extractor = server("extractor", [binaries / "neotape-extractor",
             "--listen", "unix://" + str(root / "extractor.sock"),
@@ -155,7 +163,11 @@ def main():
         proxy_process = server("proxy", [sys.executable, __file__, "--proxy",
             "--device", opts.device, "--root", root, "--repo", repo])
         wait_socket(root / "proxy.sock", proxy_process)
-        for volume in (1, 2, 3):
+        volume, code = 0, 3
+        while code == 3:
+            volume += 1
+            if volume > 8:
+                raise RuntimeError("archive did not finish within eight volumes")
             address = root / ("proxy.sock" if volume == 1 else "archiver.sock")
             options = [binaries / "neotape-write", "--source", "unix://" + str(address),
                 "--target", "tape:" + opts.device, "--erase",
@@ -163,19 +175,34 @@ def main():
             if volume == 1:
                 options += ["--recovery-bundle", root / "recovery.tar",
                             "--max-volume-bytes", "257M"]
-            code = command(f"v{volume}-write", options, (3,) if volume < 3 else (0,))
-            command(f"v{volume}-after-write-status", ["mt", "-f", opts.device, "status"], timeout=60)
+                # Leave the drive in fixed-block mode: the writer must request
+                # variable block mode itself or the 1 MiB records are split.
+                force_fixed_block()
+            code = command(f"v{volume}-write", options, (0, 3))
+            status = command_output(f"v{volume}-after-write-status", ["mt", "-f", opts.device, "status"])
+            if volume == 1:
+                require_variable_block(status, "writer")
+                force_fixed_block()
             command(f"v{volume}-read", [binaries / "neotape_capture_volume",
                 "tape:" + opts.device, "unix://" + str(root / "extractor.sock"),
                 root / f"volume-{volume}", public])
-            command(f"v{volume}-after-read-status", ["mt", "-f", opts.device, "status"], timeout=60)
+            status = command_output(f"v{volume}-after-read-status", ["mt", "-f", opts.device, "status"])
             if volume == 1:
+                require_variable_block(status, "reader")
                 acks = [int(row[1]) for row in csv.reader((root / "v1-wire.tsv").open(), delimiter="\t") if row and row[0] == "ack"]
                 read = [int(row["global"]) for row in csv.DictReader((root / "volume-1/records.tsv").open(), delimiter="\t") if row["event"] == "record"]
                 if acks != read or 255 not in acks:
                     raise RuntimeError("V1 ACK/readback mismatch or lost-ACK injection not reached")
                 print(f"V1 CHECKPOINT: {len(read)} committed records read back, ACK 255 withheld", flush=True)
+            if volume == 1 or code == 0:
+                # Small volumes only: a second full-partition pass is not needed.
+                # Both report the BOT recovery bundle as a non-NeoTape issue.
+                command(f"v{volume}-inspect", [binaries / "neotape-inspect",
+                    "--source", "tape:" + opts.device], (0, 1))
+                command(f"v{volume}-scan", [binaries / "neotape-scan",
+                    "--source", "tape:" + opts.device, "-v"], (0, 1))
             # Retained originals are now on SSD before overwriting the partition.
+        results["volumes"] = volume
         if archiver.wait(timeout=60) != 0 or extractor.wait(timeout=60) != 0:
             raise RuntimeError("archive/extractor completion failure")
         text = (root / "extractor.log").read_text()

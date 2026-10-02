@@ -1,4 +1,10 @@
-"""Create an immutable test subset and independent source-content manifest."""
+"""Create a test source and independent source-content manifest.
+
+By default a 36.5 GiB subset is copied into the run directory. With
+--in-place every file is hashed where it is and the plan archives SOURCE
+itself; the operator guarantees SOURCE is not modified during the run.
+"""
+import argparse
 import concurrent.futures
 import hashlib
 import json
@@ -9,10 +15,17 @@ import stat
 import subprocess
 import sys
 
-source, root, planner = map(Path, sys.argv[1:])
+args = argparse.ArgumentParser()
+args.add_argument("source", type=Path)
+args.add_argument("root", type=Path)
+args.add_argument("planner", type=Path)
+args.add_argument("--in-place", action="store_true")
+opts = args.parse_args()
+source, root, planner = opts.source.resolve(), opts.root, opts.planner
 root.mkdir(parents=True, exist_ok=True)
-snapshot = root / "source"
-snapshot.mkdir()
+snapshot = source if opts.in_place else root / "source"
+if not opts.in_place:
+    snapshot.mkdir()
 files, links = [], []
 for directory, dirs, names in os.walk(source, followlinks=False):
     for name in dirs + names:
@@ -31,7 +44,7 @@ for entry in sorted(files, key=lambda e: str(e[0])):
 chosen = {p for p, _ in small}
 selected = list(small)
 total = small_bytes
-target = int(36.5 * 1024**3)
+target = float("inf") if opts.in_place else int(36.5 * 1024**3)
 for entry in sorted(files, key=lambda e: (-e[1].st_size, str(e[0]))):
     if entry[0] not in chosen and total < target:
         selected.append(entry)
@@ -41,32 +54,40 @@ print(f"selected_files={len(selected)} bytes={total} GiB={total/1024**3:.3f}", f
 
 def copy(entry):
     relative, original = entry
-    path, destination = source / relative, snapshot / relative
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    path = source / relative
     digest = hashlib.sha256()
-    with path.open("rb") as inp, destination.open("xb") as out:
-        while block := inp.read(4 * 1024**2):
-            digest.update(block)
-            out.write(block)
+    if opts.in_place:
+        with path.open("rb") as inp:
+            while block := inp.read(4 * 1024**2):
+                digest.update(block)
+    else:
+        destination = snapshot / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("rb") as inp, destination.open("xb") as out:
+            while block := inp.read(4 * 1024**2):
+                digest.update(block)
+                out.write(block)
+        shutil.copystat(path, destination)
     after = path.stat()
     if (original.st_ino, original.st_size, original.st_mtime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns):
-        raise RuntimeError(f"source changed while copying: {relative}")
-    shutil.copystat(path, destination)
+        raise RuntimeError(f"source changed while reading: {relative}")
     return dict(path=str(relative), kind="f", size=original.st_size,
                 sha256=digest.hexdigest(), mode=stat.S_IMODE(original.st_mode))
 
 with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
     manifest = list(pool.map(copy, selected))
 for relative, info in links:
-    destination = snapshot / relative
-    destination.parent.mkdir(parents=True, exist_ok=True)
     target = os.readlink(source / relative)
-    destination.symlink_to(target)
+    if not opts.in_place:
+        destination = snapshot / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.symlink_to(target)
     manifest.append(dict(path=str(relative), kind="l", target=target))
 for directory, dirs, names in os.walk(snapshot):
     relative = Path(directory).relative_to(snapshot)
     if str(relative) != ".":
-        shutil.copystat(source / relative, Path(directory), follow_symlinks=False)
+        if not opts.in_place:
+            shutil.copystat(source / relative, Path(directory), follow_symlinks=False)
         manifest.append(dict(path=str(relative), kind="d"))
 (root / "source-manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=True))
 subprocess.run([str(planner), "-C", str(snapshot), "-o", str(root / "base.plan"),
