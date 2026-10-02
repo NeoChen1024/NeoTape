@@ -110,10 +110,10 @@ Observed probe results:
 This supports using an 8 MiB probe ceiling on the validated drive while still
 treating each successful `read()` as one physical tape record.
 
-## 2026-09-18 production-pipeline regression
+## Production-pipeline regression
 
-The [IBM LTO-5 regression report](lto5-hardware-regression-2026-09-18.md)
-records a three-volume signed/FEC round trip through a small LTFS Partition 0,
-including a real EOT boundary, withheld-ACK replay, full source comparison,
-and the resulting writer/reader fixes. It distinguishes physical observations
-from mock and SSD-only fault injection.
+The [IBM LTO-5 regression report](lto5-hardware-regression-2026-10-02.md)
+records a four-volume signed round trip through a small LTFS Partition 0,
+including two real EOT boundaries with retried final records, withheld-ACK
+replay and full source comparison. It distinguishes physical observations
+from SSD-only fault injection.

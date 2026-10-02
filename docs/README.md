@@ -35,7 +35,7 @@ docs/
     2026-09-refactor.md             CLI/streaming refactor plan and progress
     cli-tooling.md                  CLI reference and workflow examples
     lto-behavior-notes.md           Empirical LTO EOT/EOM observations
-    lto5-hardware-regression-2026-09-18.md  Physical signed/FEC multi-volume regression (historical)
+    lto5-hardware-regression-2026-10-02.md  Physical signed four-volume regression
     mt-pax-architecture.md          mt-pax thread roles and data flow
     path-pitfalls.md                Path handling conventions and gotchas
     phase-3.5-mt-pax-writer.md      Historical mt-pax writer phase notes
