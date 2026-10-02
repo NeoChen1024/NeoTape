@@ -154,6 +154,7 @@ struct Stats {
     uint64_t metadata_frames = 0;
     uint64_t archive_end_frames = 0;
     uint64_t filemarks = 0;
+    uint64_t prefix_records = 0;
     uint64_t errors = 0;
     uint64_t unsigned_frames = 0;
     uint64_t signed_frames = 0;
@@ -204,11 +205,20 @@ int do_inspect(const Options &opts) {
             continue;
         }
 
+        const auto *data = reinterpret_cast<const uint8_t *>(rr.record.data());
+        if (frame_number == 0 &&
+            !neotape::has_frame_magic(data, rr.record.size())) {
+            ++stats.prefix_records;
+            std::cout << format("  {:>3s} | {:>4d} | {:>6s} | {:>8s} | "
+                                "{:>9s} | {:>8s} | {:>7d} | {:>5s} | {:>5s}\n",
+                                "", static_cast<int>(rr.file_num), "", "",
+                                "prefix", "", rr.record.size(), "", "");
+            continue;
+        }
+
         ++frame_number;
         ++stats.total_frames;
 
-        // Parse header.
-        const auto *data = reinterpret_cast<const uint8_t *>(rr.record.data());
         neotape::CheckedFrame frame;
         try {
             frame = neotape::check_frame(data, rr.record.size());
@@ -293,6 +303,7 @@ int do_inspect(const Options &opts) {
     std::cout << format("  Metadata frames:  {}\n", stats.metadata_frames);
     std::cout << format("  Archive_end:      {}\n", stats.archive_end_frames);
     std::cout << format("  Filemarks:        {}\n", stats.filemarks);
+    std::cout << format("  Prefix records:   {}\n", stats.prefix_records);
     std::cout << format("  Unsigned frames:  {}\n", stats.unsigned_frames);
     std::cout << format("  Signed frames:    {}\n", stats.signed_frames);
     std::cout << format("  Signed unverified: {}\n", stats.signed_unverified);

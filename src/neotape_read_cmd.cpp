@@ -137,9 +137,8 @@ int main(int argc, char **argv) {
                             continue;
                         }
                     }
-                    if (event.record.size() >= neotape::magic.size() &&
-                        std::memcmp(event.record.data(), neotape::magic.data(),
-                                    neotape::magic.size()) == 0) {
+                    if (neotape::has_frame_magic(event.record.data(),
+                                                 event.record.size())) {
                         saw_neotape_frame = true;
                         break;
                     }

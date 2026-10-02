@@ -96,6 +96,25 @@ TEST_CASE("format: channel type values", "[unit][format]") {
         neotape::ChannelType::ARCHIVE_END);
 }
 
+TEST_CASE("format: frame magic separates a non-NeoTape prefix",
+          "[unit][format]") {
+    // Independent wire bytes: the spec's eight-byte magic, and the start of
+    // a ustar header as written for a BOT recovery bundle.
+    std::vector<uint8_t> frame(512);
+    std::memcpy(frame.data(), "NeoTape\0", 8);
+    REQUIRE(neotape::has_frame_magic(frame.data(), frame.size()));
+    REQUIRE(neotape::has_frame_magic(frame.data(), 8));
+    REQUIRE_FALSE(neotape::has_frame_magic(frame.data(), 7));
+
+    std::vector<uint8_t> tar(512);
+    std::memcpy(tar.data(), "recovery-note.txt", 17);
+    std::memcpy(tar.data() + 257, "ustar", 5);
+    REQUIRE_FALSE(neotape::has_frame_magic(tar.data(), tar.size()));
+
+    frame[7] = 'X';
+    REQUIRE_FALSE(neotape::has_frame_magic(frame.data(), frame.size()));
+}
+
 TEST_CASE("format: layout round trip", "[unit][format]") {
     neotape::FrameHeader const header = make_content_header();
     neotape::HeaderBytes bytes = neotape::serialize_frame_header(header);

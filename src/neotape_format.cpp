@@ -227,11 +227,17 @@ HeaderBytes serialize_frame_header(const FrameHeader &header) {
     return bytes;
 }
 
+bool has_frame_magic(const void *data, std::size_t size) {
+    return size >= off_magic + magic.size() &&
+           std::memcmp(static_cast<const uint8_t *>(data) + off_magic,
+                       magic.data(), magic.size()) == 0;
+}
+
 FrameHeader parse_fixed_header(const uint8_t *data, std::size_t size) {
     if (size < fixed_header_size) {
         throw std::runtime_error("short fixed header");
     }
-    if (std::memcmp(data + off_magic, magic.data(), magic.size()) != 0) {
+    if (!has_frame_magic(data, size)) {
         throw std::runtime_error("bad magic");
     }
     if (data[off_header_version] != header_version) {

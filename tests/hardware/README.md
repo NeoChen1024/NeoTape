@@ -34,8 +34,8 @@ source comparison finishes.
    fixed 512-byte block mode, and both the writer and the reader must restore
    variable block mode themselves.
 2. One readback/capture of that volume into a persistent extractor, then
-   `neotape-inspect` and `neotape-scan` of the tape. Both report the BOT
-   recovery bundle tapefile as a non-NeoTape issue.
+   `neotape-inspect` and `neotape-scan` of the tape, which must pass while
+   skipping the BOT recovery bundle as a non-NeoTape prefix.
 3. Repeated overwrites of the same partition with the archive continuation,
    each until real EOT, with a readback/capture before every overwrite.
 4. The final archive tail, its readback, inspect and scan, external bsdtar

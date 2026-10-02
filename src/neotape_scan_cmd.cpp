@@ -139,15 +139,26 @@ vector<string> scan_spool_source(const fs::path &root, Handler &&handle) {
 }
 
 template <typename Handler>
-vector<string> scan_tape_source(const string &path, Handler &&handle) {
+vector<string> scan_tape_source(const string &path, bool verbose,
+                                Handler &&handle) {
     vector<string> issues;
     neotape::RecordReader reader({SourceLocator::tape, path});
+    bool saw_frame = false;
     for (;;) {
         auto record = reader.next();
         if (record.event == neotape::RecordEvent::end)
             break;
         if (record.event == neotape::RecordEvent::filemark)
             continue;
+        if (!saw_frame && !neotape::has_frame_magic(record.record.data(),
+                                                    record.record.size())) {
+            if (verbose)
+                std::cout << format("Tapefile #{}: non-NeoTape prefix\n",
+                                    record.file_num);
+            reader.skip_file();
+            continue;
+        }
+        saw_frame = true;
         record_first_frame(
             issues, record.file_num,
             reinterpret_cast<const uint8_t *>(record.record.data()),
@@ -218,7 +229,8 @@ int do_scan(const Options &opts) {
         issues =
             scan_spool_source(fs::path(opts.source.path), handle_first_frame);
     } else {
-        issues = scan_tape_source(opts.source.path, handle_first_frame);
+        issues = scan_tape_source(opts.source.path, opts.verbose,
+                                  handle_first_frame);
     }
 
     std::cout << format("Unique archives found: {}\n", archives.size());

@@ -156,6 +156,11 @@ The compliance report applies the full conformance rules from
 integrity, archive identity consistency, sequence continuity, channel ordering,
 and `archive_end` rules.
 
+Like `neotape-read`, both `neotape-inspect` and `neotape-scan` skip records
+before the first NeoTape magic, such as a BOT recovery bundle, as a
+non-NeoTape prefix. Inspect lists and counts them without reporting an issue;
+scan `-v` names the skipped tapefile.
+
 ## Scan tool
 
 `neotape-scan` reads only the first NeoTape frame from each tapefile in a spool

@@ -196,11 +196,11 @@ def main():
                 print(f"V1 CHECKPOINT: {len(read)} committed records read back, ACK 255 withheld", flush=True)
             if volume == 1 or code == 0:
                 # Small volumes only: a second full-partition pass is not needed.
-                # Both report the BOT recovery bundle as a non-NeoTape issue.
+                # Both must skip the BOT recovery bundle as a non-NeoTape prefix.
                 command(f"v{volume}-inspect", [binaries / "neotape-inspect",
-                    "--source", "tape:" + opts.device], (0, 1))
+                    "--source", "tape:" + opts.device])
                 command(f"v{volume}-scan", [binaries / "neotape-scan",
-                    "--source", "tape:" + opts.device, "-v"], (0, 1))
+                    "--source", "tape:" + opts.device, "-v"])
             # Retained originals are now on SSD before overwriting the partition.
         results["volumes"] = volume
         if archiver.wait(timeout=60) != 0 or extractor.wait(timeout=60) != 0:

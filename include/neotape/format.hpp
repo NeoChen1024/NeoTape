@@ -67,6 +67,10 @@ struct FrameHeader {
 // std::runtime_error on violation.
 HeaderBytes serialize_frame_header(const FrameHeader &header);
 FrameHeader parse_fixed_header(const uint8_t *data, std::size_t size);
+// Whether a record begins with the NeoTape magic. Records before the first
+// such record on a medium are a non-NeoTape prefix, such as a BOT recovery
+// bundle, which readers skip instead of treating as damaged frames.
+bool has_frame_magic(const void *data, std::size_t size);
 
 std::string channel_type_name(ChannelType type);
 std::string hash_hex(const Hash &hash);
