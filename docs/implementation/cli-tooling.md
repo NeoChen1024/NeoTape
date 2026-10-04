@@ -124,8 +124,7 @@ accepts again. `--list` prints slice, kind, size, modification time (local
 time), owner/group, and path for each entry; `--summary` prints entry and
 byte totals per slice. `/chdir/` records are not shown.
 
-A tape source is read from its current position and left where reading
-stopped; position the tape at the archive first. Foreign tape files ahead of
+The tape is left where reading stopped. Foreign tape files ahead of
 the first frame, such as the recovery bundle, are skipped. The command fails
 when the archive has no catalog, when the position is not the start of an
 archive, or when a catalog frame fails validation; output written before such
@@ -225,6 +224,11 @@ colon only, so locator paths may contain additional colons.
 | `null` | `null` | `neotape-write --target` |
 | `tcp:` | `tcp://host:port` | `neotape-archiver --listen`, `neotape-raw-store --listen`, `neotape-extractor --listen`, `neotape-write --source`, `neotape-read --connect` |
 | `unix:` | `unix:///path/socket` | `neotape-archiver --listen`, `neotape-raw-store --listen`, `neotape-extractor --listen`, `neotape-write --source`, `neotape-read --connect` |
+
+Tools that read a `tape:` locator (`neotape-read`, `neotape-inspect`,
+`neotape-scan`, `neotape-dump`, `neotape-catalog`) start at the tape's current
+position and never rewind, before or after reading: an archive need not start
+at BOT. Position the tape first, for example with `mt -f /dev/nst0 rewind`.
 
 Opening a `tape:` locator for reading or writing first requests variable
 block mode (`MTSETBLK 0`), so each record is one physical tape block. A drive

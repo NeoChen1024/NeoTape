@@ -183,6 +183,8 @@ def main():
             if volume == 1:
                 require_variable_block(status, "writer")
                 force_fixed_block()
+            # Readers start at the current position; return to the volume start.
+            command(f"v{volume}-rewind-read", ["mt", "-f", opts.device, "rewind"], timeout=600)
             command(f"v{volume}-read", [binaries / "neotape_capture_volume",
                 "tape:" + opts.device, "unix://" + str(root / "extractor.sock"),
                 root / f"volume-{volume}", public])
@@ -197,8 +199,10 @@ def main():
             if volume == 1 or code == 0:
                 # Small volumes only: a second full-partition pass is not needed.
                 # Both must skip the BOT recovery bundle as a non-NeoTape prefix.
+                command(f"v{volume}-rewind-inspect", ["mt", "-f", opts.device, "rewind"], timeout=600)
                 command(f"v{volume}-inspect", [binaries / "neotape-inspect",
                     "--source", "tape:" + opts.device])
+                command(f"v{volume}-rewind-scan", ["mt", "-f", opts.device, "rewind"], timeout=600)
                 command(f"v{volume}-scan", [binaries / "neotape-scan",
                     "--source", "tape:" + opts.device, "-v"])
             # Retained originals are now on SSD before overwriting the partition.

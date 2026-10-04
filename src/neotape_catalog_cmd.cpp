@@ -129,8 +129,7 @@ Options parse_args(int argc, char **argv) {
 class CatalogStreambuf : public std::streambuf {
   public:
     explicit CatalogStreambuf(const Options &opts)
-        : opts_(opts),
-          reader_(opts.source, neotape::TapeStart::current_position) {}
+        : opts_(opts), reader_(opts.source) {}
 
   protected:
     int_type underflow() override {

@@ -12,7 +12,7 @@ int tape_fd = -1;
 std::vector<std::vector<uint8_t>> records;
 std::vector<size_t> requests;
 size_t cursor = 0;
-int fail_at = -1, spaces = 0;
+int fail_at = -1, spaces = 0, rewinds = 0;
 bool failed = false, position_lost = false;
 std::vector<uint8_t> record(uint32_t size, bool end = false) {
     neotape::FrameHeader header;
@@ -58,8 +58,16 @@ extern "C" int __wrap_ioctl(int fd, unsigned long request, ...) {
     va_start(arguments, request);
     void *argument = va_arg(arguments, void *);
     va_end(arguments);
-    if (request == MTIOCTOP && static_cast<mtop *>(argument)->mt_op == MTREW) {
+    // The reader's first tape operation selects variable block mode; that
+    // call identifies the fake tape's descriptor.
+    if (request == MTIOCTOP &&
+        static_cast<mtop *>(argument)->mt_op == MTSETBLK) {
         tape_fd = fd;
+        return 0;
+    }
+    if (fd == tape_fd && request == MTIOCTOP &&
+        static_cast<mtop *>(argument)->mt_op == MTREW) {
+        ++rewinds;
         return 0;
     }
     if (fd == tape_fd && request == MTIOCGET) {
@@ -89,7 +97,7 @@ TEST_CASE("tape reader uses verified record size and resets at archive end",
     cursor = 0;
     fail_at = -1;
     failed = position_lost = false;
-    spaces = 0;
+    spaces = rewinds = 0;
     requests.clear();
     neotape::RecordReader reader({neotape::MediaLocator::tape, "/dev/null"});
     for (auto const &expected : records) {
@@ -99,6 +107,8 @@ TEST_CASE("tape reader uses verified record size and resets at archive end",
     }
     REQUIRE(requests == std::vector<size_t>{neotape::max_block_size, 4096, 4096,
                                             neotape::max_block_size});
+    // Reading starts at the current position: the reader never rewinds.
+    REQUIRE(rewinds == 0);
 }
 
 TEST_CASE("tape skips unreadable records only with confirmed driver position",

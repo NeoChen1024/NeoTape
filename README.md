@@ -308,7 +308,7 @@ anything. See the [CLI reference](docs/implementation/cli-tooling.md#catalog-pre
 build/dev/bin/neotape-dump --source tape:/dev/nst0 --target spool:./raw-dump -v
 ```
 
-Rewinds a tape and copies every physical record into numerically ordered spool
+Copies every physical record from the tape's current position into numerically ordered spool
 files while preserving filemark boundaries. It deliberately performs no header
 parsing, hash verification, archive identity checks, or sequence consistency
 checks. The target directory must be empty.
