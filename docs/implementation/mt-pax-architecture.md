@@ -152,6 +152,16 @@ polling multiple sources.
 can always publish when the serializer is temporarily blocked on large-entry
 streaming or `bb1` backpressure.
 
+### Plan files scale with the input
+
+A plan file grows with the number of entries, not with any configured buffer:
+a 5.3-million-entry tree produces a plan of roughly 700 MiB. No component may
+hold a whole plan, or any structure with one element per plan entry, in
+memory. The pax writer consumes the plan one record at a time through
+`PlanReader`, the archiver copies it into the slice 0 catalog through a
+fixed-size buffer, and the extractor writes catalog payloads out frame by
+frame. New consumers of the plan or the catalog must stream it the same way.
+
 ## Shutdown sequence
 
 1. Walker finishes walking and calls `PaxPipeline::finish_input()` — closes

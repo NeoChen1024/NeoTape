@@ -28,6 +28,23 @@ A new `channel_type` that uses `sideband_data` MUST specify its internal structu
 
 An index that maps file paths to their exact slice and frame positions, enabling targeted partial restore without scanning all slices.
 
+## Slice-Level Resume
+
+Restart an interrupted archive run from the slice after the last completely
+written one, instead of from the beginning.
+
+This depends on slice boundaries being fixed ahead of time by a plan file.
+Replanning the same source tree may produce different boundaries, so the
+resumed run must reuse the original plan; archives created without a plan
+cannot be resumed this way.
+
+Open questions:
+
+- How the last completed slice is determined: writer-side state, or reading
+  the media back.
+- Positioning and overwrite rules for the partially written slice.
+- Sequence, validation, and archive identity state for the resumed run.
+
 ## Changer/Robot Integration
 
 Support for automated tape library changers: load/unload media, scan barcodes, select tapes by label.
