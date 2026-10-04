@@ -44,6 +44,10 @@ archive requires another writer invocation. Status `0` means the complete
 archive, including `archive_end`, was accepted; `1` reports a runtime or source
 error, and `2` reports invalid command-line usage.
 
+By default the writer refuses to overwrite existing content. `--erase` rewinds
+to BOT and overwrites; `--append` spaces to the end of data and continues
+there.
+
 `-R, --recovery-bundle <tar>` is available in non-append mode. A tape target
 writes the bundle at BOT using separate 256 KiB records by default. Use
 `-r, --recovery-bundle-block-size <SIZE>` to override that size. The writer
@@ -211,6 +215,31 @@ build/dev/bin/neotape-scan --source spool:./out
 # Also list each tapefile's first frame on tape:
 build/dev/bin/neotape-scan --source tape:/dev/nst0 -v
 ```
+
+## Dump tool
+
+```sh
+build/dev/bin/neotape-dump --source tape:/dev/nst0 --target spool:./raw-dump -v
+```
+
+Copies every physical record from the tape's current position into numerically
+ordered spool files, preserving filemark boundaries. It performs no header
+parsing, hash verification, archive identity checks, or sequence checks. The
+target directory must be empty.
+
+## Signing and verification
+
+NeoTape does not generate keypairs. Create one with OpenBSD `signify` or a
+compatible implementation and pass the resulting `.sec` and `.pub` files.
+
+| Tool | Option | Effect |
+|---|---|---|
+| `neotape-archiver`, `neotape-raw-store` | `--sign-secret-key <file.sec>` | Sign every frame. `--sign-passphrase-file` unlocks an encrypted key. |
+| `neotape-write` | `--verify-pubkey <file.pub>` | Authenticate the source server by challenge-response before touching media, then verify each signed frame before writing it. |
+| `neotape-extractor`, `neotape-inspect`, `neotape-catalog` | `--verify-pubkey <file.pub>` | Verify frame signatures. Without a key, signed frames are used but reported as unverified. |
+| same | `--require-signed` | Reject unsigned or untrusted frames. Needs at least one `--verify-pubkey`. |
+
+See [08-security.md](../spec/08-security.md) for the trust model.
 
 ## Backend locators
 
