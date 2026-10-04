@@ -9,9 +9,9 @@ This document collects extension ideas for future NeoTape versions. They are not
 Extend `channel_type` beyond `ch_content`, `ch_metadata`, and `archive_end`. Values 0 and 3–254 are reserved.
 
 New `channel_type` values would be allocated by future specification versions.
-Each extension would need to define allowed ordering, interaction with existing
-channels, and completion rules. Per-channel sequence numbers alone do not
-permit arbitrary interleaving.
+Channels of a slice may already be interleaved freely, so an extension would
+only need to define its payload, completion rules, and any interaction with
+existing channels.
 
 ## Sideband Data Area
 
@@ -34,8 +34,9 @@ Restart an interrupted archive run from the slice after the last completely
 written one, instead of from the beginning.
 
 This depends on slice boundaries being fixed ahead of time by a plan file.
-Replanning the same source tree may produce different boundaries, so the
-resumed run must reuse the original plan; archives created without a plan
+Replanning the same source tree may produce different boundaries, and a file
+could then fall on the already-written side of a moved boundary and be left
+out of the archive. The resumed run must therefore reuse the original plan; archives created without a plan
 cannot be resumed this way.
 
 Open questions:

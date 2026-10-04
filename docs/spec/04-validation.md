@@ -181,8 +181,12 @@ report accepted replays separately from corruption or sequence gaps.
 For an intact logical stream, the validator MUST enforce the following within
 each slice:
 
-- `ch_metadata`, when present, forms at most one contiguous leading run
-- No `ch_metadata` frame appears after the first `ch_content` frame
+- Each channel forms at most one stream, tracked independently by its own
+  `channel_frame_seq_num` and `END` state
+
+The validator MUST NOT impose any relative order between frames of different
+channels: `ch_metadata` and `ch_content` frames may be interleaved freely.
+
 ## END Flag Rules
 
 These are full-conformance checks on the logical stream after replay removal.
@@ -221,8 +225,8 @@ A conforming validator MUST check that an `archive_end` frame has:
 
 Before accepting `archive_end` as proof of clean archive conformance, the
 validator MUST confirm that every channel present in the preceding slice has
-reached `END`. Checking only the physically preceding frame is insufficient: a
-metadata channel that never reached `END` may precede the content channel.
+reached `END`. Checking only the physically preceding frame is insufficient:
+another channel of the slice may still be open.
 
 Each cleanly completed logical archive instance MUST contain exactly one
 logical `archive_end`. Equivalent physical replays are handled under

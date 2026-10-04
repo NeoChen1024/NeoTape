@@ -117,8 +117,8 @@ The plan metadata stream serves a dual purpose:
 
 The catalog describes the whole archive: each entry record's `<slice>` field
 is the `slice_seq_num` of the slice that carries the entry, independent of the
-slice whose `ch_metadata` run carries the record. No other slice carries
-catalog records.
+slice whose `ch_metadata` stream carries the record. The current archiver
+writes the catalog once, in slice 0.
 
 `/chdir/` directives are written with the rest of the plan. They name
 directories on the archiving host and are planning-only instructions; catalog

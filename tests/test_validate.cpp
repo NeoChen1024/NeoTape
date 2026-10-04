@@ -328,7 +328,7 @@ TEST_CASE("validate: volume can begin at every content position",
     }
 }
 
-TEST_CASE("validate: built metadata run precedes content in slice 0",
+TEST_CASE("validate: built metadata stream followed by content in slice 0",
           "[unit][validation]") {
     constexpr uint32_t block_size = 4096, capacity = block_size - 512;
     auto identity = make_content_header(0, 0, 0, 0, 0);
@@ -371,4 +371,63 @@ TEST_CASE("validate: built metadata run precedes content in slice 0",
                                     header.frame_payload_size);
     }
     REQUIRE(seen_catalog == catalog);
+}
+
+TEST_CASE("validate: slice channels may interleave in any order",
+          "[unit][validation]") {
+    constexpr uint32_t full = 4096 - 512;
+    constexpr uint64_t end = neotape::frame_flag_end;
+    // content, metadata, content, metadata(END), content(END), then a slice
+    // whose metadata follows its only content frame.
+    vector<vector<std::byte>> const records = {
+        build_record(make_content_header(0, 0, 0, full, 0),
+                     vector<std::byte>(full)),
+        build_record(make_metadata_header(1, 0, 0, full, 0),
+                     vector<std::byte>(full)),
+        build_record(make_content_header(2, 0, 1, full, 0),
+                     vector<std::byte>(full)),
+        build_record(make_metadata_header(3, 0, 1, 0, end)),
+        build_record(make_content_header(4, 0, 2, 0, end)),
+        build_record(make_content_header(5, 1, 0, 0, end)),
+        build_record(make_metadata_header(6, 1, 0, 0, end)),
+        build_record(make_archive_end_header(7)),
+    };
+
+    SECTION("whole stream") {
+        FrameValidator validator;
+        for (size_t index = 0; index < records.size(); ++index) {
+            CAPTURE(index);
+            REQUIRE_FALSE(feed(validator, records[index]));
+        }
+    }
+    SECTION("a volume may begin between interleaved frames") {
+        for (size_t begin = 1; begin < records.size(); ++begin) {
+            CAPTURE(begin);
+            FrameValidator validator;
+            validator.seed_for_stream_start(check(records[begin]).header);
+            for (size_t index = begin; index < records.size(); ++index) {
+                CAPTURE(index);
+                REQUIRE_FALSE(feed(validator, records[index]));
+            }
+        }
+    }
+    SECTION("each channel still ends once and stays contiguous") {
+        FrameValidator validator;
+        for (size_t index = 0; index < 4; ++index)
+            REQUIRE_FALSE(feed(validator, records[index]));
+        // Metadata reached END at global 3.
+        REQUIRE(feed(validator,
+                     build_record(make_metadata_header(4, 0, 2, 0, end))));
+        FrameValidator skipping;
+        for (size_t index = 0; index < 2; ++index)
+            REQUIRE_FALSE(feed(skipping, records[index]));
+        REQUIRE(
+            feed(skipping, build_record(make_content_header(2, 0, 2, 0, end))));
+        FrameValidator unfinished;
+        for (size_t index = 0; index < 3; ++index)
+            REQUIRE_FALSE(feed(unfinished, records[index]));
+        // Slice 1 may not start while slice 0 metadata is still open.
+        REQUIRE(feed(unfinished,
+                     build_record(make_content_header(3, 1, 0, 0, end))));
+    }
 }

@@ -117,9 +117,8 @@ comparison and suppression under [04-validation.md](04-validation.md#replayed-re
 ### `ch_content` / `ch_metadata`
 
 - `END` marks the final frame of the current channel within the slice.
-- Within each slice, metadata frames precede all non-metadata frames: zero or more `ch_metadata` frames MAY appear first, followed by one or more `ch_content` frames. A slice MUST contain at least one frame across its channels. Writers MUST NOT place `ch_metadata` after the first `ch_content` frame within the same slice.
-- A slice MAY contain only metadata. Such a slice has one or more `ch_metadata` frames and no `ch_content` frames.
-- Each slice MAY contain at most one contiguous `ch_metadata` run.
+- A slice MUST contain at least one frame across its channels, and MAY contain only one of the two channels.
+- Each channel forms at most one stream per slice. Frames of different channels MAY appear in any order and MAY be interleaved.
 - `channel_frame_seq_num` is scoped to `(slice_seq_num, channel_type)`. It starts at 0 on the first frame of that channel in the slice and increments only within that channel, even if frames of other channels appear in between. The sequence does not continue across different `channel_type` values.
 
 ### `archive_end`
@@ -147,7 +146,7 @@ A slice may span volumes; a frame may not.
 - **Archive** — authoritative logical backup instance, identified by `archive_uuid`.
 - **Volume** — backend-defined container; not an authoritative logical record. `volume_seq_num` is advisory.
 - **Slice** — unit of ordering; identified by `slice_seq_num`. May span frames and backend volumes.
-- **Channel** — partitions a slice into `ch_metadata` and `ch_content`. Metadata precedes all content frames.
+- **Channel** — partitions a slice into `ch_metadata` and `ch_content`. Channels may be interleaved.
 - **Frame** — concrete transport record. Every frame has exactly one `channel_type`.
 
 ## Sequence Numbering

@@ -26,7 +26,6 @@ struct RestoreFrameValidation {
 //   - volume_block_size      constant across all frames
 //   - archive_uuid/label     constant across all frames
 //   - slice_seq_num          starts at 0, increments by at most 1
-//   - channel ordering       metadata before content within a slice
 //   - channel_frame_seq_num  contiguous per (slice, channel) group
 //   - archive_end            must be the final frame, carries CLEAN_END
 //
@@ -48,7 +47,9 @@ struct FrameValidator {
     std::array<uint64_t, 2> next_channel_seq{};
     std::array<bool, 2> channel_seen{};
     std::array<bool, 2> channel_ended{};
-    bool saw_non_metadata_in_slice = false;
+    // After seeding mid-archive, a channel's first frame in the seeded slice
+    // may arrive at any channel_frame_seq_num.
+    std::array<bool, 2> channel_seq_unknown{};
     bool stream_start_seeded = false;
 
     // Seed connection-local validation when reading begins at a volume

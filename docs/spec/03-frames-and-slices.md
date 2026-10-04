@@ -17,23 +17,20 @@ Each Frame occupies exactly one NeoTape record (`volume_block_size_kib * 1024` b
 ## Slices and Channels
 
 A slice is a writer-declared content grouping, identified by `slice_seq_num`.
-A slice consists of one or more frames in one of two forms:
+A slice consists of one or more frames:
 
 ```text
-slice = metadata_only_slice | payload_slice
-
-metadata_only_slice =
-    one or more ch_metadata frames
-
-payload_slice =
-    [ one or more leading ch_metadata frames ]
-    + one or more ch_content frames
+slice = any interleaving of
+    [ one ch_metadata stream ]
+    [ one ch_content stream ]
 ```
 
-At least one frame must be present across all channels. Each slice MAY contain
-at most one contiguous `ch_metadata` run. Metadata, when present, precedes all
-non-metadata frames. A metadata-only slice MUST NOT contain `ch_content`; a
-payload slice MUST contain at least one `ch_content` frame.
+At least one frame must be present across all channels. Each channel forms at
+most one stream per slice: its frames carry `channel_frame_seq_num` 0, 1, 2, …
+and the last one carries `END`. The relative order of frames belonging to
+different channels is unconstrained; a writer MAY place metadata before,
+after, or between content frames. A slice MAY contain only `ch_metadata` or
+only `ch_content`.
 
 A slice MAY span multiple archive volumes. Sequence continuity is maintained across volume boundaries: `global_frame_seq_num`, `slice_seq_num`, and `channel_frame_seq_num` do not reset at a volume boundary.
 
@@ -93,21 +90,20 @@ not introduce new logical frames.
 The authoritative continuity rules are defined in
 [docs/spec/04-validation.md](04-validation.md).
 
-## Metadata Channel Ordering
+## Channel Ordering
 
-Within each slice, metadata frames MUST precede all non-metadata frames. Writers MUST NOT place `ch_metadata` after `ch_content` within the same slice. `channel_frame_seq_num` is scoped per-channel and does not continue across different `channel_type` values.
+Channels within a slice are independent streams. Frames of different channels
+MAY be interleaved in any order. `channel_frame_seq_num` is scoped per-channel
+and does not continue across different `channel_type` values.
 
 ## Slice Completion
 
 The writer decides when to close a slice. When it closes:
 
-1. The final frame of every channel present in the slice carries `END`. A
-   leading metadata run reaches `END` before the first content frame.
+1. The final frame of every channel present in the slice carries `END`.
 2. The writer MUST NOT emit another frame for a channel after that channel has
    reached `END`.
-3. The writer MUST NOT follow with `ch_metadata` frames once any `ch_content`
-   frame has been written in that slice.
-4. After all frames are committed, the writer writes a filemark to close the
+3. After all frames are committed, the writer writes a filemark to close the
    slice tape file.
 
 ## Archive End Frame

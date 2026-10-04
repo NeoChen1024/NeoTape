@@ -24,7 +24,7 @@ A slice may span volumes; a frame may not.
 - **Archive** is the authoritative logical backup instance, identified by `archive_uuid`.
 - **Volume** is a backend-defined physical or virtual container. It is not an authoritative logical record in the NeoTape stream. `volume_seq_num` is advisory and combines with `archive_label` to form an operator-facing display label.
 - **Slice** is the unit of logical ordering within an archive. It is identified by `slice_seq_num` and may span frames and backend volumes.
-- **Channel** partitions a slice into `ch_metadata` and `ch_content`. Metadata, when present, precedes all content frames. A slice may contain only metadata.
+- **Channel** partitions a slice into `ch_metadata` and `ch_content`. Channels may be interleaved. A slice may contain only one of them.
 - **Frame** is the concrete transport record. Every frame has exactly one `channel_type`, one `global_frame_seq_num`, and one `channel_frame_seq_num`.
 
 ## Physical Placement
@@ -83,7 +83,7 @@ File N:   Archive End frame (END, CLEAN_END)
 filemark
 ```
 
-Within a slice tape file, each frame occupies one complete fixed-size record, including padding. Filemarks delimit tape files, not individual frames. Metadata frames, when present, precede all content frames. A slice MUST contain at least one frame across its channels.
+Within a slice tape file, each frame occupies one complete fixed-size record, including padding. Filemarks delimit tape files, not individual frames. Frames of different channels may be interleaved. A slice MUST contain at least one frame across its channels.
 
 ## Multi-Volume Tape Layout
 
@@ -140,15 +140,12 @@ Each archive instance is independent with its own `archive_uuid`. A reader locat
 
 ## Frame Model
 
-A slice consists of one or more frames in either metadata-only or payload form:
+A slice consists of one or more frames:
 
 ```
-metadata-only Slice[k] =
-    one or more ch_metadata frames
-
-payload Slice[k] =
-    [ one leading ch_metadata run ] +
-    one or more ch_content frames
+Slice[k] = any interleaving of
+    [ one ch_metadata stream ]
+    [ one ch_content stream ]
 ```
 
 The complete normative slice grammar is defined in

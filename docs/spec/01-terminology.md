@@ -34,11 +34,9 @@ NeoTape uses tape files for coarse seekable boundaries such as slice tape files 
 
 A writer-declared content grouping, identified by `slice_seq_num`.
 
-A slice is either a metadata-only slice containing one or more `ch_metadata`
-frames, or a payload slice containing optional leading `ch_metadata` followed
-by one or more `ch_content` frames. At least one frame must be present.
-Metadata, when present, MUST precede all `ch_content` frames. A slice MAY span
-backend volumes.
+A slice carries at most one `ch_metadata` stream and at most one `ch_content`
+stream. At least one frame must be present. Frames of the two channels MAY
+appear in any order and MAY be interleaved. A slice MAY span backend volumes.
 
 ### Frame
 
@@ -48,7 +46,7 @@ Each Frame occupies exactly one NeoTape record of `volume_block_size_kib * 1024`
 
 ### Channel
 
-Partitions a slice into `ch_metadata` and `ch_content`. `ch_metadata` remains a leading contiguous run when present. `channel_frame_seq_num` is scoped to `(slice_seq_num, channel_type)`, and `channel_frame_seq_num = 0` identifies the first frame of that channel in the slice.
+Partitions a slice into `ch_metadata` and `ch_content`. Frames of different channels may be interleaved in any order. `channel_frame_seq_num` is scoped to `(slice_seq_num, channel_type)`, and `channel_frame_seq_num = 0` identifies the first frame of that channel in the slice.
 
 ### ch_content
 
@@ -247,8 +245,7 @@ sequence of files. Ordering, archive boundaries, and record framing follow
 - A **Backend Volume** is stored on one **Physical Medium** (or virtual volume).
 - A **Physical Medium** may store multiple **Archive Instances** sequentially.
 - A **Backend Volume** stores complete slices or portions of slices, and may contain only an Archive End frame. A slice may span volumes.
-- A **Slice** contains at most one contiguous leading `ch_metadata` run, followed by any `ch_content` frames. At least one frame must be present.
+- A **Slice** contains at most one stream per channel, in any order and possibly interleaved. At least one frame must be present.
 - A **Frame** is exactly one **NeoTape Record**.
-- `ch_metadata` frames MUST precede `ch_content` within a slice.
 - A normal payload reader emits only `ch_content` frame payload bytes.
 - Archive completion is declared only by a valid **Archive End** frame with `CLEAN_END = 1`.

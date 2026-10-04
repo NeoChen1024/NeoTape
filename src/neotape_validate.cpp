@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <format>
 #include <string>
+#include <utility>
 
 namespace neotape {
 
@@ -49,9 +50,7 @@ void FrameValidator::seed_for_stream_start(const FrameHeader &header) {
     expected_global_frame_seq = header.global_frame_seq_num;
     current_slice_seq_num = header.slice_seq_num;
     stream_start_seeded = true;
-    if (header.channel_type != ChannelType::ARCHIVE_END)
-        next_channel_seq[channel_index(header.channel_type)] =
-            header.channel_frame_seq_num;
+    channel_seq_unknown.fill(true);
 }
 
 void FrameValidator::remember_record(const CheckedFrame &frame) {
@@ -189,7 +188,7 @@ std::optional<string> FrameValidator::validate(const CheckedFrame &frame,
         next_channel_seq.fill(0);
         channel_seen.fill(false);
         channel_ended.fill(false);
-        saw_non_metadata_in_slice = false;
+        channel_seq_unknown.fill(false);
     }
 
     std::size_t const index = channel_index(header.channel_type);
@@ -198,6 +197,8 @@ std::optional<string> FrameValidator::validate(const CheckedFrame &frame,
                       channel_type_name(header.channel_type),
                       header.slice_seq_num);
     }
+    if (std::exchange(channel_seq_unknown[index], false))
+        next_channel_seq[index] = header.channel_frame_seq_num;
     if (header.channel_frame_seq_num != next_channel_seq[index]) {
         return format("channel_frame_seq_num {} != expected {} for {}",
                       header.channel_frame_seq_num, next_channel_seq[index],
@@ -206,14 +207,6 @@ std::optional<string> FrameValidator::validate(const CheckedFrame &frame,
     channel_seen[index] = true;
     next_channel_seq[index] = header.channel_frame_seq_num + 1;
     channel_ended[index] = has_frame_flag_end(header.flags);
-
-    if (header.channel_type == ChannelType::CH_METADATA) {
-        if (saw_non_metadata_in_slice) {
-            return "metadata frame after content in same slice";
-        }
-    } else {
-        saw_non_metadata_in_slice = true;
-    }
 
     remember_record(frame);
     return std::nullopt;
@@ -277,7 +270,7 @@ void FrameValidator::reset() {
     next_channel_seq.fill(0);
     channel_seen.fill(false);
     channel_ended.fill(false);
-    saw_non_metadata_in_slice = false;
+    channel_seq_unknown.fill(false);
     stream_start_seeded = false;
 }
 
