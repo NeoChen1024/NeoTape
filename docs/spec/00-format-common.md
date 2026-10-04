@@ -90,8 +90,7 @@ signature payload when the `SIGNED` flag is set. Bytes 0-7 hold the opaque
 8-byte key ID copied byte-for-byte from the signify-compatible key file. The
 key ID is not an integer and has no byte order. Bytes 8-71 hold the raw 64-byte
 Ed25519 signature over the
-domain-separated message `NeoTape-frame\0 || frame_hash` (see
-[Signing Sequence](#signing-sequence) step 4).  The domain string
+domain-separated message `NeoTape-frame\0 || frame_hash` (step 4 below).  The domain string
 includes its trailing NUL byte and is followed immediately by the 32 raw
 bytes of `frame_hash`.  This mirrors OpenBSD
 signify's Ed25519 signature payload without the leading two `Ed` bytes.

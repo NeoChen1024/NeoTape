@@ -47,7 +47,7 @@ The `channel_type` field identifies the frame's channel:
 Values 0 and 3–254 are reserved for future channels. Validation behavior for
 unknown channels is defined in [docs/spec/04-validation.md](04-validation.md).
 
-A normal payload reader (e.g. `neotape restore`) MUST emit only `ch_content` frame payload bytes. It MUST NOT emit `ch_metadata` bytes to stdout.
+A normal payload reader (e.g. `neotape-extractor`) MUST emit only `ch_content` frame payload bytes. It MUST NOT emit `ch_metadata` bytes to stdout.
 
 `ch_metadata` frames are advisory in normal restore mode. The restore-mode
 exception for already-identified `ch_metadata` validation failures is defined
@@ -84,9 +84,9 @@ comparison and suppression under [04-validation.md](04-validation.md#replayed-re
 - `channel_frame_seq_num` — scoped to `(slice_seq_num, channel_type)`. Starts at 0 on the first frame of that channel in the slice, increments only within that channel, and does not reset merely because a different channel appears later in the same slice. `archive_end` uses the canonical control-frame value `0`.
 
 All three are `uint64`. Writers assign contiguous logical sequence numbers
-within each scope. Readers apply the verified replay and unavailable-record
-recovery rules in [04-validation.md](04-validation.md); physical replays do
-not introduce new logical frames.
+within each scope. Readers apply the replay and salvage rules in
+[04-validation.md](04-validation.md); physical replays do not introduce new
+logical frames.
 The authoritative continuity rules are defined in
 [docs/spec/04-validation.md](04-validation.md).
 

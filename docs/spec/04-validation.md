@@ -241,8 +241,6 @@ validation context is closed:
   `archive_uuid` and fresh archive-local sequence state starting at
   `global_frame_seq_num = 0` and `slice_seq_num = 0`.
 
-An `archive_end` frame with a non-zero `frame_payload_size` MUST be rejected.
-
 ## Advisory Metadata Exception
 
 `ch_metadata` is advisory in normal restore mode.

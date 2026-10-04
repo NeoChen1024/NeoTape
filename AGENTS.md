@@ -10,7 +10,7 @@ NeoTape is an LTO-oriented, multi-volume backup container implemented in C++20.
   executable `--help` lists the implemented options.
 - [Pax architecture](docs/implementation/mt-pax-architecture.md): pipeline ownership.
 - [Path handling](docs/implementation/path-pitfalls.md): pathname preservation.
-- [Streaming boundaries](docs/implementation/2026-09-refactor.md): shared media,
+- [Streaming boundaries](docs/implementation/streaming-boundaries.md): shared media,
   writer sessions, and positioning constraints.
 
 Keep this guide about engineering workflow. Update the owning document when a

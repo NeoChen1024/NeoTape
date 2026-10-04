@@ -27,20 +27,19 @@ docs/
     06-spool-dir.md                 Spool directory format
     07-tcp-protocol.md              TCP/UDS protocol and writer auth handshake
     08-security.md                  Trust model, path safety, frame signing
-    09-plan-metadata.md             Plan metadata emitted by `neotape-plan`
+    09-plan-metadata.md             Plan metadata and the archive catalog
     10-appendix-layout-examples.md  Single-volume and multi-volume examples
     11-future-extensions.md         Reserved extension space and ideas
 
   implementation/                   Implementation-specific notes
-    2026-09-refactor.md             CLI/streaming refactor plan and progress
     cli-tooling.md                  CLI reference and workflow examples
+    cmake-build-system.md           Build dependencies, targets, and workflow
     lto-behavior-notes.md           Empirical LTO EOT/EOM observations
     lto5-hardware-regression-2026-10-02.md  Physical signed four-volume regression
     mt-pax-architecture.md          mt-pax thread roles and data flow
     path-pitfalls.md                Path handling conventions and gotchas
-    phase-3.5-mt-pax-writer.md      Historical mt-pax writer phase notes
     recovery-bundle.md              BOT recovery bundle packaging strategy
-    cmake-build-system.md           CMake migration decisions and verification
+    streaming-boundaries.md         Shared media, writer session, and positioning boundaries
 ```
 
 ## Document Layers

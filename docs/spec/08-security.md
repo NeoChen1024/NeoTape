@@ -6,20 +6,25 @@ Status: normative.
 
 Readers MUST treat optional recovery bundles and `ch_metadata` frame payloads as untrusted data.
 
-Recovery bundle and catalog member names are identifiers for byte blobs, not restore paths. Readers MUST:
+### Recovery Bundle
 
-- Treat the bundle as a flat collection of named byte blobs.
-- NOT interpret member names as filesystem paths.
-- Reject absolute paths and parent-directory components (e.g. `../`) if any extended name syntax is supported.
-- NOT restore ownership, permissions, device nodes, symlinks, hardlinks, xattrs, ACLs, or executable bits from recovery bundles or catalogs.
+The recovery bundle is not part of the NeoTape stream. Readers skip it when
+locating the first NeoTape frame and MUST NOT extract, interpret, or execute
+it. An operator who unpacks it does so with an ordinary tar tool and that
+tool's own path-safety options.
 
 ### Catalog as Index
 
-The catalog is an advisory index, not authoritative metadata. Readers MUST:
+The catalog ([09-plan-metadata.md](09-plan-metadata.md)) is an advisory index,
+not authoritative metadata. Its paths, owners, sizes, and times describe what
+was planned; they never create or modify files. Readers MUST:
 
+- Ignore `/chdir/` records, which name directories on the archiving host.
+- Present catalog paths so that control characters or text-direction controls
+  cannot make one path appear to be another.
 - Validate path safety before using catalog data for partial restore selection.
-- Reject or specially handle absolute paths, parent-directory traversal components, and policy-sensitive file types.
 - Treat catalog/payload discrepancies by trusting payload metadata.
+- Stay within bounded memory regardless of catalog size or record length.
 
 ## Integrity vs. Authentication
 

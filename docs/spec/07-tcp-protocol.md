@@ -89,8 +89,8 @@ Client→Server.  `error` is always bidirectional.
 2. Reader skips ordinary tape filemarks or spool file boundaries and sends
    the next record as `frame_record`. Filemarks are not forwarded as
    `tape_eof` in this direction.
-3. Extractor validates/processes the record, applying configured recovery and
-   replay rules, then sends `ack_frame(seq)` for the received record. Reader
+3. Extractor validates/processes the record, applying the replay rules and,
+   when enabled, the salvage rules, then sends `ack_frame(seq)` for the received record. Reader
    MUST check the ACK payload is exactly eight bytes and matches that record.
    This ACK permits Reader to advance; it does not certify full archive
    conformance or durable storage of extracted output.
@@ -124,9 +124,8 @@ received record before committing it and validates sequence continuity
 observable within its current connection.
 
 In the reading pipeline, the Extractor maintains authoritative validation state
-across Reader connections. It validates incrementally before emission,
-buffering a protected group until its recovery commitment is verified. Whole
-archive completion can only be established after a valid `archive_end` and
+across Reader connections. It validates each record before emitting its
+payload. Whole archive completion can only be established after a valid `archive_end` and
 completion of the applicable continuity checks. Both pipelines apply the
 relevant shared rules in
 [docs/spec/04-validation.md](04-validation.md).

@@ -50,7 +50,7 @@ Partitions a slice into `ch_metadata` and `ch_content`. Frames of different chan
 
 ### ch_content
 
-The ordered payload byte stream carried by `ch_content` frames for one slice. This is the only per-slice byte stream emitted by normal payload readers such as `neotape restore`.
+The ordered payload byte stream carried by `ch_content` frames for one slice. This is the only per-slice byte stream emitted by normal payload readers such as `neotape-extractor`.
 
 ### ch_metadata
 

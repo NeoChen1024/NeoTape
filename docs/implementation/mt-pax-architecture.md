@@ -21,7 +21,7 @@ payload bytes; only the final slice includes the pax End-of-Archive marker.
 
 Both input modes use the same archive session and `SlicePipeline` owner for
 hardlink resolution, ordered emission, cancellation, hashing and end markers.
-See [the refactor tracker](2026-09-refactor.md) for the shared I/O boundaries.
+See [streaming boundaries](streaming-boundaries.md) for the shared I/O boundaries.
 
 ## Thread types
 
@@ -79,6 +79,13 @@ Each worker loops:
    via `drop_mode`, and returns the raw bytes.
 3. Publishes the resulting `{seq, bytes}` to `ResultStore` keyed by `seq`.
 4. Returns to step 1.
+
+libarchive writes the End-of-Archive blocks only inside
+`archive_write_close()`. Each entry is serialized by its own writer, so the
+sink callback is switched to drop mode after `archive_write_finish_entry()`
+and before `archive_write_close()`: the entry's header and data are kept and
+its trailing EOA is discarded. `stream_large_entry` does the same. The
+pipeline emits the single real EOA itself, at the end of the final slice.
 
 On exception, the worker triggers full pipeline cancellation by closing
 `work_queue`, `order_queue`, `ResultStore`, and `bb1`.

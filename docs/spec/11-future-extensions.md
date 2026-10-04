@@ -26,7 +26,9 @@ A new `channel_type` that uses `sideband_data` MUST specify its internal structu
 
 ## Partial Restore Index
 
-An index that maps file paths to their exact slice and frame positions, enabling targeted partial restore without scanning all slices.
+The catalog already maps each path to its slice. A finer index would map paths
+to frame positions within a slice and slices to volumes and tape files,
+enabling targeted partial restore without reading a whole slice.
 
 ## Slice-Level Resume
 
@@ -36,8 +38,8 @@ written one, instead of from the beginning.
 This depends on slice boundaries being fixed ahead of time by a plan file.
 Replanning the same source tree may produce different boundaries, and a file
 could then fall on the already-written side of a moved boundary and be left
-out of the archive. The resumed run must therefore reuse the original plan; archives created without a plan
-cannot be resumed this way.
+out of the archive. The resumed run must therefore reuse the original plan;
+archives created without a plan cannot be resumed this way.
 
 Open questions:
 
