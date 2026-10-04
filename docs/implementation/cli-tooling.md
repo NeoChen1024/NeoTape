@@ -266,6 +266,9 @@ the queued byte percentage relative to `--output-buffer-size`. The status does
 not estimate physical tape capacity.
 
 Paths in diagnostics and listings keep printable ASCII and well-formed UTF-8
-as they are. A backslash is written as `\\`; control characters and bytes that
-are not valid UTF-8 are written as `\xNN`. This escaping affects display only; archived and planned
+as they are. A backslash is written as `\\`; control characters, bytes that
+are not valid UTF-8, and code points that reorder or hide text (bidirectional
+controls such as U+202E, zero-width characters, tag characters) are written
+as `\xNN`, so a displayed path cannot be rearranged to look like another.
+Visually similar letters from different scripts are not detected. This escaping affects display only; archived and planned
 pathnames remain byte opaque.

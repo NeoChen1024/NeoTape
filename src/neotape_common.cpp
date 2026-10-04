@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <sys/stat.h>
 #include <system_error>
+#include <utility>
 
 namespace neotape {
 
@@ -71,9 +72,30 @@ void finish_progress() {
     }
 }
 
+// Code points that change how neighbouring text is laid out or that occupy no
+// visible space, so a path could be made to look like a different one:
+// bidirectional controls, zero-width and invisible format characters,
+// line/paragraph separators, and tag characters.
+bool reorders_or_hides_text(char32_t code_point) {
+    constexpr std::pair<char32_t, char32_t> ranges[] = {
+        {0x00ad, 0x00ad},   // soft hyphen
+        {0x061c, 0x061c},   // Arabic letter mark
+        {0x180e, 0x180e},   // Mongolian vowel separator
+        {0x200b, 0x200f},   // zero-width space/joiners, LRM, RLM
+        {0x2028, 0x202e},   // line/paragraph separators, bidi embeddings
+        {0x2060, 0x206f},   // word joiner, invisible operators, bidi isolates
+        {0xfeff, 0xfeff},   // zero-width no-break space / BOM
+        {0xfff9, 0xfffb},   // interlinear annotation controls
+        {0xe0000, 0xe007f}, // tag characters
+    };
+    return std::ranges::any_of(ranges, [&](const auto &range) {
+        return code_point >= range.first && code_point <= range.second;
+    });
+}
+
 // Length of the well-formed UTF-8 sequence at the start of `bytes` that
-// encodes a displayable code point, or 0. Overlong forms, surrogates, and C1
-// controls are not displayable.
+// encodes a displayable code point, or 0. Overlong forms, surrogates, C1
+// controls, and code points that reorder or hide text are not displayable.
 std::size_t displayable_utf8_length(string_view bytes) {
     auto const byte = [&](std::size_t i) {
         return static_cast<unsigned char>(bytes[i]);
@@ -85,16 +107,18 @@ std::size_t displayable_utf8_length(string_view bytes) {
                                                               : 0;
     if (length == 0 || bytes.size() < length)
         return 0;
+    char32_t code_point = lead & (0xffU >> (length + 1));
     for (std::size_t i = 1; i < length; ++i) {
         if ((byte(i) & 0xc0) != 0x80)
             return 0;
+        code_point = code_point << 6 | (byte(i) & 0x3fU);
     }
     unsigned char const second = byte(1);
     if ((lead == 0xc2 && second < 0xa0) || (lead == 0xe0 && second < 0xa0) ||
         (lead == 0xed && second > 0x9f) || (lead == 0xf0 && second < 0x90) ||
         (lead == 0xf4 && second > 0x8f))
         return 0;
-    return length;
+    return reorders_or_hides_text(code_point) ? 0 : length;
 }
 
 string escape_bytes_for_diagnostic(string_view bytes) {

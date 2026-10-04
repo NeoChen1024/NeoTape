@@ -61,4 +61,19 @@ TEST_CASE("display escaping keeps UTF-8 text and escapes unsafe bytes",
     REQUIRE(escape_bytes_for_diagnostic("\xf4\x90\x80\x80") ==
             "\\xf4\\x90\\x80\\x80");
     REQUIRE(escape_bytes_for_diagnostic("\xc2\x85") == "\\xc2\\x85");
+    // U+202E right-to-left override: "evil<RLO>txt.exe" must not render as
+    // "evilexe.txt". Likewise U+2066 isolate, U+200B zero-width space,
+    // U+FEFF, and tag character U+E0041.
+    REQUIRE(escape_bytes_for_diagnostic("evil\xe2\x80\xaetxt.exe") ==
+            "evil\\xe2\\x80\\xaetxt.exe");
+    REQUIRE(escape_bytes_for_diagnostic("\xe2\x81\xa6") == "\\xe2\\x81\\xa6");
+    REQUIRE(escape_bytes_for_diagnostic("a\xe2\x80\x8b"
+                                        "b") == "a\\xe2\\x80\\x8b"
+                                                "b");
+    REQUIRE(escape_bytes_for_diagnostic("\xef\xbb\xbf") == "\\xef\\xbb\\xbf");
+    REQUIRE(escape_bytes_for_diagnostic("\xf3\xa0\x81\x81") ==
+            "\\xf3\\xa0\\x81\\x81");
+    // Neighbouring ordinary punctuation U+2010 and U+2030 stay readable.
+    REQUIRE(escape_bytes_for_diagnostic("\xe2\x80\x90\xe2\x80\xb0") ==
+            "\xe2\x80\x90\xe2\x80\xb0");
 }
