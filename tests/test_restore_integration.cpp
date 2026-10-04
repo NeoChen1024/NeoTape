@@ -51,10 +51,15 @@ void write_spool_from_archiver(const fs::path &socket, const fs::path &spool,
 }
 
 void restore_spool(const fs::path &socket, const fs::path &spool,
-                   const fs::path &output) {
-    Process extractor(
-        ProcessOptions{{NEOTAPE_EXTRACTOR, "--listen",
-                        "unix://" + socket.string(), "-o", output.string()}});
+                   const fs::path &output, const fs::path &metadata = {}) {
+    std::vector<std::string> command{NEOTAPE_EXTRACTOR, "--listen",
+                                     "unix://" + socket.string(), "-o",
+                                     output.string()};
+    if (!metadata.empty()) {
+        command.emplace_back("--metadata-output");
+        command.push_back(metadata.string());
+    }
+    Process extractor(ProcessOptions{command});
     REQUIRE(wait_for_unix_socket(socket, extractor, 5s));
     require_success(Process::run(
         ProcessOptions{{NEOTAPE_READ, "--source", "spool:" + spool.string(),
@@ -208,7 +213,8 @@ TEST_CASE("plan-driven archiver restores the planned slice",
     Process archiver(ProcessOptions{
         {NEOTAPE_ARCHIVER, "--listen", "unix://" + archiver_socket.string(),
          "--archive-name", "plan-restore", "--io-thread", "4", "--plan",
-         plan.string(), "--output-buffer-size", "1M", "-P", "80"}});
+         plan.string(), "--output-buffer-size", "1M", "-P", "80",
+         "--volume-block-size", "64K"}});
     REQUIRE(wait_for_unix_socket(archiver_socket, archiver, 5s));
     require_success(Process::run(
         ProcessOptions{{NEOTAPE_WRITE, "--source",
@@ -216,7 +222,12 @@ TEST_CASE("plan-driven archiver restores the planned slice",
                         "spool:" + spool.string(), "--erase"}},
         60s));
     require_success(archiver.wait(60s));
-    restore_spool(extractor_socket, spool, restored);
+    fs::path const catalog = temporary.path() / "catalog";
+    restore_spool(extractor_socket, spool, restored, catalog);
+
+    // The catalog is the plan file itself, /chdir/ record included.
+    REQUIRE(fs::file_size(plan) > 0);
+    REQUIRE(read_file(plan) == read_file(catalog));
 
     fs::path const restored_output = temporary.path() / "restored-output";
     extract_pax(restored, restored_output);

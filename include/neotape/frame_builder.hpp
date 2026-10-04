@@ -61,13 +61,13 @@ class FrameRetentionBuffer {
     std::deque<RetainedFrame> frames_;
 };
 
-// A fully built NeoTape content frame.
+// A fully built ch_content or ch_metadata frame.
 struct BuiltFrame {
     std::vector<std::byte> record;
     uint64_t global_seq_num = 0;
 };
 
-// Frame builder for content-channel frames.
+// Frame builder for one slice channel at a time (ch_content by default).
 //
 // Accumulates payload bytes and produces complete NeoTape records when a
 // full frame is available. Correctly tracks:
@@ -76,29 +76,28 @@ struct BuiltFrame {
 //   - channel_frame_seq_num == 0 on the first frame of a channel group
 //   - END flag on the final frame (signalled by flush())
 //
-// A new slice resets channel_frame_seq_num to 0 without
-// resetting the global frame counter.  Metadata-channel frames are not
-// handled by this builder (the archiver is the metadata source, not the
-// frame builder).
+// A new channel run resets channel_frame_seq_num to 0 without
+// resetting the global frame counter.
 //
-// Server-mode content records are emitted with header fields and payload
+// Server-mode records are emitted with header fields and payload
 // populated but without a finalized `frame_hash`/signature.  The volume
 // server finalizes them exactly once when assigning the real volume_seq_num.
-class ContentFrameBuilder {
+class FrameBuilder {
   public:
-    ContentFrameBuilder(uint32_t block_size, std::string archive_uuid,
-                        std::string archive_name);
+    FrameBuilder(uint32_t block_size, std::string archive_uuid,
+                 std::string archive_name);
 
     [[nodiscard]] uint32_t payload_capacity() const;
 
-    // Switch to a new logical slice.  Resets the within-channel sequence
+    // Start a channel run in a slice.  Resets the within-channel sequence
     // number but does NOT flush pending bytes (caller should flush first).
-    void set_current_slice(uint64_t slice_num);
+    void begin_channel(uint64_t slice_num,
+                       ChannelType channel = ChannelType::CH_CONTENT);
 
     // Append payload bytes.  Returns zero or more complete frames.
     std::vector<BuiltFrame> feed(std::span<const std::byte> bytes);
 
-    // Force remaining bytes into a final content frame.
+    // Force remaining bytes into the run's final (END) frame.
     std::vector<BuiltFrame> flush();
 
     // Access the next global seq num that will be assigned.
@@ -112,8 +111,7 @@ class ContentFrameBuilder {
     }
 
   private:
-    BuiltFrame build_content_frame(std::span<const std::byte> payload,
-                                   bool is_final);
+    BuiltFrame build_frame(std::span<const std::byte> payload, bool is_final);
 
     uint32_t block_size_;
     std::string archive_uuid_;
@@ -121,6 +119,7 @@ class ContentFrameBuilder {
     uint64_t global_frame_seq_num_ = 0;
     uint64_t channel_frame_seq_num_ = 0;
     uint64_t current_slice_ = 0;
+    ChannelType channel_ = ChannelType::CH_CONTENT;
     std::vector<std::byte> pending_;
 };
 

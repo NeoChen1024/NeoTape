@@ -74,30 +74,30 @@ std::vector<std::byte> build_archive_end_record(
     return record;
 }
 
-ContentFrameBuilder::ContentFrameBuilder(uint32_t block_size,
-                                         std::string archive_uuid,
-                                         std::string archive_name)
+FrameBuilder::FrameBuilder(uint32_t block_size, std::string archive_uuid,
+                           std::string archive_name)
     : block_size_(block_size), archive_uuid_(std::move(archive_uuid)),
       archive_name_(std::move(archive_name)) {}
 
-uint32_t ContentFrameBuilder::payload_capacity() const {
+uint32_t FrameBuilder::payload_capacity() const {
     return block_size_ - fixed_header_size;
 }
 
-void ContentFrameBuilder::set_current_slice(uint64_t slice_num) {
+void FrameBuilder::begin_channel(uint64_t slice_num, ChannelType channel) {
     assert(pending_.empty());
+    assert(channel != ChannelType::ARCHIVE_END);
     current_slice_ = slice_num;
+    channel_ = channel;
     channel_frame_seq_num_ = 0;
 }
 
-std::vector<BuiltFrame>
-ContentFrameBuilder::feed(std::span<const std::byte> bytes) {
+std::vector<BuiltFrame> FrameBuilder::feed(std::span<const std::byte> bytes) {
     pending_.insert(pending_.end(), bytes.begin(), bytes.end());
 
     std::vector<BuiltFrame> out;
     const uint32_t cap = payload_capacity();
     while (pending_.size() > cap) {
-        BuiltFrame frame = build_content_frame(
+        BuiltFrame frame = build_frame(
             std::span<const std::byte>(pending_.data(), cap), false);
         pending_.erase(pending_.begin(), pending_.begin() + cap);
         out.push_back(std::move(frame));
@@ -105,26 +105,25 @@ ContentFrameBuilder::feed(std::span<const std::byte> bytes) {
     return out;
 }
 
-std::vector<BuiltFrame> ContentFrameBuilder::flush() {
+std::vector<BuiltFrame> FrameBuilder::flush() {
     std::vector<BuiltFrame> out;
     if (pending_.empty()) {
         return out;
     }
-    out.push_back(build_content_frame(
+    out.push_back(build_frame(
         std::span<const std::byte>(pending_.data(), pending_.size()), true));
     pending_.clear();
     return out;
 }
 
-BuiltFrame
-ContentFrameBuilder::build_content_frame(std::span<const std::byte> payload,
-                                         bool is_final) {
+BuiltFrame FrameBuilder::build_frame(std::span<const std::byte> payload,
+                                     bool is_final) {
     assert(payload.size() <= payload_capacity());
 
     uint64_t const flags = is_final ? frame_flag_end : 0;
 
     FrameHeader fh;
-    fh.channel_type = ChannelType::CH_CONTENT;
+    fh.channel_type = channel_;
     fh.volume_block_size_kib = static_cast<uint16_t>(block_size_ / 1024U);
     fh.archive_uuid = archive_uuid_;
     fh.archive_label = archive_name_;

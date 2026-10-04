@@ -152,8 +152,8 @@ struct FileGuard {
 void produce_raw_frames(FILE *input, const string &archive_uuid,
                         const Options &opts,
                         neotape::VolumeRecordQueue &queue) {
-    neotape::ContentFrameBuilder builder(opts.volume_block_size, archive_uuid,
-                                         opts.archive_name);
+    neotape::FrameBuilder builder(opts.volume_block_size, archive_uuid,
+                                  opts.archive_name);
     std::vector<std::byte> buf(1024ULL * 1024ULL);
     for (;;) {
         size_t const n = std::fread(buf.data(), 1, buf.size(), input);

@@ -7,8 +7,8 @@ how source filesystem trees should be packed into slices. Downstream tools
 consume this stream to produce pax slices that match the plan.
 
 This chapter is the authoritative source for both the planning stream consumed
-by `neotape-archiver --plan` and the slice-scoped catalog record format written
-into `ch_metadata`.
+by `neotape-archiver --plan` and the archive catalog written into
+`ch_metadata`.
 
 The current archiver uses the plan for resumable archive creation; the plan
 is not required to restore an existing archive.
@@ -65,7 +65,7 @@ or unavailable values use a reasonable zero sentinel (`0` or `""`) rather than
 being omitted. An unavailable `<mtime>` is encoded as `0`; this is intentionally
 indistinguishable from the valid Unix epoch timestamp.
 
-This record doubles as the `ch_metadata` catalog for each slice. A
+This record doubles as the `ch_metadata` archive catalog. A
 downstream reader can parse the same record format to list archive contents,
 compute expected per-slice progress, or compare the planned file set with
 entries actually observed in the payload. These records contain no per-file
@@ -87,10 +87,9 @@ unknown kinds, incomplete records, and malformed field counts.
 
 In a complete planning stream, slices start at zero, are contiguous, and appear
 in increasing order. Within each slice, `file_num` starts at zero and increases
-by one. Entry records for a slice MUST be contiguous. A slice-scoped catalog
-uses the enclosing slice number rather than restarting the slice number at
-zero. Catalog records are parsed after concatenating the channel payloads;
-a record may cross frame boundaries.
+by one. Entry records for a slice MUST be contiguous. Catalog records are
+parsed after concatenating the channel payloads; a record may cross frame
+boundaries.
 
 ## Example
 
@@ -108,17 +107,19 @@ The plan metadata stream serves a dual purpose:
 
 1. **Planning** — the archiver reads entry records to determine slice boundaries
    and file packing order.
-2. **Catalog** — the same entry records, when written into `ch_metadata` frames
-   within each slice, form a machine-readable index of the slice's
-   expected contents. A reader can list planned files or display expected
-   progress without inspecting `ch_content`. Verifying that those files were
-   actually archived requires examining the payload.
+2. **Catalog** — a plan-driven archiver writes the plan stream, byte for byte,
+   as the leading `ch_metadata` run of slice 0. A reader can list planned
+   files, find the slice holding a file, or display expected progress without
+   inspecting `ch_content`. Verifying that those files were actually archived
+   requires examining the payload.
 
-The catalog is slice-scoped: each slice's `ch_metadata` contains only
-the entry records whose `<slice>` field matches the enclosing
-`slice_seq_num`. This keeps metadata streaming and avoids the need for
-an archive-level preamble that would require knowing total file counts in
-advance.
+The catalog describes the whole archive: each entry record's `<slice>` field
+is the `slice_seq_num` of the slice that carries the entry, independent of the
+slice whose `ch_metadata` run carries the record. No other slice carries
+catalog records.
 
-`/chdir/` directives are *not* written into `ch_metadata` — they are
-planning-only instructions consumed by the archiver.
+`/chdir/` directives are written with the rest of the plan. They name
+directories on the archiving host and are planning-only instructions; catalog
+readers MUST ignore them.
+
+An archive created without a plan is a single slice and carries no catalog.

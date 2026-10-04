@@ -56,7 +56,7 @@ The ordered payload byte stream carried by `ch_content` frames for one slice. Th
 
 ### ch_metadata
 
-Advisory metadata bytes carried by `ch_metadata` frames for one slice. It is transport metadata for listing, diagnostics, partial restore, or acceleration. It is not part of the content stream and must not be required for basic restore correctness.
+Advisory metadata bytes carried by the `ch_metadata` frames of one slice. Its records may describe other slices; see [Archive Catalog](#archive-catalog). It is transport metadata for listing, diagnostics, partial restore, or acceleration. It is not part of the content stream and must not be required for basic restore correctness.
 
 ## Headers And Metadata
 
@@ -71,9 +71,9 @@ The exact field widths, field order, and byte positions are defined in
 
 The final clean archive-level frame, with `channel_type = archive_end`. An archive is not cleanly complete unless a valid Archive End frame is found with `CLEAN_END = 1`.
 
-### Archive-Level Catalog
+### Archive Catalog
 
-Optional advisory metadata associated with the whole archive. Archive-level catalog metadata may be carried in the optional payload of the Archive End frame. It is not required for basic restore correctness.
+Optional advisory metadata listing the planned contents of the whole archive: the plan file, carried as the leading `ch_metadata` run of slice 0 (see [09-plan-metadata.md](09-plan-metadata.md)). It is not required for basic restore correctness. The Archive End frame carries no payload.
 
 ## Payload Terms
 

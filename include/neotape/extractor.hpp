@@ -11,6 +11,8 @@ namespace neotape {
 struct ExtractorOptions {
     std::string listen_address; // "tcp://host:port" or "unix://path"
     std::string output_path;    // empty = stdout
+    // Receives the concatenated ch_metadata payloads; empty = discard.
+    std::string metadata_output_path;
     bool verbose = false;
     bool require_signed = false;
     bool salvage = false;

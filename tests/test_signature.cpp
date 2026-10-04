@@ -205,9 +205,9 @@ TEST_CASE("signature: patch volume seq num finalizes deferred record",
     SignifySecretKey const seckey =
         neotape::load_signify_secret_key(regress_seckey);
 
-    neotape::ContentFrameBuilder builder(
-        4096, "00000000-0000-4000-8000-000000000123", "sig-test");
-    builder.set_current_slice(0);
+    neotape::FrameBuilder builder(4096, "00000000-0000-4000-8000-000000000123",
+                                  "sig-test");
+    builder.begin_channel(0);
 
     std::array<std::byte, 32> payload{};
     for (size_t i = 0; i < payload.size(); ++i) {

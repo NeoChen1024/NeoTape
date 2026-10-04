@@ -300,8 +300,7 @@ TEST_CASE("validate: volume can begin at every content position",
           "[unit][validation]") {
     constexpr uint32_t block_size = 4096, capacity = block_size - 512;
     auto identity = make_content_header(0, 0, 0, 0, 0);
-    neotape::ContentFrameBuilder builder(block_size, identity.archive_uuid,
-                                         "seed");
+    neotape::FrameBuilder builder(block_size, identity.archive_uuid, "seed");
     std::vector<std::byte> source(capacity * 70 + 123, std::byte{0x5a});
     auto records = builder.feed(source);
     auto tail = builder.flush();
@@ -327,4 +326,49 @@ TEST_CASE("validate: volume can begin at every content position",
         }
         REQUIRE_FALSE(feed(validator, ending));
     }
+}
+
+TEST_CASE("validate: built metadata run precedes content in slice 0",
+          "[unit][validation]") {
+    constexpr uint32_t block_size = 4096, capacity = block_size - 512;
+    auto identity = make_content_header(0, 0, 0, 0, 0);
+    neotape::FrameBuilder builder(block_size, identity.archive_uuid, "seed");
+
+    vector<std::byte> catalog(capacity * 2 + 7, std::byte{0x6d});
+    vector<std::byte> content(capacity + 3, std::byte{0x63});
+    builder.begin_channel(0, ChannelType::CH_METADATA);
+    auto records = builder.feed(catalog);
+    for (auto &frame : builder.flush())
+        records.push_back(std::move(frame));
+    builder.begin_channel(0);
+    for (auto &frame : builder.feed(content))
+        records.push_back(std::move(frame));
+    for (auto &frame : builder.flush())
+        records.push_back(std::move(frame));
+    REQUIRE(records.size() == 5);
+
+    // channel_type is byte 9, channel_frame_seq_num a LE u64 at 138, and
+    // END is bit 0 of the flags at 150.
+    struct Expected {
+        uint8_t channel, channel_seq, end;
+    };
+    constexpr Expected expected[] = {
+        {2, 0, 0}, {2, 1, 0}, {2, 2, 1}, {1, 0, 0}, {1, 1, 1}};
+    FrameValidator validator;
+    vector<std::byte> seen_catalog;
+    for (size_t index = 0; index < records.size(); ++index) {
+        CAPTURE(index);
+        auto &record = records[index].record;
+        auto header = check(record).header;
+        neotape::finalize_record(header, record);
+        REQUIRE(bytes(record)[9] == expected[index].channel);
+        REQUIRE(bytes(record)[138] == expected[index].channel_seq);
+        REQUIRE((bytes(record)[150] & 1) == expected[index].end);
+        REQUIRE_FALSE(feed(validator, record));
+        if (expected[index].channel == 2)
+            seen_catalog.insert(seen_catalog.end(), record.begin() + 512,
+                                record.begin() + 512 +
+                                    header.frame_payload_size);
+    }
+    REQUIRE(seen_catalog == catalog);
 }

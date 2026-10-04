@@ -98,6 +98,9 @@ build/dev/bin/neotape-plan -C /data -o home.plan photos docs
 
 Generates the record-oriented plan metadata stream consumed by
 `neotape-archiver --plan`; see [09-plan-metadata.md](../spec/09-plan-metadata.md).
+The archiver also stores the plan file as the archive catalog at the start of
+slice 0, so the plan must be a regular file that stays unchanged while the
+archiver runs.
 
 ## Extractor / Reader (reading pipeline)
 
@@ -116,6 +119,10 @@ build/dev/bin/neotape-read --source tape:/dev/nst0 --connect tcp://tapehost:9000
 # Read from a spool directory:
 build/dev/bin/neotape-read --source spool:./in --connect tcp://tapehost:9000
 ```
+
+`--metadata-output <file>` additionally writes the archive catalog, which for
+a plan-driven archive is the original plan file. Catalog frames that fail
+their hash are left out with a warning.
 
 Normal extraction rejects any missing or damaged content record.
 `--salvage` skips invalid records and relaxes archive-level consistency; the

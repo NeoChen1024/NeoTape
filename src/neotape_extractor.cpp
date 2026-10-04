@@ -43,6 +43,7 @@ struct ExtractorState {
     std::optional<uint64_t> output_slice_seq;
     uint64_t processed_frames = 0;
     bool fatal_error = false;
+    FILE *metadata_output = nullptr;
 };
 
 [[nodiscard]] bool write_output(FILE *output, const uint8_t *data,
@@ -73,7 +74,8 @@ struct ExtractorState {
 //
 // Metadata frames (ch_metadata) are advisory per spec:
 //   - hash failures produce a warning but do not block extraction
-//   - payload is not written to the reconstructed output
+//   - payload is not written to the reconstructed output; frames whose
+//     hash verified go to the metadata output when one is configured
 //   - the frame is still structurally validated for sequence continuity
 //
 // On archive_end, sets state.saw_archive_end and the caller should return.
@@ -122,8 +124,16 @@ struct ExtractorState {
     }
 
     ++state.processed_frames;
-    if (header.channel_type == ChannelType::CH_METADATA)
-        return true;
+    if (header.channel_type == ChannelType::CH_METADATA) {
+        if (state.metadata_output == nullptr || !frame.hash_ok)
+            return true;
+        return write_output(state.metadata_output,
+                            data +
+                                static_cast<std::ptrdiff_t>(fixed_header_size),
+                            header.frame_payload_size) &&
+               (!has_frame_flag_end(header.flags) ||
+                flush_output(state.metadata_output));
+    }
     if ((!state.salvage && state.validator.saw_archive_end) ||
         (state.salvage && header.channel_type == ChannelType::ARCHIVE_END)) {
         if (!flush_output(output)) {
@@ -279,7 +289,19 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
     };
     OutputGuard const output_guard{output, output_owned};
 
+    FILE *metadata_output = nullptr;
+    if (!opts.metadata_output_path.empty()) {
+        metadata_output = std::fopen(opts.metadata_output_path.c_str(), "wb");
+        if (metadata_output == nullptr) {
+            throw std::runtime_error(format("open {}: {}",
+                                            opts.metadata_output_path,
+                                            std::strerror(errno)));
+        }
+    }
+    OutputGuard const metadata_guard{metadata_output, true};
+
     ExtractorState state;
+    state.metadata_output = metadata_output;
     state.require_signed = opts.require_signed;
     state.verify_keys = opts.verify_keys;
     state.salvage = opts.salvage;

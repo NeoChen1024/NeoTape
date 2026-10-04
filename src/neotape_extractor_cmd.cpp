@@ -21,7 +21,7 @@ using std::string;
 void usage(const char *prog) {
     std::cerr << format(
         "usage: {} -l|--listen <tcp://host:port|unix://path>\n"
-        "       [-o|--output <file>] [-v|--verbose]\n"
+        "       [-o|--output <file>] [-m|--metadata-output <file>]\n"
         "       [-k|--verify-pubkey <file.pub>]...\n"
         "       [-S|--require-signed] [-s|--salvage] [-v] [-h]\n",
         prog);
@@ -30,6 +30,7 @@ void usage(const char *prog) {
 struct Options {
     string listen_address;
     string output_path;
+    string metadata_output_path;
     bool verbose = false;
     bool require_signed = false;
     bool salvage = false;
@@ -40,6 +41,7 @@ Options parse_args(int argc, char **argv) {
     static const struct option long_opts[] = {
         {"listen", required_argument, nullptr, 'l'},
         {"output", required_argument, nullptr, 'o'},
+        {"metadata-output", required_argument, nullptr, 'm'},
         {"verbose", no_argument, nullptr, 'v'},
         {"verify-pubkey", required_argument, nullptr, 'k'},
         {"require-signed", no_argument, nullptr, 'S'},
@@ -49,7 +51,7 @@ Options parse_args(int argc, char **argv) {
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "l:o:k:Ssvh", long_opts, nullptr)) !=
+    while ((c = getopt_long(argc, argv, "l:o:m:k:Ssvh", long_opts, nullptr)) !=
            -1) {
         switch (c) {
         case 'l':
@@ -57,6 +59,9 @@ Options parse_args(int argc, char **argv) {
             break;
         case 'o':
             opts.output_path = optarg;
+            break;
+        case 'm':
+            opts.metadata_output_path = optarg;
             break;
         case 'v':
             opts.verbose = true;
@@ -110,6 +115,7 @@ int main(int argc, char **argv) {
         neotape::ExtractorOptions ex_opts;
         ex_opts.listen_address = opts.listen_address;
         ex_opts.output_path = opts.output_path;
+        ex_opts.metadata_output_path = opts.metadata_output_path;
         ex_opts.verbose = opts.verbose;
         ex_opts.require_signed = opts.require_signed;
         ex_opts.salvage = opts.salvage;
