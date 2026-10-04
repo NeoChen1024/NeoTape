@@ -71,22 +71,54 @@ void finish_progress() {
     }
 }
 
+// Length of the well-formed UTF-8 sequence at the start of `bytes` that
+// encodes a displayable code point, or 0. Overlong forms, surrogates, and C1
+// controls are not displayable.
+std::size_t displayable_utf8_length(string_view bytes) {
+    auto const byte = [&](std::size_t i) {
+        return static_cast<unsigned char>(bytes[i]);
+    };
+    unsigned char const lead = byte(0);
+    std::size_t const length = lead >= 0xc2 && lead <= 0xdf   ? 2
+                               : lead >= 0xe0 && lead <= 0xef ? 3
+                               : lead >= 0xf0 && lead <= 0xf4 ? 4
+                                                              : 0;
+    if (length == 0 || bytes.size() < length)
+        return 0;
+    for (std::size_t i = 1; i < length; ++i) {
+        if ((byte(i) & 0xc0) != 0x80)
+            return 0;
+    }
+    unsigned char const second = byte(1);
+    if ((lead == 0xc2 && second < 0xa0) || (lead == 0xe0 && second < 0xa0) ||
+        (lead == 0xed && second > 0x9f) || (lead == 0xf0 && second < 0x90) ||
+        (lead == 0xf4 && second > 0x8f))
+        return 0;
+    return length;
+}
+
 string escape_bytes_for_diagnostic(string_view bytes) {
     string escaped;
     escaped.reserve(bytes.size());
     constexpr char hex[] = "0123456789abcdef";
-    for (unsigned char const byte : bytes) {
-        if (byte >= 0x20 && byte <= 0x7e && byte != '\\') {
-            escaped.push_back(static_cast<char>(byte));
-            continue;
-        }
+    for (std::size_t i = 0; i < bytes.size();) {
+        auto const byte = static_cast<unsigned char>(bytes[i]);
         if (byte == '\\') {
             escaped += "\\\\";
-            continue;
+            ++i;
+        } else if (byte >= 0x20 && byte <= 0x7e) {
+            escaped.push_back(static_cast<char>(byte));
+            ++i;
+        } else if (std::size_t const length =
+                       displayable_utf8_length(bytes.substr(i))) {
+            escaped.append(bytes.substr(i, length));
+            i += length;
+        } else {
+            escaped += "\\x";
+            escaped.push_back(hex[byte >> 4]);
+            escaped.push_back(hex[byte & 0x0f]);
+            ++i;
         }
-        escaped += "\\x";
-        escaped.push_back(hex[byte >> 4]);
-        escaped.push_back(hex[byte & 0x0f]);
     }
     return escaped;
 }

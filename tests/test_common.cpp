@@ -41,3 +41,24 @@ TEST_CASE("hex encoding preserves zero and high bytes", "[unit][common]") {
     REQUIRE(neotape::hex_encode(bytes) == "00010f80ff");
     REQUIRE(neotape::hex_encode({}).empty());
 }
+
+TEST_CASE("display escaping keeps UTF-8 text and escapes unsafe bytes",
+          "[unit][common]") {
+    using neotape::escape_bytes_for_diagnostic;
+    // U+4E2D U+6587 (3-byte), U+00E9 (2-byte), U+1F4BE (4-byte).
+    REQUIRE(escape_bytes_for_diagnostic(
+                "dir/\xe4\xb8\xad\xe6\x96\x87-\xc3\xa9-\xf0\x9f\x92\xbe.txt") ==
+            "dir/\xe4\xb8\xad\xe6\x96\x87-\xc3\xa9-\xf0\x9f\x92\xbe.txt");
+    REQUIRE(escape_bytes_for_diagnostic("a\\b\n\t\x7f") ==
+            "a\\\\b\\x0a\\x09\\x7f");
+    // Lone continuation, truncated sequence, and Latin-1 byte.
+    REQUIRE(escape_bytes_for_diagnostic("\x82") == "\\x82");
+    REQUIRE(escape_bytes_for_diagnostic("\xe4\xb8") == "\\xe4\\xb8");
+    REQUIRE(escape_bytes_for_diagnostic("caf\xe9") == "caf\\xe9");
+    // Overlong '/', UTF-16 surrogate, beyond U+10FFFF, C1 control U+0085.
+    REQUIRE(escape_bytes_for_diagnostic("\xc0\xaf") == "\\xc0\\xaf");
+    REQUIRE(escape_bytes_for_diagnostic("\xed\xa0\x80") == "\\xed\\xa0\\x80");
+    REQUIRE(escape_bytes_for_diagnostic("\xf4\x90\x80\x80") ==
+            "\\xf4\\x90\\x80\\x80");
+    REQUIRE(escape_bytes_for_diagnostic("\xc2\x85") == "\\xc2\\x85");
+}

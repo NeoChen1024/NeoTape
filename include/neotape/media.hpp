@@ -27,9 +27,14 @@ struct MediaRecord {
 // Physical tape records are opaque. Spool streams need only header parsing to
 // locate record boundaries; hash/signature/archive validation belongs to
 // callers.
+// Where a tape source starts reading. Spool sources always start at their
+// first file.
+enum class TapeStart { rewind, current_position };
+
 class RecordReader {
   public:
-    explicit RecordReader(const MediaLocator &source);
+    explicit RecordReader(const MediaLocator &source,
+                          TapeStart start = TapeStart::rewind);
     ~RecordReader();
     RecordReader(const RecordReader &) = delete;
     RecordReader &operator=(const RecordReader &) = delete;

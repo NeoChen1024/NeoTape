@@ -103,6 +103,34 @@ slice 0, so the plan must be a regular file that stays unchanged while the
 archiver runs. `--plan-write-mode no` leaves the catalog out; `slice0` is the
 default.
 
+## Catalog preview
+
+```sh
+# The catalog stored on the media, unchanged (it is the plan file):
+build/dev/bin/neotape-catalog --source tape:/dev/nst0 > home.plan
+
+# One line per entry, or one line per slice:
+build/dev/bin/neotape-catalog --source spool:./in --list
+build/dev/bin/neotape-catalog --plan home.plan --summary
+```
+
+`neotape-catalog` shows what an archive holds without restoring it. With
+`--source` it reads the catalog from the start of the archive's first volume
+and stops at the catalog's last frame. With `--plan` it formats a plan file
+that has not been archived yet.
+
+The default output is the catalog bytes, which `neotape-archiver --plan`
+accepts again. `--list` prints slice, kind, size, modification time (local
+time), owner/group, and path for each entry; `--summary` prints entry and
+byte totals per slice. `/chdir/` records are not shown.
+
+A tape source is read from its current position and left where reading
+stopped; position the tape at the archive first. Foreign tape files ahead of
+the first frame, such as the recovery bundle, are skipped. The command fails
+when the archive has no catalog, when the position is not the start of an
+archive, or when a catalog frame fails validation; output written before such
+a failure is incomplete. Signature options match `neotape-extractor`.
+
 ## Extractor / Reader (reading pipeline)
 
 The extractor and reader are a long-running server / short-lived client pair for
@@ -237,6 +265,7 @@ volume/slice/frame position advance only after the target operation succeeds.
 the queued byte percentage relative to `--output-buffer-size`. The status does
 not estimate physical tape capacity.
 
-Paths in diagnostics are escaped byte-for-byte when they contain non-ASCII or
-control bytes. This escaping affects display only; archived and planned
+Paths in diagnostics and listings keep printable ASCII and well-formed UTF-8
+as they are. A backslash is written as `\\`; control characters and bytes that
+are not valid UTF-8 are written as `\xNN`. This escaping affects display only; archived and planned
 pathnames remain byte opaque.

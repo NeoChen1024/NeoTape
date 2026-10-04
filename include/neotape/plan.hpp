@@ -27,10 +27,13 @@ struct PlanRecord {
 class PlanReader {
   public:
     explicit PlanReader(const std::filesystem::path &path);
+    // Read from a caller-owned stream; `name` labels it in error messages.
+    PlanReader(std::istream &input, std::filesystem::path name);
     std::optional<PlanRecord> next();
 
   private:
-    std::ifstream input_;
+    std::ifstream file_;
+    std::istream &input_;
     std::filesystem::path path_;
     uint64_t record_num_ = 0;
     std::optional<PlannedEntry> previous_;

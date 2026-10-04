@@ -95,10 +95,13 @@ PlanRecord parse_plan_record(string_view text, const fs::path &path,
 } // namespace
 
 PlanReader::PlanReader(const std::filesystem::path &path)
-    : input_(path, std::ios::binary), path_(path) {
-    if (!input_)
+    : file_(path, std::ios::binary), input_(file_), path_(path) {
+    if (!file_)
         throw std::runtime_error("open plan: " + path.string());
 }
+
+PlanReader::PlanReader(std::istream &input, std::filesystem::path name)
+    : input_(input), path_(std::move(name)) {}
 
 std::optional<PlanRecord> PlanReader::next() {
     std::string record;

@@ -26,6 +26,9 @@ void write_diagnostic(std::string_view message);
 void write_progress(std::string_view message);
 void finish_progress();
 
+// Make path bytes safe to print on one line: printable ASCII and well-formed
+// UTF-8 pass through; backslash, control characters, and bytes that are not
+// valid UTF-8 become `\\` or `\xNN`.
 std::string escape_bytes_for_diagnostic(std::string_view bytes);
 
 #define NEOTAPE_DEBUG(...)                                                     \

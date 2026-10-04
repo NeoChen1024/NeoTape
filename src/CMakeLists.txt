@@ -142,6 +142,14 @@ neotape_executable(neotape_inspect neotape-inspect neotape_inspect_cmd.cpp
     neotape_tape
     neotape_validation
 )
+neotape_executable(neotape_catalog neotape-catalog neotape_catalog_cmd.cpp
+    neotape_common
+    neotape_format
+    neotape_plan_codec
+    neotape_signature
+    neotape_tape
+    neotape_validation
+)
 neotape_executable(neotape_scan neotape-scan neotape_scan_cmd.cpp
     neotape_common
     neotape_format

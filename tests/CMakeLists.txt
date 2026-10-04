@@ -72,12 +72,13 @@ if(BUILD_TESTING)
             NEOTAPE_EXTRACTOR="$<TARGET_FILE:neotape_extractor>"
             NEOTAPE_INSPECT="$<TARGET_FILE:neotape_inspect>"
             NEOTAPE_SCAN="$<TARGET_FILE:neotape_scan>"
+            NEOTAPE_CATALOG="$<TARGET_FILE:neotape_catalog>"
             NEOTAPE_DUMP="$<TARGET_FILE:neotape_dump>"
         )
         add_dependencies(${target}
             mt_pax neotape_plan neotape_archiver neotape_raw_store
             neotape_write neotape_read neotape_extractor neotape_inspect
-            neotape_scan neotape_dump
+            neotape_scan neotape_dump neotape_catalog
         )
         catch_discover_tests(${target}
             TEST_PREFIX "integration."

@@ -20,7 +20,8 @@ for slicing metadata, long-running data producers (`build/dev/bin/neotape-archiv
 `build/dev/bin/neotape-raw-store`), per-volume tape/spool clients (`build/dev/bin/neotape-write`,
 `build/dev/bin/neotape-read`), a payload extractor (`build/dev/bin/neotape-extractor`), an
 inspection/compliance tool (`build/dev/bin/neotape-inspect`), and an archive-identity
-scanner (`build/dev/bin/neotape-scan`), plus a validation-free tape dumper
+scanner (`build/dev/bin/neotape-scan`), a catalog previewer
+(`build/dev/bin/neotape-catalog`), plus a validation-free tape dumper
 (`build/dev/bin/neotape-dump`). Signed-frame verification is implemented in the
 writer, extractor, and inspect paths; the writer can also authenticate the
 source archiver over TCP or Unix-domain sockets before it touches media.
@@ -290,6 +291,16 @@ each tapefile, deduplicates archive identities by `archive_uuid` and
 `archive_label`, and prints each newly discovered archive identity as soon as it
 is first seen. Use `-v` to list every tapefile's first frame instead, including
 whether that tapefile introduced a new archive identity.
+
+### build/dev/bin/neotape-catalog (catalog preview)
+
+```sh
+build/dev/bin/neotape-catalog --source tape:/dev/nst0 --list
+build/dev/bin/neotape-catalog --plan home.plan --summary
+```
+
+Prints the catalog of a plan-driven archive, or a plan file, without restoring
+anything. See the [CLI reference](docs/implementation/cli-tooling.md#catalog-preview).
 
 ### build/dev/bin/neotape-dump (validation-free tape dump)
 

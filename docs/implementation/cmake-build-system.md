@@ -78,6 +78,7 @@ The public executable names remain:
 - `neotape-extractor`
 - `neotape-inspect`
 - `neotape-scan`
+- `neotape-catalog`
 - `neotape-dump`
 
 ## Execution plan and progress

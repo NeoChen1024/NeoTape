@@ -234,6 +234,31 @@ TEST_CASE("plan-driven archiver restores the planned slice",
     REQUIRE(read_file(catalog) ==
             (write_catalog ? read_file(plan) : std::string{}));
 
+    ProcessResult const preview =
+        Process::run(ProcessOptions{{NEOTAPE_CATALOG, "--source",
+                                     "spool:" + spool.string()}},
+                     30s);
+    ProcessResult const listing =
+        Process::run(ProcessOptions{{NEOTAPE_CATALOG, "--source",
+                                     "spool:" + spool.string(), "--list"}},
+                     30s);
+    if (write_catalog) {
+        require_success(preview);
+        REQUIRE(preview.standard_output == read_file(plan));
+        require_success(listing);
+        // One line per planned entry; the /chdir/ record is not listed.
+        REQUIRE(std::ranges::count(listing.standard_output, '\n') == 2);
+        REQUIRE(listing.standard_output.find("hello.txt") != std::string::npos);
+        REQUIRE(listing.standard_output.find("blob.bin") != std::string::npos);
+        REQUIRE(listing.standard_output.find(input.string()) ==
+                std::string::npos);
+    } else {
+        INFO(preview.standard_error);
+        REQUIRE(preview.exit_code == 1);
+        REQUIRE(preview.standard_output.empty());
+        REQUIRE(listing.exit_code == 1);
+    }
+
     fs::path const restored_output = temporary.path() / "restored-output";
     extract_pax(restored, restored_output);
     REQUIRE(read_file(input / "hello.txt") ==

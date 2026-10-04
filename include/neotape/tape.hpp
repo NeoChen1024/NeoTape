@@ -17,9 +17,7 @@ class Error final : public std::runtime_error {
   public:
     Error(std::string_view device, std::string_view operation, int errnum);
 
-    [[nodiscard]] int error_code() const noexcept {
-        return errnum_;
-    }
+    [[nodiscard]] int error_code() const noexcept { return errnum_; }
 
   private:
     int errnum_;
@@ -79,8 +77,7 @@ class TapeDevice {
     // -- accessors -----------------------------------------------------
 
     // fd() is virtual — see declaration near bottom of class
-    [[nodiscard]] const std::string &
-    device_path() const noexcept {
+    [[nodiscard]] const std::string &device_path() const noexcept {
         return device_path_;
     }
     // Checked close; may report deferred backend errors. Never retries close.

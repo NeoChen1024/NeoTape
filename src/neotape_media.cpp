@@ -166,7 +166,7 @@ void RecordReader::open_spool() {
     parse_spool_file_name(files_[index_], file_num_);
 }
 
-RecordReader::RecordReader(const MediaLocator &source) {
+RecordReader::RecordReader(const MediaLocator &source, TapeStart start) {
     if (source.kind == MediaLocator::tape) {
         tape_ = std::make_unique<mt::TapeDevice>(source.path, false);
         int flags = ::fcntl(tape_->fd(), F_GETFL, 0);
@@ -181,7 +181,8 @@ RecordReader::RecordReader(const MediaLocator &source) {
                 "neotape: warning: variable block mode unavailable: {}\n",
                 e.what());
         }
-        tape_->rewind();
+        if (start == TapeStart::rewind)
+            tape_->rewind();
         buffer_.resize(max_block_size);
     } else if (source.kind == MediaLocator::spool) {
         if (!fs::exists(source.path))
