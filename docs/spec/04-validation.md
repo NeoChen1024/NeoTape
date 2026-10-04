@@ -185,7 +185,9 @@ each slice:
   `channel_frame_seq_num` and `END` state
 
 The validator MUST NOT impose any relative order between frames of different
-channels: `ch_metadata` and `ch_content` frames may be interleaved freely.
+channels: `ch_metadata` and `ch_content` frames may be interleaved freely, as
+repeated runs of either channel. Interleaving does not reset
+`channel_frame_seq_num` for either channel.
 
 ## END Flag Rules
 

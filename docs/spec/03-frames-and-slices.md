@@ -100,7 +100,9 @@ and does not continue across different `channel_type` values.
 
 The writer decides when to close a slice. When it closes:
 
-1. The final frame of every channel present in the slice carries `END`.
+1. The final frame of every channel present in the slice carries `END`. With
+   interleaved channels, a channel's final frame may occur before the final
+   physical frame of the slice.
 2. The writer MUST NOT emit another frame for a channel after that channel has
    reached `END`.
 3. After all frames are committed, the writer writes a filemark to close the
