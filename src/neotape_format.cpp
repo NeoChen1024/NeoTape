@@ -181,6 +181,9 @@ void validate_header(const FrameHeader &header) {
             throw std::runtime_error(
                 "archive-end frame channel_frame_seq_num must be zero");
         }
+        if (header.frame_payload_size != 0) {
+            throw std::runtime_error("archive-end frame carries a payload");
+        }
     } else {
         if (has_frame_flag_clean_end(header.flags)) {
             throw std::runtime_error(

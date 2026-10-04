@@ -217,6 +217,7 @@ A conforming validator MUST check that an `archive_end` frame has:
 - `CLEAN_END = 1`
 - `slice_seq_num = 0`
 - `channel_frame_seq_num = 0`
+- `frame_payload_size = 0`
 
 Before accepting `archive_end` as proof of clean archive conformance, the
 validator MUST confirm that every channel present in the preceding slice has
@@ -234,8 +235,7 @@ validation context is closed:
   `archive_uuid` and fresh archive-local sequence state starting at
   `global_frame_seq_num = 0` and `slice_seq_num = 0`.
 
-A non-zero `frame_payload_size` is allowed for optional implementation-specific
-archive-end metadata, but it does not change the control-frame semantics above.
+An `archive_end` frame with a non-zero `frame_payload_size` MUST be rejected.
 
 ## Advisory Metadata Exception
 

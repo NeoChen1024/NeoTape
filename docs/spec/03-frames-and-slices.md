@@ -44,7 +44,7 @@ The `channel_type` field identifies the frame's channel:
 | Value | Name            | Description                                                  |
 | ----- | --------------- | ------------------------------------------------------------ |
 | 1     | `ch_content`  | Payload bytes belonging to the slice content stream.         |
-| 2     | `ch_metadata` | Advisory metadata bytes for the slice.                       |
+| 2     | `ch_metadata` | Advisory metadata bytes carried in the slice.                |
 | 255   | `archive_end` | Clean end-of-archive marker.                                 |
 
 Values 0 and 3–254 are reserved for future channels. Validation behavior for
@@ -115,6 +115,6 @@ The writer decides when to close a slice. When it closes:
 - Written as the final record of a cleanly completed archive.
 - `channel_type = archive_end`.
 - `END = 1`, `CLEAN_END = 1`.
-- `frame_payload_size` is normally `0`. A non-zero payload MAY carry optional end-of-archive metadata; its interpretation is implementation-specific.
+- `frame_payload_size = 0`. The Archive End frame carries no payload.
 - `slice_seq_num = 0`, `channel_frame_seq_num = 0`.
 - Because `archive_end` is a control frame identified by `channel_type`, these scoped sequence fields are fixed canonical values, not membership in slice 0 or a normal channel group.

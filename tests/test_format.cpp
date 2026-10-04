@@ -229,6 +229,11 @@ TEST_CASE("format: validation", "[unit][format]") {
     bytes[138] = 1;
     REQUIRE_THROWS_AS(neotape::parse_fixed_header(bytes.data(), bytes.size()),
                       std::exception);
+
+    bytes = neotape::serialize_frame_header(make_archive_end_header());
+    bytes[146] = 1;
+    REQUIRE_THROWS_AS(neotape::parse_fixed_header(bytes.data(), bytes.size()),
+                      std::exception);
 }
 
 TEST_CASE("format: frame hash canonicalization", "[unit][format]") {
