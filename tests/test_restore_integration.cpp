@@ -3,6 +3,7 @@
 #include "support/temp_directory.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -194,6 +195,8 @@ TEST_CASE("two volumes restore one continuous archive",
 
 TEST_CASE("plan-driven archiver restores the planned slice",
           "[integration][plan][restore][socket]") {
+    bool const write_catalog = GENERATE(true, false);
+    CAPTURE(write_catalog);
     TemporaryDirectory temporary;
     fs::path const input = temporary.path() / "input";
     fs::path const plan = temporary.path() / "plan";
@@ -214,7 +217,8 @@ TEST_CASE("plan-driven archiver restores the planned slice",
         {NEOTAPE_ARCHIVER, "--listen", "unix://" + archiver_socket.string(),
          "--archive-name", "plan-restore", "--io-thread", "4", "--plan",
          plan.string(), "--output-buffer-size", "1M", "-P", "80",
-         "--volume-block-size", "64K"}});
+         "--volume-block-size", "64K", "--plan-write-mode",
+         write_catalog ? "slice0" : "no"}});
     REQUIRE(wait_for_unix_socket(archiver_socket, archiver, 5s));
     require_success(Process::run(
         ProcessOptions{{NEOTAPE_WRITE, "--source",
@@ -227,7 +231,8 @@ TEST_CASE("plan-driven archiver restores the planned slice",
 
     // The catalog is the plan file itself, /chdir/ record included.
     REQUIRE(fs::file_size(plan) > 0);
-    REQUIRE(read_file(plan) == read_file(catalog));
+    REQUIRE(read_file(catalog) ==
+            (write_catalog ? read_file(plan) : std::string{}));
 
     fs::path const restored_output = temporary.path() / "restored-output";
     extract_pax(restored, restored_output);

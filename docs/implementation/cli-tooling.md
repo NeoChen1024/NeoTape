@@ -100,7 +100,8 @@ Generates the record-oriented plan metadata stream consumed by
 `neotape-archiver --plan`; see [09-plan-metadata.md](../spec/09-plan-metadata.md).
 The archiver also stores the plan file as the archive catalog at the start of
 slice 0, so the plan must be a regular file that stays unchanged while the
-archiver runs.
+archiver runs. `--plan-write-mode no` leaves the catalog out; `slice0` is the
+default.
 
 ## Extractor / Reader (reading pipeline)
 

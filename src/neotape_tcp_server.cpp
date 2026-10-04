@@ -48,8 +48,8 @@ PaxWriterCallbacks make_server_callbacks(FrameBuilder &builder,
 
 // The plan file is the archive catalog: its bytes form the leading
 // ch_metadata run of slice 0, ahead of the first planned content frame.
-void write_plan_catalog(const std::filesystem::path &plan_path,
-                        FrameBuilder &builder, VolumeRecordQueue &queue) {
+void write_catalog(const std::filesystem::path &plan_path,
+                   FrameBuilder &builder, VolumeRecordQueue &queue) {
     // The pax writer reads the same file again after this pass.
     if (!std::filesystem::is_regular_file(plan_path))
         throw std::runtime_error(
@@ -90,8 +90,8 @@ VolumeServerSummary run_tcp_archiver(const TcpArchiverOptions &opts) {
                                               VolumeRecordQueue &frame_queue) {
         FrameBuilder builder(opts.volume_block_size, archive_uuid,
                              opts.archive_name);
-        if (opts.pax.plan_path)
-            write_plan_catalog(*opts.pax.plan_path, builder, frame_queue);
+        if (opts.pax.plan_path && opts.write_plan_catalog)
+            write_catalog(*opts.pax.plan_path, builder, frame_queue);
         auto callbacks = make_server_callbacks(builder, frame_queue);
         write_pax(opts.pax, std::move(callbacks));
         push_frames(frame_queue, builder.flush());

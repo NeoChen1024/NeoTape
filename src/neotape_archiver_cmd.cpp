@@ -9,6 +9,7 @@
 #include <getopt.h>
 #include <iostream>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -27,10 +28,20 @@ struct Options {
     string archive_name = "archive";
     uint64_t retention_frame_count = 256;
     neotape::PaxWriterOptions pax;
+    std::optional<bool> write_plan_catalog;
     std::optional<string> sign_secret_key_file;
     std::optional<string> sign_passphrase_file;
     bool debug = false;
 };
+
+bool parse_plan_write_mode(std::string_view text) {
+    if (text == "no")
+        return false;
+    if (text == "slice0")
+        return true;
+    throw std::runtime_error(
+        format("invalid plan write mode '{}': expected no or slice0", text));
+}
 
 void usage(const char *prog) {
     std::cerr << format(
@@ -39,6 +50,7 @@ void usage(const char *prog) {
         "       [-b|--volume-block-size <SIZE>] [-n|--archive-name <name>]\n"
         "       [-C <dir>] [-P <percent>] [-j|--io-thread <N>]\n"
         "       [-B|--output-buffer-size <SIZE>] [-p|--plan <file>]\n"
+        "       [-w|--plan-write-mode no|slice0]\n"
         "       [-r|--retention-frame-count <N>]\n"
         "       [-k|--sign-secret-key <file.sec>]\n"
         "       [-K|--sign-passphrase-file <path>] [-v|-vv] [-x] [-d|--debug]\n"
@@ -59,6 +71,7 @@ Options parse_args(int argc, char **argv) {
         {"plan", required_argument, nullptr, 'p'},
         {"retention-frame-count", required_argument, nullptr, 'r'},
         {"verbose", no_argument, nullptr, 'v'},
+        {"plan-write-mode", required_argument, nullptr, 'w'},
         {"one-file-system", no_argument, nullptr, 'x'},
         {"debug", no_argument, nullptr, 'd'},
         {"sign-secret-key", required_argument, nullptr, 'k'},
@@ -68,8 +81,8 @@ Options parse_args(int argc, char **argv) {
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "l:b:n:C:P:j:B:p:r:dk:K:vxh", long_opts,
-                            nullptr)) != -1) {
+    while ((c = getopt_long(argc, argv, "l:b:n:C:P:j:B:p:w:r:dk:K:vxh",
+                            long_opts, nullptr)) != -1) {
         try {
             switch (c) {
             case 'l':
@@ -108,6 +121,9 @@ Options parse_args(int argc, char **argv) {
                 break;
             case 'p':
                 opts.pax.plan_path = optarg;
+                break;
+            case 'w':
+                opts.write_plan_catalog = parse_plan_write_mode(optarg);
                 break;
             case 'r':
                 opts.retention_frame_count =
@@ -151,6 +167,9 @@ Options parse_args(int argc, char **argv) {
     if (has_plan && has_sources) {
         fail("positional sources cannot be used with --plan");
     }
+    if (!has_plan && opts.write_plan_catalog.has_value()) {
+        fail("--plan-write-mode requires --plan");
+    }
     if (!has_plan && !has_sources) {
         usage(argv[0]);
         std::exit(2);
@@ -178,6 +197,8 @@ int main(int argc, char **argv) {
         server_opts.archive_name = opts.archive_name;
         server_opts.retention_frame_count = opts.retention_frame_count;
         server_opts.pax = opts.pax;
+        if (opts.write_plan_catalog)
+            server_opts.write_plan_catalog = *opts.write_plan_catalog;
         if (opts.sign_secret_key_file.has_value()) {
             server_opts.frame_signer = neotape::load_signify_secret_key(
                 *opts.sign_secret_key_file,

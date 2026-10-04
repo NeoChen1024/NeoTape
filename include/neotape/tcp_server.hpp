@@ -17,6 +17,8 @@ struct TcpArchiverOptions {
     uint64_t initial_volume_seq_num = 1;
     uint64_t retention_frame_count = 256;
     std::optional<SignifySecretKey> frame_signer;
+    // Store pax.plan_path as the archive catalog at the start of slice 0.
+    bool write_plan_catalog = true;
 
     PaxWriterOptions pax;
 };
