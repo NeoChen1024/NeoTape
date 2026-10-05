@@ -27,6 +27,8 @@ if(BUILD_TESTING)
     neotape_unit_test(test_tape_io test_tape_io.cpp neotape_writer)
     target_link_options(test_tape_io PRIVATE "-Wl,--wrap=write" "-Wl,--wrap=close")
     neotape_unit_test(test_common test_common.cpp neotape_common)
+    neotape_unit_test(test_resume test_resume.cpp
+        neotape_resume neotape_test_support)
     neotape_unit_test(test_pax_pipeline test_pax_pipeline.cpp
         Threads::Threads neotape_test_support)
     target_compile_definitions(test_pax_pipeline PRIVATE

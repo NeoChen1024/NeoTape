@@ -33,8 +33,10 @@ Progress snapshots in the writer are taken under one state lock.
 
 Positioning remains available through `TapeDevice::space_fwd`,
 `space_bwd`, `space_fwd_filemark`, `space_bwd_filemark`, rewind and seek.
-A future checkpoint coordinator must drain or cancel the session before
-positioning, then reconstruct capacity/sequence/validation state. This refactor
-does not define a checkpoint format or resume protocol.
+Resuming an interrupted archive does not use them: the operator positions the
+medium and `neotape-write --resume-mode` writes from there, while the archiver
+restores identity and sequence state from its resume file (see the
+[CLI reference](cli-tooling.md#resuming-an-interrupted-archive)). Resume
+granularity is the slice; there is no checkpoint inside a slice.
 
 Tape readers start at the current position; `RecordReader` never rewinds.

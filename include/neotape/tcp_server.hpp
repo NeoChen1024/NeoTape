@@ -1,11 +1,13 @@
 #pragma once
 
 #include "neotape/pax_writer.hpp"
+#include "neotape/resume.hpp"
 #include "neotape/signature.hpp"
 #include "neotape/tcp_protocol.hpp"
 #include "neotape/volume_server.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace neotape {
@@ -19,6 +21,11 @@ struct TcpArchiverOptions {
     std::optional<SignifySecretKey> frame_signer;
     // Store pax.plan_path as the archive catalog at the start of slice 0.
     bool write_plan_catalog = true;
+    // Resuming an archive from pax.first_slice; see VolumeServerOptions.
+    std::optional<std::string> archive_uuid;
+    uint64_t first_global_seq = 0;
+    // Records slice starts for a later resume; not owned.
+    ResumeLog *resume_log = nullptr;
 
     PaxWriterOptions pax;
 };

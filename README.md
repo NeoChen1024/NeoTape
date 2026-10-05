@@ -88,6 +88,8 @@ Programs are built into `build/<preset>/bin/`. Each one lists its options with
 
 Frame signing and verification options are summarized under
 [Signing and verification](docs/implementation/cli-tooling.md#signing-and-verification).
+An interrupted plan-driven archive can be continued from the start of a slice;
+see [Resuming an interrupted archive](docs/implementation/cli-tooling.md#resuming-an-interrupted-archive).
 
 ## Building
 

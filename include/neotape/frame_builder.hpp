@@ -84,8 +84,9 @@ struct BuiltFrame {
 // server finalizes them exactly once when assigning the real volume_seq_num.
 class FrameBuilder {
   public:
+    // `first_global_seq` is non-zero only when resuming an archive.
     FrameBuilder(uint32_t block_size, std::string archive_uuid,
-                 std::string archive_name);
+                 std::string archive_name, uint64_t first_global_seq = 0);
 
     [[nodiscard]] uint32_t payload_capacity() const;
 

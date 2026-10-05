@@ -28,10 +28,17 @@ void push_frames(VolumeRecordQueue &queue, std::vector<BuiltFrame> frames) {
 }
 
 PaxWriterCallbacks make_server_callbacks(FrameBuilder &builder,
-                                         VolumeRecordQueue &queue) {
+                                         VolumeRecordQueue &queue,
+                                         ResumeLog *resume_log) {
     return PaxWriterCallbacks{
         .begin_slice =
-            [&](uint64_t slice_num) { builder.begin_channel(slice_num); },
+            [&builder, resume_log](uint64_t slice_num) {
+                builder.begin_channel(slice_num);
+                // Slice 0 is the start of the archive, not a resume point.
+                if (resume_log != nullptr && slice_num > 0)
+                    resume_log->slice_started(slice_num,
+                                              builder.next_global_seq_num());
+            },
         .write_chunk =
             [&](PaxChunk chunk) {
                 push_frames(queue, builder.feed(chunk.bytes));
@@ -85,14 +92,24 @@ VolumeServerSummary run_tcp_archiver(const TcpArchiverOptions &opts) {
     server_opts.retention_frame_count = opts.retention_frame_count;
     server_opts.log_label = "neotape-archiver";
     server_opts.frame_signer = opts.frame_signer;
+    server_opts.archive_uuid = opts.archive_uuid;
+    server_opts.first_global_seq = opts.first_global_seq;
+    if (opts.resume_log != nullptr)
+        server_opts.on_ack = [log = opts.resume_log](uint64_t seq,
+                                                     uint64_t volume) {
+            log->frame_acked(seq, volume);
+        };
 
     return run_volume_server(server_opts, [&](const string &archive_uuid,
                                               VolumeRecordQueue &frame_queue) {
         FrameBuilder builder(opts.volume_block_size, archive_uuid,
-                             opts.archive_name);
-        if (opts.pax.plan_path && opts.write_plan_catalog)
+                             opts.archive_name, opts.first_global_seq);
+        // A resumed run starts after slice 0, which holds the catalog.
+        if (opts.pax.plan_path && opts.write_plan_catalog &&
+            opts.pax.first_slice == 0)
             write_catalog(*opts.pax.plan_path, builder, frame_queue);
-        auto callbacks = make_server_callbacks(builder, frame_queue);
+        auto callbacks =
+            make_server_callbacks(builder, frame_queue, opts.resume_log);
         write_pax(opts.pax, std::move(callbacks));
         push_frames(frame_queue, builder.flush());
         if (!frame_queue.push(

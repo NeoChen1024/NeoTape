@@ -49,6 +49,9 @@ struct Options {
     TargetLocator target;
     bool erase = false;
     bool append = false;
+    // Write from the current position; the operator has positioned the
+    // medium after the last complete slice.
+    bool resume_mode = false;
     std::optional<fs::path> recovery_bundle;
     std::optional<uint64_t> recovery_bundle_block_size;
     size_t output_buffer_size = 256ULL * 1024 * 1024;
@@ -89,7 +92,7 @@ void usage(const char *prog) {
     std::cerr << format("usage: {} -s|--source <tcp://host:port|unix://path>\n"
                         "       -t|--target <tape:/dev/nst0|spool:./dir|null>\n"
                         "       [-k|--verify-pubkey <file.pub>]...\n"
-                        "       [-e|--erase | -a|--append]\n"
+                        "       [-e|--erase | -a|--append | -c|--resume-mode]\n"
                         "       [-R|--recovery-bundle <tar>]\n"
                         "       [-r|--recovery-bundle-block-size <SIZE>] "
                         "(default 256K)\n"
@@ -106,6 +109,7 @@ Options parse_args(int argc, char **argv) {
         {"target", required_argument, nullptr, 't'},
         {"erase", no_argument, nullptr, 'e'},
         {"append", no_argument, nullptr, 'a'},
+        {"resume-mode", no_argument, nullptr, 'c'},
         {"recovery-bundle", required_argument, nullptr, 'R'},
         {"recovery-bundle-block-size", required_argument, nullptr, 'r'},
         {"output-buffer-size", required_argument, nullptr, 'B'},
@@ -117,7 +121,7 @@ Options parse_args(int argc, char **argv) {
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "s:t:eaR:r:B:m:dk:h", long_opts,
+    while ((c = getopt_long(argc, argv, "s:t:eacR:r:B:m:dk:h", long_opts,
                             nullptr)) != -1) {
         switch (c) {
         case 's':
@@ -131,6 +135,9 @@ Options parse_args(int argc, char **argv) {
             break;
         case 'a':
             opts.append = true;
+            break;
+        case 'c':
+            opts.resume_mode = true;
             break;
         case 'R':
             opts.recovery_bundle = fs::path(optarg);
@@ -187,15 +194,18 @@ Options parse_args(int argc, char **argv) {
     if (opts.target.kind == TargetLocator::none) {
         usage_error("--target is required");
     }
-    if (opts.erase && opts.append) {
-        usage_error("--erase and --append are mutually exclusive");
+    if (opts.erase + opts.append + opts.resume_mode > 1) {
+        usage_error(
+            "--erase, --append, and --resume-mode are mutually exclusive");
     }
-    if (opts.append && opts.recovery_bundle.has_value()) {
-        usage_error("--recovery-bundle cannot be used with --append");
+    if ((opts.append || opts.resume_mode) && opts.recovery_bundle.has_value()) {
+        usage_error("--recovery-bundle cannot be used with --append or "
+                    "--resume-mode");
     }
     if (opts.target.kind == TargetLocator::null_sink &&
-        (opts.erase || opts.append)) {
-        usage_error("--erase and --append are not valid with a null target");
+        (opts.erase || opts.append || opts.resume_mode)) {
+        usage_error("--erase, --append, and --resume-mode are not valid "
+                    "with a null target");
     }
     if (opts.target.kind == TargetLocator::null_sink &&
         opts.recovery_bundle.has_value()) {
@@ -436,7 +446,7 @@ int main(int argc, char **argv) {
                 fs::path const spool_root(opts.target.path);
                 fs::path const installed_bundle =
                     spool_root / "recovery-bundle.tar";
-                if (!opts.erase && !opts.append &&
+                if (!opts.erase && !opts.append && !opts.resume_mode &&
                     fs::exists(installed_bundle)) {
                     fail("spool appears to contain a recovery bundle; use "
                          "--erase or --append");
@@ -446,7 +456,7 @@ int main(int argc, char **argv) {
             }
 
             // Default policy: refuse to overwrite existing tape content.
-            if (dev && !opts.erase && !opts.append) {
+            if (dev && !opts.erase && !opts.append && !opts.resume_mode) {
                 auto st = dev->status();
                 if (!st.bot()) {
                     fail("tape is not at BOT; use --erase or --append");
@@ -460,7 +470,10 @@ int main(int argc, char **argv) {
                 }
             }
 
-            if (opts.append) {
+            if (opts.resume_mode) {
+                // The operator positioned the medium; a spool continues
+                // after its last tape file.
+            } else if (opts.append) {
                 dev->space_to_eod();
             } else if (dev) {
                 dev->rewind(); // --erase or empty tape

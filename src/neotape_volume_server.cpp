@@ -73,8 +73,7 @@ int process_ack_payload(int client, const VolumeServerOptions &opts,
     }
 
     uint64_t const g = le64_from_bytes(payload);
-    uint64_t const expected =
-        state.has_acked_any_frame ? state.last_acked_global_frame + 1 : 0;
+    uint64_t const expected = state.next_unacked_global_frame();
     if (g != expected) {
         send_error(
             client,
@@ -92,6 +91,8 @@ int process_ack_payload(int client, const VolumeServerOptions &opts,
     state.last_acked_global_frame = g;
     state.has_acked_any_frame = true;
     retention.ack(g);
+    if (opts.on_ack)
+        opts.on_ack(g, state.next_volume_seq_num);
     if (archive_end_seq.has_value() && g >= *archive_end_seq) {
         NEOTAPE_DEBUG("{}: archive end acked\n", opts.log_label);
         return 1;
@@ -109,13 +110,11 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
                     const std::function<string()> &get_error_text) {
     bool volume_committed = false;
     uint64_t frames_served = 0;
-    uint64_t next_send_seq =
-        state.has_acked_any_frame ? state.last_acked_global_frame + 1 : 0;
+    uint64_t next_send_seq = state.next_unacked_global_frame();
     std::optional<uint64_t> archive_end_seq;
 
     auto outstanding_frames = [&]() -> uint64_t {
-        uint64_t const acked_count =
-            state.has_acked_any_frame ? state.last_acked_global_frame + 1 : 0;
+        uint64_t const acked_count = state.next_unacked_global_frame();
         return next_send_seq - acked_count;
     };
 
@@ -322,7 +321,7 @@ VolumeServerSummary run_volume_server(const VolumeServerOptions &opts,
     write_diagnostic(
         format("{}: listening on {}", opts.log_label, opts.listen_address));
 
-    string const archive_uuid = make_uuid_v4();
+    string const archive_uuid = opts.archive_uuid.value_or(make_uuid_v4());
     VolumeRecordQueue frame_queue(opts.queue_capacity);
 
     std::exception_ptr producer_error;
@@ -363,7 +362,8 @@ VolumeServerSummary run_volume_server(const VolumeServerOptions &opts,
     ThreadJoiner const producer_joiner(producer_thread);
 
     FrameRetentionBuffer retention(opts.retention_frame_count);
-    VolumeServeState state{opts.initial_volume_seq_num, 0, false};
+    VolumeServeState state{opts.initial_volume_seq_num, 0, false, false,
+                           opts.first_global_seq};
     VolumeServerSummary summary;
 
     try {
@@ -379,17 +379,13 @@ VolumeServerSummary run_volume_server(const VolumeServerOptions &opts,
             NEOTAPE_DEBUG("{}: accepted connection for volume seq={}\n",
                           opts.log_label, state.next_volume_seq_num);
 
-            uint64_t const committed_before =
-                state.has_acked_any_frame ? state.last_acked_global_frame + 1
-                                          : 0;
+            uint64_t const committed_before = state.next_unacked_global_frame();
             VolumeServeResult const result =
                 serve_volume_client(client, opts, archive_uuid, state,
                                     retention, frame_queue, get_error_text);
             summary.frame_transmissions += result.frame_transmissions;
-            uint64_t const committed_after =
-                state.has_acked_any_frame ? state.last_acked_global_frame + 1
-                                          : 0;
-            summary.committed_frames = committed_after;
+            uint64_t const committed_after = state.next_unacked_global_frame();
+            summary.committed_frames = committed_after - opts.first_global_seq;
 
             if (result.archive_complete) {
                 if (result.volume_committed) {

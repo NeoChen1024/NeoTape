@@ -46,9 +46,11 @@ error, and `2` reports invalid command-line usage.
 
 By default the writer refuses to overwrite existing content. `--erase` rewinds
 to BOT and overwrites; `--append` spaces to the end of data and continues
-there.
+there. `--resume-mode` writes from the current position without moving the
+tape; see [Resuming an interrupted archive](#resuming-an-interrupted-archive).
 
-`-R, --recovery-bundle <tar>` is available in non-append mode. A tape target
+`-R, --recovery-bundle <tar>` is available with `--erase` or on an empty
+medium. A tape target
 writes the bundle at BOT using separate 256 KiB records by default. Use
 `-r, --recovery-bundle-block-size <SIZE>` to override that size. The writer
 pads the final bundle record, writes a filemark, and then writes NeoTape frames
@@ -60,6 +62,86 @@ for tape targets. It stops before the next complete record would exceed the
 limit, without waiting for physical EOT; tape recovery-bundle padding counts
 toward this limit. Without this option, tape writes stop at the drive's EOT
 indication. Both boundaries return status 3 when another volume is needed.
+
+## Resuming an interrupted archive
+
+A plan-driven archive that was interrupted can be continued from the start of
+a slice instead of from the beginning. The archiver records what it needs in
+a resume file; the operator positions the medium; the writer does not look at
+the position.
+
+```sh
+# First run: --resume-file must not exist yet.
+build/dev/bin/neotape-archiver --listen unix:///tmp/neotape.sock \
+  --plan home.plan --archive-name home --resume-file home.resume
+
+# After the failure: load the volume that holds the start of the slice,
+# position after the filemark that ends the previous slice, then:
+build/dev/bin/neotape-archiver --listen unix:///tmp/neotape.sock \
+  --plan home.plan --resume-file home.resume --resume-from-slice last
+build/dev/bin/neotape-write --source unix:///tmp/neotape.sock \
+  --target tape:/dev/nst0 --resume-mode
+```
+
+`--resume-from-slice` takes a slice number that has a record in the file, or
+`last` for the most recent one. The resumed run reuses the archive UUID,
+continues the global frame sequence and the volume number from that record,
+and does not write the catalog again. `--archive-name`,
+`--volume-block-size`, and the signing key may be omitted where they have a
+default; if given, they must match the resume file. The plan file must be the
+original one: its BLAKE3 hash is stored in the resume file and a different
+plan is refused, because replanning can move slice boundaries and leave files
+out of the archive.
+
+The slice being resumed is written again in full, so everything on the medium
+from its first frame on is replaced. That first frame may be on an earlier
+volume than the one in the drive when the run failed; the volume number in
+the record says which one to load. Later volumes of the interrupted run are
+no longer part of the archive.
+
+Entries of the skipped slices are still examined on disk, without reading
+their contents, so that a hardlink in a resumed slice to a file in a skipped
+slice is written as a hardlink. If such a file has since been removed, the
+link is written as a regular file with its contents.
+
+`neotape-write --resume-mode` cannot be combined with `--erase`, `--append`,
+or `--recovery-bundle`. On a tape it writes at the current position. A spool
+has no position: the writer continues after the highest-numbered tape file,
+so remove the files of the slice being resumed first.
+
+### Resume file
+
+The resume file uses the record framing of plan files: every record starts
+with `/`, the first component names the record type, and the record ends with
+`\0\n`. The last field of a record extends to the terminator and is not
+escaped.
+
+| Record | Meaning |
+| --- | --- |
+| `/neotape-resume/1` | Format and version; always the first record. |
+| `/archive_uuid/<uuid>` | Archive UUID to reuse. |
+| `/block_size_kib/<n>` | Record size in KiB, as in the frame header. |
+| `/sign_key_id/<hex>` | 16 hex digits of the signing key ID; empty when unsigned. |
+| `/plan_blake3/<hex>` | 64 hex digits; empty when unknown, which skips the plan check with a warning. |
+| `/archive_name/<bytes>` | Archive label bytes, which may include `/` and newline. |
+| `/slice/<slice>/<global_seq>/<volume>` | Slice `<slice>` starts at global frame sequence `<global_seq>` on volume `<volume>`. |
+
+The five header records appear once each, before any `/slice/` record. A
+`/slice/` record is appended, and synced, when the writer acknowledges the
+first frame of that slice; the previous slice and its filemark are then on
+the medium. Slice 0 is not recorded. The number of `/slice/` records with the
+same volume number is the number of slice filemarks to skip on that volume,
+not counting a recovery bundle or other tape files ahead of the archive.
+
+Records are only ever appended. A `/slice/` record for slice N supersedes the
+earlier records for N and for every later slice; a resumed run appends such a
+record before it sends its first frame. A final record without its terminator
+is the trace of a crash and is ignored; any other malformed record is an
+error.
+
+`neotape-scan --resume-output <file>` rebuilds a resume file from the medium
+when the original is lost. It needs a source that holds exactly one archive
+and leaves `plan_blake3` empty.
 
 ## Raw byte-stream store
 
@@ -216,6 +298,10 @@ build/dev/bin/neotape-scan --source spool:./out
 # Also list each tapefile's first frame on tape:
 build/dev/bin/neotape-scan --source tape:/dev/nst0 -v
 ```
+
+`-r, --resume-output <file>` additionally writes a
+[resume file](#resume-file) for the archive on the source: its identity, and
+a slice start for every tape file that opens with the first frame of a slice.
 
 ## Dump tool
 

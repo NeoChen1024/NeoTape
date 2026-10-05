@@ -1,6 +1,7 @@
 #include "neotape/common.hpp"
 #include "neotape/format.hpp"
 #include "neotape/media.hpp"
+#include "neotape/resume.hpp"
 #include "neotape/tape.hpp"
 
 #include <algorithm>
@@ -10,9 +11,12 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <getopt.h>
 #include <iostream>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unistd.h>
@@ -50,6 +54,7 @@ string source_display(const SourceLocator &source) {
 struct Options {
     SourceLocator source;
     bool verbose = false;
+    std::optional<fs::path> resume_output;
 };
 
 struct FirstFrame {
@@ -65,23 +70,28 @@ struct ArchiveEntry {
 
 void usage(const char *prog) {
     std::cerr << format("usage: {} -s|--source <spool:./dir|tape:/dev/nst0>\n"
-                        "       [-v|--verbose] [-h|--help]\n",
+                        "       [-r|--resume-output <file>] [-v|--verbose] "
+                        "[-h|--help]\n",
                         prog);
 }
 
 Options parse_args(int argc, char **argv) {
     static const struct option long_opts[] = {
         {"source", required_argument, nullptr, 's'},
+        {"resume-output", required_argument, nullptr, 'r'},
         {"verbose", no_argument, nullptr, 'v'},
         {"help", no_argument, nullptr, 'h'},
         {nullptr, 0, nullptr, 0}};
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "s:vh", long_opts, nullptr)) != -1) {
+    while ((c = getopt_long(argc, argv, "s:r:vh", long_opts, nullptr)) != -1) {
         switch (c) {
         case 's':
             opts.source = parse_media(optarg);
+            break;
+        case 'r':
+            opts.resume_output = optarg;
             break;
         case 'v':
             opts.verbose = true;
@@ -199,12 +209,57 @@ void print_verbose_first_frame(const FirstFrame &frame, bool is_new_archive) {
         frame.header.archive_label, is_new_archive ? "yes" : "no");
 }
 
+// Rebuild a resume file from the first frame of each tape file. The plan
+// hash is not on the media in a form this scan reads, so it is left empty.
+void write_resume_output(const fs::path &path,
+                         const std::optional<FrameHeader> &first,
+                         const vector<neotape::ResumePoint> &points,
+                         size_t archive_count) {
+    if (archive_count != 1 || !first)
+        throw std::runtime_error(
+            format("--resume-output needs exactly one archive on the source; "
+                   "found {}",
+                   archive_count));
+    string const key_id = neotape::has_frame_flag_signed(first->flags)
+                              ? neotape::hex_encode(std::span<const uint8_t>(
+                                    first->signature.data(), 8))
+                              : string{};
+    string text = neotape::encode_resume_header({
+        .archive_uuid = first->archive_uuid,
+        .block_size_kib = first->volume_block_size_kib,
+        .sign_key_id = key_id,
+        .plan_blake3 = {},
+        .archive_name = first->archive_label,
+    });
+    for (const auto &point : points)
+        text += neotape::encode_resume_point(point);
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output.write(text.data(), static_cast<std::streamsize>(text.size()));
+    output.flush();
+    if (!output)
+        throw std::runtime_error("write " + path.string());
+}
+
 int do_scan(const Options &opts) {
     vector<ArchiveEntry> archives;
     uint64_t tapefiles_scanned = 0;
+    std::optional<FrameHeader> resume_first;
+    vector<neotape::ResumePoint> resume_points;
 
     auto handle_first_frame = [&](const FirstFrame &frame) {
         ++tapefiles_scanned;
+        if (opts.resume_output) {
+            const FrameHeader &header = frame.header;
+            if (!resume_first)
+                resume_first = header;
+            // A tape file that opens with a channel's first frame is the
+            // start of its slice; slice 0 is never a resume point.
+            if (header.channel_type != neotape::ChannelType::ARCHIVE_END &&
+                header.slice_seq_num > 0 && header.channel_frame_seq_num == 0)
+                resume_points.push_back({header.slice_seq_num,
+                                         header.global_frame_seq_num,
+                                         header.volume_seq_num});
+        }
         bool const is_new_archive =
             find_archive(archives, frame.header) == nullptr;
         if (is_new_archive) {
@@ -232,6 +287,10 @@ int do_scan(const Options &opts) {
         issues = scan_tape_source(opts.source.path, opts.verbose,
                                   handle_first_frame);
     }
+
+    if (opts.resume_output)
+        write_resume_output(*opts.resume_output, resume_first, resume_points,
+                            archives.size());
 
     std::cout << format("Unique archives found: {}\n", archives.size());
     std::cout << format("Tapefiles scanned: {}\n", tapefiles_scanned);

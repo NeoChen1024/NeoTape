@@ -7,7 +7,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -265,4 +267,139 @@ TEST_CASE("plan-driven archiver restores the planned slice",
             read_file(restored_output / "hello.txt"));
     REQUIRE(read_file(input / "blob.bin") ==
             read_file(restored_output / "blob.bin"));
+}
+
+TEST_CASE("an interrupted plan-driven archive resumes from a slice start",
+          "[integration][plan][resume][socket]") {
+    // The resume file is either the archiver's own or one rebuilt from media.
+    bool const rebuilt_from_media = GENERATE(false, true);
+    CAPTURE(rebuilt_from_media);
+    TemporaryDirectory temporary;
+    fs::path const input = temporary.path() / "input";
+    fs::path const plan = temporary.path() / "plan";
+    fs::path const spool = temporary.path() / "spool";
+    fs::path const resume = temporary.path() / "resume";
+    fs::path const rebuilt = temporary.path() / "rebuilt";
+    fs::path const restored = temporary.path() / "restored.pax";
+    fs::path const archiver_socket = temporary.path() / "archiver.sock";
+    fs::path const extractor_socket = temporary.path() / "extractor.sock";
+    fs::create_directory(input);
+    std::vector<std::string> names;
+    for (int i = 0; i < 6; ++i) {
+        names.push_back("file" + std::to_string(i) + ".bin");
+        write_pattern(input / names.back(), 1024 * 1024 + 4096 * i);
+    }
+    // Planned last, so the link lands in a resumed slice while its target
+    // stays in slice 0, which the resumed run does not emit.
+    fs::create_hard_link(input / "file0.bin", input / "link.bin");
+    names.emplace_back("link.bin");
+
+    std::vector<std::string> plan_command{
+        NEOTAPE_PLAN,   "-C", input.string(), "-o", plan.string(),
+        "--slice-size", "1M"};
+    plan_command.insert(plan_command.end(), names.begin(), names.end());
+    require_success(Process::run(ProcessOptions{plan_command}, 60s));
+
+    std::vector<std::string> const archive_command{NEOTAPE_ARCHIVER,
+                                                   "--listen",
+                                                   "unix://" +
+                                                       archiver_socket.string(),
+                                                   "--plan",
+                                                   plan.string(),
+                                                   "--volume-block-size",
+                                                   "64K",
+                                                   "--archive-name",
+                                                   "resume/test",
+                                                   "--resume-file"};
+    {
+        auto command = archive_command;
+        command.push_back(resume.string());
+        Process archiver{ProcessOptions{command}};
+        REQUIRE(wait_for_unix_socket(archiver_socket, archiver, 5s));
+        // The capacity limit stands in for the failure: it stops the writer
+        // inside a slice well before the archive ends.
+        ProcessResult const writer =
+            Process::run(ProcessOptions{{NEOTAPE_WRITE, "--source",
+                                         "unix://" + archiver_socket.string(),
+                                         "--target", "spool:" + spool.string(),
+                                         "--max-volume-bytes", "3600K"}},
+                         60s);
+        INFO(writer.standard_error);
+        REQUIRE(writer.exit_code == 3);
+        archiver.terminate();
+    }
+    fs::remove(archiver_socket);
+
+    // A second archive must not reuse the file by accident.
+    {
+        auto command = archive_command;
+        command.push_back(resume.string());
+        ProcessResult const refused =
+            Process::run(ProcessOptions{command}, 30s);
+        REQUIRE(refused.exit_code != 0);
+        REQUIRE(refused.standard_error.find("already exists") !=
+                std::string::npos);
+    }
+
+    require_success(Process::run(
+        ProcessOptions{{NEOTAPE_SCAN, "--source", "spool:" + spool.string(),
+                        "--resume-output", rebuilt.string()}},
+        30s));
+    // Both sources must agree on where every slice starts.
+    std::string const recorded = read_file(resume);
+    std::string const scanned = read_file(rebuilt);
+    size_t const recorded_slices = recorded.find("/slice/");
+    size_t const scanned_slices = scanned.find("/slice/");
+    REQUIRE(recorded_slices != std::string::npos);
+    REQUIRE(scanned_slices != std::string::npos);
+    REQUIRE(recorded.substr(recorded_slices) == scanned.substr(scanned_slices));
+
+    // Position the medium: drop the slice that was being written.
+    std::string const last_record =
+        recorded.substr(recorded.rfind("/slice/") + 7);
+    uint64_t const resume_slice =
+        std::stoull(last_record.substr(0, last_record.find('/')));
+    REQUIRE(resume_slice >= 2);
+    REQUIRE(resume_slice < 6);
+    std::string const partial_name = std::format(".slice-{:06}.", resume_slice);
+    size_t removed = 0;
+    for (const auto &entry : fs::directory_iterator(spool)) {
+        if (entry.path().filename().string().find(partial_name) !=
+            std::string::npos) {
+            fs::remove(entry.path());
+            ++removed;
+        }
+    }
+    REQUIRE(removed == 1);
+
+    {
+        auto command = archive_command;
+        command.push_back((rebuilt_from_media ? rebuilt : resume).string());
+        command.insert(command.end(), {"--resume-from-slice", "last"});
+        Process archiver{ProcessOptions{command}};
+        REQUIRE(wait_for_unix_socket(archiver_socket, archiver, 5s));
+        require_success(Process::run(
+            ProcessOptions{{NEOTAPE_WRITE, "--source",
+                            "unix://" + archiver_socket.string(), "--target",
+                            "spool:" + spool.string(), "--resume-mode"}},
+            60s));
+        require_success(archiver.wait(60s));
+    }
+
+    ProcessResult const inspect =
+        Process::run(ProcessOptions{{NEOTAPE_INSPECT, "--source",
+                                     "spool:" + spool.string()}},
+                     30s);
+    require_success(inspect);
+    REQUIRE((inspect.standard_output + inspect.standard_error)
+                .find("Compliance: PASS") != std::string::npos);
+
+    restore_spool(extractor_socket, spool, restored);
+    fs::path const output = temporary.path() / "restored-output";
+    extract_pax(restored, output);
+    for (const std::string &name : names) {
+        CAPTURE(name);
+        REQUIRE(read_file(input / name) == read_file(output / name));
+    }
+    REQUIRE(fs::equivalent(output / "file0.bin", output / "link.bin"));
 }

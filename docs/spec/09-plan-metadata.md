@@ -10,10 +10,10 @@ This chapter is the authoritative source for both the planning stream consumed
 by `neotape-archiver --plan` and the archive catalog written into
 `ch_metadata`.
 
-The plan fixes slice boundaries before archiving starts, which is what a
-slice-level resume would rely on (see
-[11-future-extensions.md](11-future-extensions.md#slice-level-resume)). The
-plan is not required to restore an existing archive.
+The plan fixes slice boundaries before archiving starts. An interrupted
+archive can therefore be continued from the start of a slice, provided the
+same plan is used: replanning may move the boundaries. The plan is not
+required to restore an existing archive.
 
 ## Record Format
 

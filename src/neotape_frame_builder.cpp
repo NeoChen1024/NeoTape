@@ -75,9 +75,11 @@ std::vector<std::byte> build_archive_end_record(
 }
 
 FrameBuilder::FrameBuilder(uint32_t block_size, std::string archive_uuid,
-                           std::string archive_name)
+                           std::string archive_name,
+                           uint64_t first_global_seq)
     : block_size_(block_size), archive_uuid_(std::move(archive_uuid)),
-      archive_name_(std::move(archive_name)) {}
+      archive_name_(std::move(archive_name)),
+      global_frame_seq_num_(first_global_seq) {}
 
 uint32_t FrameBuilder::payload_capacity() const {
     return block_size_ - fixed_header_size;

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,13 @@ struct VolumeServeState {
     uint64_t last_acked_global_frame = 0;
     bool has_acked_any_frame = false;
     bool archive_complete = false;
+    // Global sequence number of the first frame this run produces.
+    uint64_t first_global_seq = 0;
+
+    [[nodiscard]] uint64_t next_unacked_global_frame() const {
+        return has_acked_any_frame ? last_acked_global_frame + 1
+                                   : first_global_seq;
+    }
 };
 
 struct VolumeServerSummary {
@@ -51,6 +59,11 @@ struct VolumeServerOptions {
     std::string log_label;
     std::size_t queue_capacity = 8;
     std::optional<SignifySecretKey> frame_signer;
+    // Resuming an archive: reuse its UUID and continue its sequence numbers.
+    std::optional<std::string> archive_uuid;
+    uint64_t first_global_seq = 0;
+    // Called for each acknowledged frame with the volume it was written to.
+    std::function<void(uint64_t global_seq, uint64_t volume_seq_num)> on_ack;
 };
 
 using VolumeProducer = std::function<void(const std::string &archive_uuid,

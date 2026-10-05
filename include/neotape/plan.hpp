@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <istream>
 #include <optional>
 #include <string>
 
@@ -22,6 +23,17 @@ struct PlanRecord {
     std::optional<std::string> chdir_dir;
     std::optional<PlannedEntry> entry;
 };
+
+// Outcome of reading one NUL LF terminated record.
+enum class NulLfRecord {
+    record,    // `text` holds the record without its terminator
+    end,       // clean end of input
+    truncated, // input ended inside a record or its terminator
+    malformed, // NUL not followed by LF
+};
+// Shared record framing of plan and resume files. The caller checks the
+// stream for I/O errors when the result is not `record`.
+NulLfRecord read_nul_lf_record(std::istream &input, std::string &text);
 
 // A record ends in NUL LF. Pathnames are bytes, including embedded LF and '/'.
 class PlanReader {

@@ -94,6 +94,18 @@ PlanRecord parse_plan_record(string_view text, const fs::path &path,
 
 } // namespace
 
+NulLfRecord read_nul_lf_record(std::istream &input, std::string &text) {
+    if (!std::getline(input, text, '\0'))
+        return text.empty() && input.eof() ? NulLfRecord::end
+                                           : NulLfRecord::truncated;
+    if (input.eof())
+        return NulLfRecord::truncated;
+    int const next = input.get();
+    if (next == std::char_traits<char>::eof())
+        return NulLfRecord::truncated;
+    return next == '\n' ? NulLfRecord::record : NulLfRecord::malformed;
+}
+
 PlanReader::PlanReader(const std::filesystem::path &path)
     : file_(path, std::ios::binary), input_(file_), path_(path) {
     if (!file_)
@@ -105,13 +117,13 @@ PlanReader::PlanReader(std::istream &input, std::filesystem::path name)
 
 std::optional<PlanRecord> PlanReader::next() {
     std::string record;
-    if (!std::getline(input_, record, '\0')) {
-        if (input_.eof() && record.empty())
-            return std::nullopt;
+    NulLfRecord const framing = read_nul_lf_record(input_, record);
+    if (input_.bad())
         throw std::runtime_error("read plan: " + path_.string());
-    }
+    if (framing == NulLfRecord::end)
+        return std::nullopt;
     ++record_num_;
-    if (input_.eof() || input_.get() != '\n')
+    if (framing != NulLfRecord::record)
         throw std::runtime_error(std::format("{}:{}: unterminated plan record",
                                              path_.string(), record_num_));
     auto parsed = parse_plan_record(record, path_, record_num_);

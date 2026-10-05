@@ -16,6 +16,10 @@ target_link_libraries(neotape_common PUBLIC Threads::Threads)
 neotape_library(neotape_plan_codec neotape_plan.cpp)
 target_link_libraries(neotape_plan_codec PRIVATE neotape_common)
 
+neotape_library(neotape_resume neotape_resume.cpp)
+target_link_libraries(neotape_resume PRIVATE
+    neotape_plan_codec neotape_common NeoTape::Blake3)
+
 neotape_library(neotape_bounded_buffer neotape_bounded_buffer.cpp)
 
 neotape_library(neotape_format neotape_format.cpp)
@@ -85,6 +89,7 @@ target_link_libraries(neotape_tcp_server PUBLIC
     neotape_common
     neotape_pax
     neotape_protocol
+    neotape_resume
     neotape_signature
     neotape_socket
     neotape_volume_server
@@ -153,6 +158,7 @@ neotape_executable(neotape_catalog neotape-catalog neotape_catalog_cmd.cpp
 neotape_executable(neotape_scan neotape-scan neotape_scan_cmd.cpp
     neotape_common
     neotape_format
+    neotape_resume
     neotape_tape
 )
 neotape_executable(neotape_dump neotape-dump neotape_dump_cmd.cpp

@@ -20,6 +20,9 @@ struct PaxWriterOptions {
     std::string output_name = "-";
     std::vector<std::string> sources;
     std::optional<std::filesystem::path> plan_path;
+    // Plan mode: emit only slices from this one on. Earlier entries are
+    // still examined so that hardlinks to them resolve.
+    uint64_t first_slice = 0;
     int verbose = 0;
     bool one_file_system = false;
     std::optional<std::string> chdir_dir;

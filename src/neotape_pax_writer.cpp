@@ -1156,6 +1156,13 @@ PaxWriteResult write_pax_archive(const Options &opts,
         if (other)
             slices.emit_entry(std::move(other));
     };
+    // Register an entry that is not emitted, so that a later link to the
+    // same file is still written as a hardlink.
+    auto remember_link = [&](archive_entry *raw) {
+        archive_entry *spare = nullptr;
+        archive_entry_linkify(resolver.get(), &raw, &spare);
+        EntryHandle const entry(raw), other(spare);
+    };
 
     try {
         if (opts.plan_path) {
@@ -1168,9 +1175,17 @@ PaxWriteResult write_pax_archive(const Options &opts,
                     continue;
                 }
                 const auto &entry = *record->entry;
+                if (entry.slice < opts.first_slice) {
+                    remember_link(
+                        planned_entry_from_path(disk.get(), entry.path));
+                    continue;
+                }
                 begin_slice(entry.slice);
                 emit_linked(planned_entry_from_path(disk.get(), entry.path));
             }
+            if (opts.first_slice > 0 && !active_slice)
+                throw std::runtime_error(
+                    std::format("plan has no slice {}", opts.first_slice));
         } else {
             begin_slice(0);
             for (const string &source : opts.sources) {
