@@ -216,6 +216,11 @@ setup_resume(const Options &opts, neotape::TcpArchiverOptions &server_opts) {
 
     neotape::ResumeState const state = neotape::read_resume_file(path);
     const ResumeHeader &header = state.header;
+    if (state.archive_end)
+        throw std::runtime_error(
+            format("resume file {} belongs to a completed archive; use a new "
+                   "file to archive again",
+                   path));
     // No recorded slice start: slice 1 was never reached, so the archive
     // starts over under the same identity.
     std::optional<neotape::ResumePoint> const point =
@@ -305,6 +310,8 @@ int main(int argc, char **argv) {
 
         neotape::VolumeServerSummary const summary =
             neotape::run_tcp_archiver(server_opts);
+        if (resume_log)
+            resume_log->archive_completed();
         neotape::write_diagnostic(
             format("neotape-archiver: archive complete: volumes={} "
                    "committed_frames={} frame_transmissions={} connections={} "

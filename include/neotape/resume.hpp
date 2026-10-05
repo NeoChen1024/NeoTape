@@ -32,6 +32,9 @@ struct ResumeState {
     // Effective slice starts in increasing slice order. A later record for
     // slice N replaces the earlier records for N and every slice after it.
     std::vector<ResumePoint> points;
+    // Global sequence number of the acknowledged archive_end frame. Once
+    // set, the archive is complete and there is nothing to resume.
+    std::optional<uint64_t> archive_end;
     // Size of the leading run of complete records.
     uint64_t valid_size = 0;
 };
@@ -39,6 +42,7 @@ struct ResumeState {
 // Serialized records, each terminated by NUL LF like plan records.
 std::string encode_resume_header(const ResumeHeader &header);
 std::string encode_resume_point(const ResumePoint &point);
+std::string encode_resume_archive_end(uint64_t global_seq);
 
 ResumeState read_resume_file(const std::filesystem::path &path);
 
@@ -63,6 +67,8 @@ class ResumeLog {
 
     void slice_started(uint64_t slice, uint64_t global_seq);
     void frame_acked(uint64_t global_seq, uint64_t volume);
+    // The last acknowledged frame was archive_end.
+    void archive_completed();
 
   private:
     void append(const std::string &records);
@@ -75,6 +81,7 @@ class ResumeLog {
     };
     std::deque<PendingSlice> pending_;
     std::optional<uint64_t> last_recorded_slice_;
+    uint64_t last_acked_ = 0;
 };
 
 } // namespace neotape

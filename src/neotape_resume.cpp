@@ -89,6 +89,12 @@ string encode_resume_point(const ResumePoint &point) {
     return text;
 }
 
+string encode_resume_archive_end(uint64_t global_seq) {
+    string text = format("/archive_end/{}", global_seq);
+    text.append("\0\n", 2);
+    return text;
+}
+
 ResumeState read_resume_file(const fs::path &path) {
     std::ifstream input(path, std::ios::binary);
     if (!input)
@@ -124,6 +130,21 @@ ResumeState read_resume_file(const fs::path &path) {
         string_view const key = string_view(record).substr(1, split - 1);
         string_view const value = string_view(record).substr(split + 1);
 
+        if (state.archive_end)
+            throw std::runtime_error(where + ": record after the archive end");
+        if (key == "archive_end") {
+            if (std::ranges::find(seen, false) != seen.end())
+                throw std::runtime_error(
+                    where + ": archive end before the complete header");
+            uint64_t const seq =
+                parse_uint(value, where + " global sequence number");
+            if (!state.points.empty() && seq <= state.points.back().global_seq)
+                throw std::runtime_error(
+                    where + ": archive end does not follow the last slice");
+            state.archive_end = seq;
+            state.valid_size += record.size() + 2;
+            continue;
+        }
         if (key == "slice") {
             if (std::ranges::find(seen, false) != seen.end())
                 throw std::runtime_error(
@@ -266,8 +287,14 @@ void ResumeLog::slice_started(uint64_t slice, uint64_t global_seq) {
     pending_.push_back({slice, global_seq});
 }
 
+void ResumeLog::archive_completed() {
+    std::scoped_lock const lock(mutex_);
+    append(encode_resume_archive_end(last_acked_));
+}
+
 void ResumeLog::frame_acked(uint64_t global_seq, uint64_t volume) {
     std::scoped_lock const lock(mutex_);
+    last_acked_ = global_seq;
     while (!pending_.empty() && pending_.front().global_seq <= global_seq) {
         PendingSlice const started = pending_.front();
         pending_.pop_front();

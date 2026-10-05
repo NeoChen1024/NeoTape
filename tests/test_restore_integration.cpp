@@ -418,24 +418,37 @@ TEST_CASE("a resume file without slice records restarts the same archive",
     fs::path const resume = temporary.path() / "resume";
     fs::path const socket = temporary.path() / "archiver.sock";
     fs::create_directory(input);
-    std::ofstream(input / "hello.txt") << "hello resume\n";
+    write_pattern(input / "blob.bin", 1024 * 1024);
     require_success(
         Process::run(ProcessOptions{{NEOTAPE_PLAN, "-C", input.string(), "-o",
-                                     plan.string(), "hello.txt"}},
+                                     plan.string(), "blob.bin"}},
                      60s));
+    std::vector<std::string> const archive_command{NEOTAPE_ARCHIVER,
+                                                   "--listen",
+                                                   "unix://" + socket.string(),
+                                                   "--plan",
+                                                   plan.string(),
+                                                   "--volume-block-size",
+                                                   "64K",
+                                                   "--resume-file",
+                                                   resume.string()};
 
-    // Find "archive_uuid=<uuid>" in a scan of the spool written by one run.
-    auto archive_once = [&](const fs::path &spool) {
-        Process archiver{ProcessOptions{
-            {NEOTAPE_ARCHIVER, "--listen", "unix://" + socket.string(),
-             "--plan", plan.string(), "--resume-file", resume.string()}}};
+    // Returns the writer's exit status and the UUID found on the spool.
+    auto write_spool = [&](const fs::path &spool, bool interrupt) {
+        Process archiver{ProcessOptions{archive_command}};
         REQUIRE(wait_for_unix_socket(socket, archiver, 5s));
-        require_success(Process::run(
-            ProcessOptions{{NEOTAPE_WRITE, "--source",
-                            "unix://" + socket.string(), "--target",
-                            "spool:" + spool.string()}},
-            30s));
-        require_success(archiver.wait(30s));
+        std::vector<std::string> writer{NEOTAPE_WRITE, "--source",
+                                        "unix://" + socket.string(), "--target",
+                                        "spool:" + spool.string()};
+        if (interrupt)
+            writer.insert(writer.end(), {"--max-volume-bytes", "300K"});
+        ProcessResult const written = Process::run(ProcessOptions{writer}, 30s);
+        INFO(written.standard_error);
+        REQUIRE(written.exit_code == (interrupt ? 3 : 0));
+        if (interrupt)
+            archiver.terminate();
+        else
+            require_success(archiver.wait(30s));
         fs::remove(socket);
         ProcessResult const scan =
             Process::run(ProcessOptions{{NEOTAPE_SCAN, "--source",
@@ -447,11 +460,21 @@ TEST_CASE("a resume file without slice records restarts the same archive",
         return scan.standard_output.substr(at + 13, 36);
     };
 
-    std::string const first = archive_once(temporary.path() / "one");
+    std::string const first = write_spool(temporary.path() / "one", true);
     std::string const header = read_file(resume);
-    // A single-slice archive never records a slice start.
+    // The run stopped inside slice 0, before any slice start was recorded.
     REQUIRE(header.find("/slice/") == std::string::npos);
     REQUIRE(header.find("/archive_uuid/" + first) != std::string::npos);
-    REQUIRE(archive_once(temporary.path() / "two") == first);
-    REQUIRE(read_file(resume) == header);
+
+    REQUIRE(write_spool(temporary.path() / "two", false) == first);
+    std::string const completed = read_file(resume);
+    REQUIRE(completed.starts_with(header));
+    REQUIRE(completed.find("/archive_end/", header.size()) == header.size());
+
+    // A completed archive is not written a second time.
+    ProcessResult const refused =
+        Process::run(ProcessOptions{archive_command}, 30s);
+    INFO(refused.standard_error);
+    REQUIRE(refused.exit_code == 1);
+    REQUIRE(read_file(resume) == completed);
 }

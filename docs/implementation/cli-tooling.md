@@ -89,8 +89,9 @@ the slice that was being written when the run stopped. The resumed run reuses
 the archive UUID, continues the global frame sequence and the volume number
 from that record, and does not write the catalog again. A file without any
 slice record means slice 1 was never reached; the archive then starts over
-from slice 0 under the same UUID. To start a different archive, use a new
-file. `--archive-name`,
+from slice 0 under the same UUID. Once the archive is complete the file ends
+with an `/archive_end/` record and the archiver refuses to use it again. To
+start a different archive, use a new file. `--archive-name`,
 `--volume-block-size`, and the signing key may be omitted where they have a
 default; if given, they must match the resume file. The plan file must be the
 original one: its BLAKE3 hash is stored in the resume file and a different
@@ -129,6 +130,7 @@ escaped.
 | `/plan_blake3/<hex>` | 64 hex digits; empty when unknown, which skips the plan check with a warning. |
 | `/archive_name/<bytes>` | Archive label bytes, which may include `/` and newline. |
 | `/slice/<slice>/<global_seq>/<volume>` | Slice `<slice>` starts at global frame sequence `<global_seq>` on volume `<volume>`. |
+| `/archive_end/<global_seq>` | The `archive_end` frame with this sequence number was acknowledged. Always the last record. |
 
 The five header records appear once each, before any `/slice/` record. A
 `/slice/` record is appended, and synced, when the writer acknowledges the

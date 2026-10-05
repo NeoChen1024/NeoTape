@@ -214,6 +214,7 @@ void print_verbose_first_frame(const FirstFrame &frame, bool is_new_archive) {
 void write_resume_output(const fs::path &path,
                          const std::optional<FrameHeader> &first,
                          const vector<neotape::ResumePoint> &points,
+                         std::optional<uint64_t> archive_end,
                          size_t archive_count) {
     if (archive_count != 1 || !first)
         throw std::runtime_error(
@@ -233,6 +234,8 @@ void write_resume_output(const fs::path &path,
     });
     for (const auto &point : points)
         text += neotape::encode_resume_point(point);
+    if (archive_end)
+        text += neotape::encode_resume_archive_end(*archive_end);
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     output.write(text.data(), static_cast<std::streamsize>(text.size()));
     output.flush();
@@ -245,6 +248,7 @@ int do_scan(const Options &opts) {
     uint64_t tapefiles_scanned = 0;
     std::optional<FrameHeader> resume_first;
     vector<neotape::ResumePoint> resume_points;
+    std::optional<uint64_t> resume_archive_end;
 
     auto handle_first_frame = [&](const FirstFrame &frame) {
         ++tapefiles_scanned;
@@ -254,8 +258,10 @@ int do_scan(const Options &opts) {
                 resume_first = header;
             // A tape file that opens with a channel's first frame is the
             // start of its slice; slice 0 is never a resume point.
-            if (header.channel_type != neotape::ChannelType::ARCHIVE_END &&
-                header.slice_seq_num > 0 && header.channel_frame_seq_num == 0)
+            if (header.channel_type == neotape::ChannelType::ARCHIVE_END)
+                resume_archive_end = header.global_frame_seq_num;
+            else if (header.slice_seq_num > 0 &&
+                     header.channel_frame_seq_num == 0)
                 resume_points.push_back({header.slice_seq_num,
                                          header.global_frame_seq_num,
                                          header.volume_seq_num});
@@ -290,7 +296,7 @@ int do_scan(const Options &opts) {
 
     if (opts.resume_output)
         write_resume_output(*opts.resume_output, resume_first, resume_points,
-                            archives.size());
+                            resume_archive_end, archives.size());
 
     std::cout << format("Unique archives found: {}\n", archives.size());
     std::cout << format("Tapefiles scanned: {}\n", tapefiles_scanned);

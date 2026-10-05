@@ -123,6 +123,9 @@ TEST_CASE("malformed resume files are rejected", "[unit][resume]") {
         header_bytes + "/slice/1/100/1\0\n"s + "/slice/2/100/1\0\n"s,
         header_bytes + "/slice/1/100/2\0\n"s + "/slice/2/200/1\0\n"s,
         header_bytes + "/slice/1/+100/1\0\n"s,
+        header_bytes + "/slice/1/100/1\0\n"s + "/archive_end/100\0\n"s,
+        header_bytes + "/archive_end/9\0\n"s + "/slice/1/100/1\0\n"s,
+        header_bytes + "/archive_end/9\0\n"s + "/archive_end/9\0\n"s,
     };
     for (size_t index = 0; index < std::size(cases); ++index) {
         CAPTURE(index);
@@ -172,4 +175,14 @@ TEST_CASE("resume log refuses to replace a file and appends past a torn tail",
     auto const resumed = read_resume_file(path);
     REQUIRE(resumed.points.size() == 2);
     REQUIRE(resumed.points.back().global_seq == 21);
+    REQUIRE_FALSE(resumed.archive_end.has_value());
+
+    {
+        neotape::ResumeLog log(path, resumed, std::nullopt);
+        log.frame_acked(40, 5);
+        log.archive_completed();
+    }
+    std::string const completed = read_file(path);
+    REQUIRE(completed.ends_with("/slice/2/21/5\0\n/archive_end/40\0\n"s));
+    REQUIRE(read_resume_file(path).archive_end == 40);
 }
