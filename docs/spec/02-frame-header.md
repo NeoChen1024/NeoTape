@@ -59,16 +59,9 @@ A UTF-8 label, not an archive identifier. It is encoded as a 65-byte NUL-termina
 
 ### `signature` and `frame_hash`
 
-The `signature` and `frame_hash` fields are defined in [docs/spec/00-format-common.md](00-format-common.md):
-
-- `frame_hash` is a BLAKE3 digest over the canonical image of the entire frame.
-- `signature` is a 72-byte field used when the `SIGNED` flag is set. Bytes 0-7
-  hold an opaque 8-byte key ID copied byte-for-byte from the
-  signify-compatible key file; it is not an integer and has no byte order.
-  Bytes 8-71 hold a raw 64-byte Ed25519 signature over
-  `NeoTape-frame\0 || frame_hash`. The context string includes its trailing NUL
-  byte. This mirrors OpenBSD signify's Ed25519 signature payload without the
-  leading two `Ed` bytes.
+Both fields are defined in [00-format-common.md](00-format-common.md):
+`frame_hash` under [Frame Hash Calculation](00-format-common.md#frame-hash-calculation)
+and `signature` under [Signing Sequence](00-format-common.md#signing-sequence).
 
 ### `sideband_data`
 
@@ -108,70 +101,11 @@ MUST NOT emit their payloads or claim complete sequence validation.
 
 The `archive_end` control frame sets `END = 1`, and `CLEAN_END = 1`.
 
-## Channel Semantics
+## Related Chapters
 
-Channel ordering, completion, and sequence rules describe logical frames.
-Physical retries do not create new logical frames; readers apply replay
-comparison and suppression under [04-validation.md](04-validation.md#replayed-records).
-
-### `ch_content` / `ch_metadata`
-
-- `END` marks the final frame of the current channel within the slice.
-- A slice MUST contain at least one frame across its channels, and MAY contain only one of the two channels.
-- Each channel forms at most one stream per slice. Frames of different channels MAY appear in any order and MAY be interleaved.
-- `channel_frame_seq_num` is scoped to `(slice_seq_num, channel_type)`. It starts at 0 on the first frame of that channel in the slice and increments only within that channel, even if frames of other channels appear in between. The sequence does not continue across different `channel_type` values.
-
-### `archive_end`
-
-- Written as the final record of a cleanly completed archive.
-- `channel_type = archive_end`.
-- `END = 1`, `CLEAN_END = 1`.
-- `frame_payload_size = 0`. The Archive End frame carries no payload.
-- `slice_seq_num = 0`, `channel_frame_seq_num = 0`.
-- Because `archive_end` is a control frame identified by `channel_type`, these scoped sequence fields are fixed canonical values, not membership in slice 0 or a normal channel group.
-
-## Hierarchy
-
-```
-Archive (archive_uuid)
-  ├── Slice (slice_seq_num)
-  │   └── Channel (ch_metadata / ch_content)
-  │       └── Frame (global_frame_seq_num, channel_frame_seq_num)
-  └── Archive End control frame
-
-Physical placement: the ordered frames occupy one or more backend volumes.
-A slice may span volumes; a frame may not.
-```
-
-- **Archive** — authoritative logical backup instance, identified by `archive_uuid`.
-- **Volume** — backend-defined container; not an authoritative logical record. `volume_seq_num` is advisory.
-- **Slice** — unit of ordering; identified by `slice_seq_num`. May span frames and backend volumes.
-- **Channel** — partitions a slice into `ch_metadata` and `ch_content`. Channels may be interleaved.
-- **Frame** — concrete transport record. Every frame has exactly one `channel_type`.
-
-## Sequence Numbering
-
-- `global_frame_seq_num` starts at 0, increments by 1 for every frame including `archive_end`. Does not reset at volume boundaries.
-- `slice_seq_num` starts at 0, increments per slice. Same value across all frames in a slice and across volumes. `archive_end` uses the canonical control-frame value `0`.
-- `channel_frame_seq_num` starts at 0 on the first frame of each `(slice_seq_num, channel_type)` stream, increments only within that channel, and resets only when the slice changes. `archive_end` uses the canonical control-frame value `0`.
-
-## Tape Layout
-
-```
-[optional recovery bundle]
-[optional filemark]
-Slice 0 tape file  (ch_metadata / ch_content frames)
-filemark
-Slice 1 tape file
-filemark
-...
-Archive End frame (single record)
-filemark
-```
-
-Volume boundaries are backend or operator events. A filemark marks a tape-file boundary and does not by itself indicate a volume change. Every frame repeats `volume_block_size_kib`, `archive_uuid`, `archive_label`, and advisory `volume_seq_num`. A slice MAY span backend volumes; sequence continuity does not reset at volume boundaries.
-
-Within a backend volume, all frames SHOULD carry the same `volume_seq_num`. `volume_seq_num` is a human/operator-facing ordinal; together with `archive_label` it forms the display label `${archive_label} #${volume_seq_num}`. `archive_uuid` remains the authoritative archive identity.
+- Slice and channel structure, sequence numbering, and the `archive_end`
+  frame's field values: [03-frames-and-slices.md](03-frames-and-slices.md).
+- Logical hierarchy and tape layout: [05-volume-layout.md](05-volume-layout.md).
 
 ## Reader Model
 

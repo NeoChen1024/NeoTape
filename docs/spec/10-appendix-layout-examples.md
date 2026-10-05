@@ -27,6 +27,10 @@ File 2:   Archive End frame (END, CLEAN_END)
 filemark
 ```
 
+The metadata frame is shown first because that is where the archiver writes
+the catalog; the format allows `ch_metadata` and `ch_content` frames of a slice
+to be interleaved in any order.
+
 A recovery bundle (plain pax tar) MAY be written as the first tape file before the first slice. Readers skip prefix records by checking for NeoTape magic at backend record
 boundaries, then validating the candidate frame. They do not search arbitrary
 byte offsets inside records for a header.

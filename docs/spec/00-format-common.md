@@ -81,8 +81,6 @@ where `canonical_image` is the full `volume_block_size_kib * 1024`-byte frame wi
 
 All other fixed header fields, payload bytes, and padding bytes are included exactly as stored.
 
-Padding bytes after `frame_payload_size` and before the end of the decoded record size MUST be zero-filled by writers. Readers include padding bytes in `frame_hash` verification.
-
 ## Signing Sequence
 
 The `signature` field (72 bytes) holds a binary, unarmored Ed25519

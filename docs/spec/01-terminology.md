@@ -60,7 +60,7 @@ Advisory metadata bytes carried by the `ch_metadata` frames of one slice. Its re
 
 ### Frame Header
 
-The unified 512-byte fixed header at the start of every NeoTape frame. It records channel type, frame sequencing, payload size, archive identity, flags, and a BLAKE3 `frame_hash` covering the entire frame. A `signature` field holds a binary signify-style signature over the domain-separated message `NeoTape-frame\0 || frame_hash` when the `SIGNED` flag is set. There is only one header layout — no separate Volume Header or Archive End Header exists.
+The unified 512-byte fixed header at the start of every NeoTape frame. It records channel type, frame sequencing, payload size, archive identity, flags, an optional signature, and a `frame_hash` covering the entire frame. There is only one header layout — no separate Volume Header or Archive End Header exists.
 
 The exact field widths, field order, and byte positions are defined in
 [02-frame-header.md](02-frame-header.md).
@@ -87,7 +87,7 @@ Frame flag indicating the last frame of a channel within a slice.
 
 ### SIGNED
 
-Frame flag indicating that `signature` contains a binary signify-style signature over the domain-separated message `NeoTape-frame\0 || frame_hash`.
+Frame flag indicating that the `signature` field holds a signature of this frame.
 
 ### SIDEBAND
 
@@ -112,9 +112,8 @@ The fundamental I/O unit. Every frame header, every frame payload, and every pad
 
 ### Fixed Header
 
-The 512-byte fixed field area at the start of every frame.
-
-The final 32 bytes of the header are `frame_hash`, a BLAKE3 digest over the canonical image of the entire frame. The 72-byte `signature` field holds an 8-byte key ID followed by a 64-byte Ed25519 signature over the domain-separated message `NeoTape-frame\0 || frame_hash` when the `SIGNED` flag is set.
+The 512-byte fixed field area at the start of every frame; see
+[02-frame-header.md](02-frame-header.md).
 
 ### Common Header Prefix
 
@@ -129,82 +128,34 @@ prefix width and field sizes.
 
 ### frame_hash
 
-BLAKE3 hash computed over the canonical image of the entire frame (`volume_block_size_kib * 1024` bytes). The canonical image treats `signature` and `frame_hash` as all-zero bytes. `frame_hash` is the final 32 bytes of the 512-byte header. See [docs/spec/00-format-common.md](00-format-common.md) for the full calculation rules.
+BLAKE3 hash over the canonical image of the entire frame, stored in the final
+32 bytes of the header. The calculation is defined in
+[00-format-common.md](00-format-common.md#frame-hash-calculation).
 
 ### signature
 
-72-byte field in the fixed header used when the `SIGNED` flag is set. Bytes 0-7
-hold an opaque 8-byte key ID copied byte-for-byte from the signify-compatible
-key file; it is not an integer and has no byte order. Bytes 8-71 hold a raw
-64-byte Ed25519 signature over the domain-separated message
-`NeoTape-frame\0 || frame_hash`. The context string includes its trailing NUL
-byte. This mirrors OpenBSD signify's Ed25519 signature payload without the
-leading two `Ed` bytes. When `SIGNED` is clear, the entire field must be zero.
+72-byte header field holding a key ID and an Ed25519 signature over the
+domain-separated `frame_hash` when `SIGNED` is set, and all zero otherwise.
+The encoding and signing sequence are defined in
+[00-format-common.md](00-format-common.md#signing-sequence).
 
-## Encoding Rules
+## Encoding and Block Size
 
-### nt_uuid
-
-37-byte NUL-terminated UUID string per RFC 4122. Fixed size allows simple offset-based header parsing.
-
-### nt_name
-
-N-byte fixed UTF-8 text field. NUL-terminated, NUL-padded. Maximum (N-1) usable bytes; a UTF-8 character may occupy multiple bytes. `archive_label` uses a 65-byte field with at most 64 usable bytes.
-
-### Empty Fixed-Field Encoding
-
-When a writer does not produce a meaningful value for a field:
-
-- Numeric fields: zero
-- Fixed byte arrays: all zero bytes
-- NUL-terminated strings: first byte NUL, remaining zero
-
-### Requirement Keywords
-
-In fixed header field tables, `MUST`, `SHOULD`, and `MAY` describe whether a writer is required to produce a meaningful value. Every fixed field is always present at its stable position; writers fill absent values with the empty encoding.
-
-## Block Size
+Datatypes (`nt_uuid`, `nt_name`, …), empty-field encoding, requirement
+keywords, and block-size limits are defined in
+[00-format-common.md](00-format-common.md). Field widths, channel values, and
+flag bits are defined in [02-frame-header.md](02-frame-header.md).
 
 ### volume_block_size_kib
 
 The fixed NeoTape record size for an entire archive, including all its volumes, encoded in KiB. The decoded record size is `volume_block_size_kib * 1024` bytes. This field is repeated in every frame.
 
-### Block Size Constraints
-
-| Constraint          | Value                        | Rationale                                                      |
-| ------------------- | ---------------------------- | -------------------------------------------------------------- |
-| Minimum             | 4 KiB (`value >= 4`)         | Below 4 KiB, header overhead dominates.                        |
-| Recommended minimum | 64 KiB (`value >= 64`)       | At 4 KiB, the Frame Header consumes 12.5% of each record.      |
-| Maximum             | 8 MiB (`value <= 8192`)      | NeoTape format limit; backend limits may be lower.                                |
-
-Non-power-of-2 block sizes are allowed by the format, but they are generally not a good choice for physical media, including LTO tape.
-
-## Header Terminology
-
-The exact on-wire header layout, field widths, channel enum values, and flag
-bit assignments are defined only in [02-frame-header.md](02-frame-header.md).
-This terminology chapter defines how those names are used conceptually and
-intentionally avoids restating offsets or full field tables.
-
 ### Repeated Archive Identity Fields
 
-Fields repeated across every frame:
-
-| Field                   | Meaning                                                                    |
-| ----------------------- | -------------------------------------------------------------------------- |
-| `archive_uuid`          | Stable UUID for the archive instance.                                      |
-| `archive_label`         | Human-readable archive label. Operator-facing, not a unique key.           |
-| `volume_seq_num`        | Advisory volume sequence number, normally starting at 1 for a new archive. |
-| `volume_block_size_kib` | Fixed NeoTape record size for the archive, encoded in KiB.                 |
-
-### Channel and Flag Names
-
-`channel_type` selects the role of the current frame (`ch_content`,
-`ch_metadata`, or `archive_end`). `flags` carries per-frame state: `END`,
-`SIGNED`, `SIDEBAND`, and `CLEAN_END`.
-
-For the authoritative enum values and bit assignments, see
-[02-frame-header.md](02-frame-header.md).
+`archive_uuid`, `archive_label`, `volume_seq_num`, and `volume_block_size_kib`
+are repeated in every frame, so any frame identifies its archive on its own.
+`archive_uuid` is the authoritative identity; `archive_label` and
+`volume_seq_num` are operator-facing.
 
 ## Spool Concepts
 

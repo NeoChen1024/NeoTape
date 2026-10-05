@@ -138,28 +138,6 @@ filemark
 
 Each archive instance is independent with its own `archive_uuid`. A reader locates archive instances by scanning forward through tape files, validating frames, and matching the expected or interactive `archive_uuid`.
 
-## Frame Model
-
-A slice consists of one or more frames:
-
-```
-Slice[k] = any interleaving of
-    [ one ch_metadata stream ]
-    [ one ch_content stream ]
-```
-
-The complete normative slice grammar is defined in
-[03-frames-and-slices.md](03-frames-and-slices.md).
-
-Each frame occupies exactly one NeoTape record. The frame header declares `frame_payload_size`. The reader reads exactly that many payload bytes; the remaining bytes in the record are zero padding.
-
-Frame header flags:
-
-- `channel_frame_seq_num = 0` — first frame of the current channel within the slice.
-- `END` — last frame of the current channel within the slice.
-
-The `archive_end` frame sets `END = 1`, and `CLEAN_END = 1`.
-
 ## EOT Continuation Rules
 
 When the writer encounters EOT (physical end of tape) or reaches the configured virtual tape capacity limit:

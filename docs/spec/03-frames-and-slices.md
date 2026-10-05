@@ -36,16 +36,9 @@ A slice MAY span multiple archive volumes. Sequence continuity is maintained acr
 
 ## Channel Types
 
-The `channel_type` field identifies the frame's channel:
-
-| Value | Name            | Description                                                  |
-| ----- | --------------- | ------------------------------------------------------------ |
-| 1     | `ch_content`  | Payload bytes belonging to the slice content stream.         |
-| 2     | `ch_metadata` | Advisory metadata bytes carried in the slice.                |
-| 255   | `archive_end` | Clean end-of-archive marker.                                 |
-
-Values 0 and 3–254 are reserved for future channels. Validation behavior for
-unknown channels is defined in [docs/spec/04-validation.md](04-validation.md).
+Channel values are assigned in
+[02-frame-header.md](02-frame-header.md#channel-types): `ch_content`,
+`ch_metadata`, and the `archive_end` control frame.
 
 A normal payload reader (e.g. `neotape-extractor`) MUST emit only `ch_content` frame payload bytes. It MUST NOT emit `ch_metadata` bytes to stdout.
 
@@ -71,7 +64,7 @@ The `archive_end` frame sets `END = 1`, `CLEAN_END = 1`, and `channel_frame_seq_
 
 ## Per-Frame Integrity
 
-Each frame is individually integrity-checked by `frame_hash`, a BLAKE3 digest over the canonical image of the entire frame (header, payload, and padding). There is no separate slice-level hash. See [docs/spec/00-format-common.md](00-format-common.md) for the hash calculation rules.
+Each frame is individually integrity-checked by `frame_hash`; see [00-format-common.md](00-format-common.md#frame-hash-calculation). There is no separate slice-level hash.
 
 ## Frame Sequence Numbering
 
@@ -89,12 +82,6 @@ within each scope. Readers apply the replay and salvage rules in
 logical frames.
 The authoritative continuity rules are defined in
 [docs/spec/04-validation.md](04-validation.md).
-
-## Channel Ordering
-
-Channels within a slice are independent streams. Frames of different channels
-MAY be interleaved in any order. `channel_frame_seq_num` is scoped per-channel
-and does not continue across different `channel_type` values.
 
 ## Slice Completion
 
