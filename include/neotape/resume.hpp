@@ -52,10 +52,10 @@ class ResumeLog {
   public:
     // Create a new resume file; fails if `path` already exists.
     ResumeLog(const std::filesystem::path &path, const ResumeHeader &header);
-    // Continue `path` after `state`, first recording `restart` so that every
-    // record of a later slice is superseded before any frame is sent.
+    // Continue `path` after `state`. `restart` is the slice start the run
+    // resumes from, if any; it is recorded again first.
     ResumeLog(const std::filesystem::path &path, const ResumeState &state,
-              const ResumePoint &restart);
+              const std::optional<ResumePoint> &restart);
     ~ResumeLog();
 
     ResumeLog(const ResumeLog &) = delete;

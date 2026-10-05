@@ -198,9 +198,7 @@ ResumeLog::ResumeLog(const fs::path &path, const ResumeHeader &header)
     if (fd_ < 0) {
         if (errno == EEXIST)
             throw std::runtime_error(
-                format("resume file {} already exists; resume with "
-                       "--resume-from-slice or remove it",
-                       path.string()));
+                format("resume file {} already exists", path.string()));
         throw_errno(path, "create");
     }
     append(encode_resume_header(header));
@@ -209,8 +207,8 @@ ResumeLog::ResumeLog(const fs::path &path, const ResumeHeader &header)
 }
 
 ResumeLog::ResumeLog(const fs::path &path, const ResumeState &state,
-                     const ResumePoint &restart)
-    : path_(path), last_recorded_slice_(restart.slice) {
+                     const std::optional<ResumePoint> &restart)
+    : path_(path) {
     fd_ = ::open(path.c_str(), O_WRONLY | O_APPEND | O_CLOEXEC);
     if (fd_ < 0)
         throw_errno(path, "open");
@@ -223,7 +221,10 @@ ResumeLog::ResumeLog(const fs::path &path, const ResumeState &state,
         errno = saved;
         throw_errno(path, "truncate");
     }
-    append(encode_resume_point(restart));
+    if (restart) {
+        last_recorded_slice_ = restart->slice;
+        append(encode_resume_point(*restart));
+    }
     if (fd_ < 0)
         throw std::runtime_error("cannot write resume file " + path.string());
 }

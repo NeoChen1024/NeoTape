@@ -330,17 +330,6 @@ TEST_CASE("an interrupted plan-driven archive resumes from a slice start",
     }
     fs::remove(archiver_socket);
 
-    // A second archive must not reuse the file by accident.
-    {
-        auto command = archive_command;
-        command.push_back(resume.string());
-        ProcessResult const refused =
-            Process::run(ProcessOptions{command}, 30s);
-        REQUIRE(refused.exit_code != 0);
-        REQUIRE(refused.standard_error.find("already exists") !=
-                std::string::npos);
-    }
-
     require_success(Process::run(
         ProcessOptions{{NEOTAPE_SCAN, "--source", "spool:" + spool.string(),
                         "--resume-output", rebuilt.string()}},
@@ -353,6 +342,24 @@ TEST_CASE("an interrupted plan-driven archive resumes from a slice start",
     REQUIRE(recorded_slices != std::string::npos);
     REQUIRE(scanned_slices != std::string::npos);
     REQUIRE(recorded.substr(recorded_slices) == scanned.substr(scanned_slices));
+
+    // A different plan may place slice boundaries elsewhere; it must not
+    // continue this archive.
+    {
+        fs::path const other_plan = temporary.path() / "other-plan";
+        auto replan = plan_command;
+        replan[4] = other_plan.string();
+        replan[6] = "2M";
+        require_success(Process::run(ProcessOptions{replan}, 60s));
+        auto command = archive_command;
+        command[4] = other_plan.string();
+        command.push_back(resume.string());
+        ProcessResult const refused =
+            Process::run(ProcessOptions{command}, 30s);
+        INFO(refused.standard_error);
+        REQUIRE(refused.exit_code == 1);
+        REQUIRE(read_file(resume) == recorded);
+    }
 
     // Position the medium: drop the slice that was being written.
     std::string const last_record =
@@ -375,7 +382,6 @@ TEST_CASE("an interrupted plan-driven archive resumes from a slice start",
     {
         auto command = archive_command;
         command.push_back((rebuilt_from_media ? rebuilt : resume).string());
-        command.insert(command.end(), {"--resume-from-slice", "last"});
         Process archiver{ProcessOptions{command}};
         REQUIRE(wait_for_unix_socket(archiver_socket, archiver, 5s));
         require_success(Process::run(
@@ -402,4 +408,50 @@ TEST_CASE("an interrupted plan-driven archive resumes from a slice start",
         REQUIRE(read_file(input / name) == read_file(output / name));
     }
     REQUIRE(fs::equivalent(output / "file0.bin", output / "link.bin"));
+}
+
+TEST_CASE("a resume file without slice records restarts the same archive",
+          "[integration][plan][resume][socket]") {
+    TemporaryDirectory temporary;
+    fs::path const input = temporary.path() / "input";
+    fs::path const plan = temporary.path() / "plan";
+    fs::path const resume = temporary.path() / "resume";
+    fs::path const socket = temporary.path() / "archiver.sock";
+    fs::create_directory(input);
+    std::ofstream(input / "hello.txt") << "hello resume\n";
+    require_success(
+        Process::run(ProcessOptions{{NEOTAPE_PLAN, "-C", input.string(), "-o",
+                                     plan.string(), "hello.txt"}},
+                     60s));
+
+    // Find "archive_uuid=<uuid>" in a scan of the spool written by one run.
+    auto archive_once = [&](const fs::path &spool) {
+        Process archiver{ProcessOptions{
+            {NEOTAPE_ARCHIVER, "--listen", "unix://" + socket.string(),
+             "--plan", plan.string(), "--resume-file", resume.string()}}};
+        REQUIRE(wait_for_unix_socket(socket, archiver, 5s));
+        require_success(Process::run(
+            ProcessOptions{{NEOTAPE_WRITE, "--source",
+                            "unix://" + socket.string(), "--target",
+                            "spool:" + spool.string()}},
+            30s));
+        require_success(archiver.wait(30s));
+        fs::remove(socket);
+        ProcessResult const scan =
+            Process::run(ProcessOptions{{NEOTAPE_SCAN, "--source",
+                                         "spool:" + spool.string()}},
+                         30s);
+        require_success(scan);
+        size_t const at = scan.standard_output.find("archive_uuid=");
+        REQUIRE(at != std::string::npos);
+        return scan.standard_output.substr(at + 13, 36);
+    };
+
+    std::string const first = archive_once(temporary.path() / "one");
+    std::string const header = read_file(resume);
+    // A single-slice archive never records a slice start.
+    REQUIRE(header.find("/slice/") == std::string::npos);
+    REQUIRE(header.find("/archive_uuid/" + first) != std::string::npos);
+    REQUIRE(archive_once(temporary.path() / "two") == first);
+    REQUIRE(read_file(resume) == header);
 }

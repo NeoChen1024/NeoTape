@@ -71,22 +71,26 @@ a resume file; the operator positions the medium; the writer does not look at
 the position.
 
 ```sh
-# First run: --resume-file must not exist yet.
+# First run: home.resume does not exist yet and is created.
 build/dev/bin/neotape-archiver --listen unix:///tmp/neotape.sock \
   --plan home.plan --archive-name home --resume-file home.resume
 
 # After the failure: load the volume that holds the start of the slice,
-# position after the filemark that ends the previous slice, then:
+# position after the filemark that ends the previous slice, then run the
+# same command again. An existing resume file means "continue".
 build/dev/bin/neotape-archiver --listen unix:///tmp/neotape.sock \
-  --plan home.plan --resume-file home.resume --resume-from-slice last
+  --plan home.plan --archive-name home --resume-file home.resume
 build/dev/bin/neotape-write --source unix:///tmp/neotape.sock \
   --target tape:/dev/nst0 --resume-mode
 ```
 
-`--resume-from-slice` takes a slice number that has a record in the file, or
-`last` for the most recent one. The resumed run reuses the archive UUID,
-continues the global frame sequence and the volume number from that record,
-and does not write the catalog again. `--archive-name`,
+An existing resume file is continued from its last slice record, which names
+the slice that was being written when the run stopped. The resumed run reuses
+the archive UUID, continues the global frame sequence and the volume number
+from that record, and does not write the catalog again. A file without any
+slice record means slice 1 was never reached; the archive then starts over
+from slice 0 under the same UUID. To start a different archive, use a new
+file. `--archive-name`,
 `--volume-block-size`, and the signing key may be omitted where they have a
 default; if given, they must match the resume file. The plan file must be the
 original one: its BLAKE3 hash is stored in the resume file and a different

@@ -161,7 +161,7 @@ TEST_CASE("resume log refuses to replace a file and appends past a torn tail",
     write_file(path, recorded + "/slice/3/3"s);
     auto const state = read_resume_file(path);
     {
-        neotape::ResumeLog log(path, state, state.points[0]);
+        neotape::ResumeLog log(path, state, state.points.front());
         // The restart slice itself is already recorded.
         log.slice_started(1, 10);
         log.slice_started(2, 21);

@@ -33,8 +33,6 @@ struct Options {
     neotape::PaxWriterOptions pax;
     std::optional<bool> write_plan_catalog;
     std::optional<string> resume_file;
-    // A slice number or "last".
-    std::optional<string> resume_from_slice;
     std::optional<string> sign_secret_key_file;
     std::optional<string> sign_passphrase_file;
     bool debug = false;
@@ -57,7 +55,7 @@ void usage(const char *prog) {
         "       [-C <dir>] [-P <percent>] [-j|--io-thread <N>]\n"
         "       [-B|--output-buffer-size <SIZE>] [-p|--plan <file>]\n"
         "       [-w|--plan-write-mode no|slice0]\n"
-        "       [-f|--resume-file <file> [-s|--resume-from-slice <N|last>]]\n"
+        "       [-f|--resume-file <file>]\n"
         "       [-r|--retention-frame-count <N>]\n"
         "       [-k|--sign-secret-key <file.sec>]\n"
         "       [-K|--sign-passphrase-file <path>] [-v|-vv] [-x] [-d|--debug]\n"
@@ -80,7 +78,6 @@ Options parse_args(int argc, char **argv) {
         {"verbose", no_argument, nullptr, 'v'},
         {"plan-write-mode", required_argument, nullptr, 'w'},
         {"resume-file", required_argument, nullptr, 'f'},
-        {"resume-from-slice", required_argument, nullptr, 's'},
         {"one-file-system", no_argument, nullptr, 'x'},
         {"debug", no_argument, nullptr, 'd'},
         {"sign-secret-key", required_argument, nullptr, 'k'},
@@ -90,7 +87,7 @@ Options parse_args(int argc, char **argv) {
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "l:b:n:C:P:j:B:p:w:f:s:r:dk:K:vxh",
+    while ((c = getopt_long(argc, argv, "l:b:n:C:P:j:B:p:w:f:r:dk:K:vxh",
                             long_opts, nullptr)) != -1) {
         try {
             switch (c) {
@@ -136,9 +133,6 @@ Options parse_args(int argc, char **argv) {
                 break;
             case 'f':
                 opts.resume_file = optarg;
-                break;
-            case 's':
-                opts.resume_from_slice = optarg;
                 break;
             case 'r':
                 opts.retention_frame_count =
@@ -188,9 +182,6 @@ Options parse_args(int argc, char **argv) {
     if (!has_plan && opts.resume_file.has_value()) {
         fail("--resume-file requires --plan");
     }
-    if (opts.resume_from_slice.has_value() && !opts.resume_file.has_value()) {
-        fail("--resume-from-slice requires --resume-file");
-    }
     if (!has_plan && !has_sources) {
         usage(argv[0]);
         std::exit(2);
@@ -199,8 +190,8 @@ Options parse_args(int argc, char **argv) {
     return opts;
 }
 
-// Apply --resume-file: start a new resume file, or continue the archive it
-// describes from the requested slice.
+// Apply --resume-file: start a new resume file, or, when the file exists,
+// continue the archive it describes from the last recorded slice start.
 std::unique_ptr<neotape::ResumeLog>
 setup_resume(const Options &opts, neotape::TcpArchiverOptions &server_opts) {
     using neotape::ResumeHeader;
@@ -211,7 +202,7 @@ setup_resume(const Options &opts, neotape::TcpArchiverOptions &server_opts) {
             : string{};
     string const plan_hash = neotape::blake3_file_hex(*opts.pax.plan_path);
 
-    if (!opts.resume_from_slice) {
+    if (!std::filesystem::exists(path)) {
         server_opts.archive_uuid = neotape::make_uuid_v4();
         return std::make_unique<neotape::ResumeLog>(
             path, ResumeHeader{
@@ -225,25 +216,11 @@ setup_resume(const Options &opts, neotape::TcpArchiverOptions &server_opts) {
 
     neotape::ResumeState const state = neotape::read_resume_file(path);
     const ResumeHeader &header = state.header;
-    if (state.points.empty())
-        throw std::runtime_error(
-            format("resume file {} records no slice start; nothing was "
-                   "completed, so start the archive again with a new file",
-                   path));
-    neotape::ResumePoint point = state.points.back();
-    if (*opts.resume_from_slice != "last") {
-        uint64_t const slice =
-            neotape::parse_uint(*opts.resume_from_slice, "resume slice", 1);
-        auto it = std::ranges::find(state.points, slice,
-                                    &neotape::ResumePoint::slice);
-        if (it == state.points.end())
-            throw std::runtime_error(
-                format("resume file {} has no start recorded for slice {}; the "
-                       "recorded slices are {}..{}",
-                       path, slice, state.points.front().slice,
-                       state.points.back().slice));
-        point = *it;
-    }
+    // No recorded slice start: slice 1 was never reached, so the archive
+    // starts over under the same identity.
+    std::optional<neotape::ResumePoint> const point =
+        state.points.empty() ? std::nullopt
+                             : std::optional(state.points.back());
 
     if (opts.volume_block_size &&
         *opts.volume_block_size / 1024 != header.block_size_kib)
@@ -273,13 +250,18 @@ setup_resume(const Options &opts, neotape::TcpArchiverOptions &server_opts) {
     server_opts.archive_uuid = header.archive_uuid;
     server_opts.archive_name = header.archive_name;
     server_opts.volume_block_size = header.block_size_kib * 1024;
-    server_opts.first_global_seq = point.global_seq;
-    server_opts.initial_volume_seq_num = point.volume;
-    server_opts.pax.first_slice = point.slice;
-    neotape::write_diagnostic(format(
-        "neotape-archiver: resuming archive {} from slice {} at "
-        "global_seq={} on volume {}",
-        header.archive_uuid, point.slice, point.global_seq, point.volume));
+    if (point) {
+        server_opts.first_global_seq = point->global_seq;
+        server_opts.initial_volume_seq_num = point->volume;
+        server_opts.pax.first_slice = point->slice;
+    }
+    neotape::write_diagnostic(
+        point ? format("neotape-archiver: resuming archive {} from slice {} "
+                       "at global_seq={} on volume {}",
+                       header.archive_uuid, point->slice, point->global_seq,
+                       point->volume)
+              : format("neotape-archiver: restarting archive {} from slice 0",
+                       header.archive_uuid));
     return std::make_unique<neotape::ResumeLog>(path, state, point);
 }
 
