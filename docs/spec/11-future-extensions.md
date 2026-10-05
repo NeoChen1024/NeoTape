@@ -20,15 +20,17 @@ The 128-byte `sideband_data` area in the fixed header (see [02-frame-header.md](
 In `header_version=1`, no defined `channel_type` sets `SIDEBAND`; every frame requires `sideband_data` to be all zero. Candidate future uses, each gated on a new `channel_type` allocation, include:
 
 - Per-frame Merkle/proof nodes for real-time verification.
-- Partial-restore index pointers.
 
 A new `channel_type` that uses `sideband_data` MUST specify its internal structure (including any type/version tag if multiple sub-encodings are possible) and whether the data must be constant within a frame, slice, channel group, or archive.
 
-## Partial Restore Index
+## Partial Restore
 
-The catalog already maps each path to its slice. A finer index would map paths
-to frame positions within a slice and slices to volumes and tape files,
-enabling targeted partial restore without reading a whole slice.
+The catalog maps each path to its slice, so a reader could restore selected
+slices instead of the whole archive. What remains undefined is how a slice is
+located on the media: which volume and which tape file hold it.
+
+A finer index, mapping paths to frame positions inside a slice, is not
+planned; the slice is the unit of partial restore.
 
 ## Slice-Level Resume
 
@@ -48,10 +50,6 @@ Open questions:
 - Positioning and overwrite rules for the partially written slice.
 - Sequence, validation, and archive identity state for the resumed run.
 
-## Changer/Robot Integration
-
-Support for automated tape library changers: load/unload media, scan barcodes, select tapes by label.
-
 ## Multiple Catalog Replicas
 
 Store catalog replicas on multiple volumes to improve listing and partial
@@ -68,18 +66,8 @@ Open questions:
 - Distinguishing intentional reopen from accidental overwrite.
 - Whether the previous Archive End frame should be recoverable.
 - Interaction with multi-archive media and append-only safety policy.
-
-## Repair Channels
-
-`header_version=1` previously defined a `ch_fec` channel (value 3) carrying
-local RS(32,4) repair records after every 32 content records, together with a
-`FEC_PROTECTED` flag (bit 3). It was removed because the failures it covered,
-an isolated one to four unreadable records, are rare on LTO: the drive's
-read-after-write verification and dataset-level ECC leave either no residual
-error or a damaged region far larger than one group.
-
-A future repair channel must work within the streaming model: one drive,
-sequential volumes, bounded memory, and no seeking back. Redundancy across
-volumes (RAIT-style parity) needs either several drives writing in parallel
-or a volume-sized disk staging area, and is outside that model. Operators who
-need media redundancy should write independent copies.
+- The catalog. A catalog at the start of slice 0 cannot describe content
+  appended later. Writing it at the end of the archive instead, just before
+  the Archive End frame, would let an update overwrite both and write a new
+  catalog after the appended content, at the cost of a reader needing the
+  last volume to list the archive.

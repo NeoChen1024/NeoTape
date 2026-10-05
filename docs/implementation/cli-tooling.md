@@ -121,7 +121,8 @@ build/dev/bin/neotape-catalog --plan home.plan --summary
 `neotape-catalog` shows what an archive holds without restoring it. With
 `--source` it reads the catalog from the start of the archive's first volume
 and stops at the catalog's last frame. With `--plan` it formats a plan file
-that has not been archived yet.
+that has not been archived yet. The catalog must fit on that volume; one
+that continues onto a second volume is not supported.
 
 The default output is the catalog bytes, which `neotape-archiver --plan`
 accepts again. `--list` prints slice, kind, size, modification time (local
