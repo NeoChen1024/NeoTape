@@ -192,6 +192,14 @@ TEST_CASE("format: validation", "[unit][format]") {
                           std::exception);
     }
 
+    // archive_label "unit-test" ends with its NUL at offset 58; the rest of
+    // the 65-byte field is hashed, so it must not be free space either.
+    auto after_nul = bytes;
+    after_nul[60] = 1;
+    REQUIRE_THROWS_AS(
+        neotape::parse_fixed_header(after_nul.data(), after_nul.size()),
+        std::exception);
+
     auto sideband = bytes;
     sideband[280] = 1;
     REQUIRE_THROWS_AS(
@@ -281,6 +289,19 @@ TEST_CASE("format: record check reports size and hash independently",
     auto frame = neotape::check_frame(record.data(), record.size());
     REQUIRE(frame.size_ok);
     REQUIRE(frame.hash_ok);
+    REQUIRE(frame.padding_ok);
+
+    // Padding is covered by the hash, so a writer could fill it freely and
+    // still produce a valid hash; the check is independent of the hash.
+    std::vector<uint8_t> padded = record;
+    padded[512 + header.frame_payload_size] = 1;
+    header.frame_hash =
+        neotape::compute_frame_hash(padded.data(), padded.size());
+    bytes = neotape::serialize_frame_header(header);
+    std::copy(bytes.begin(), bytes.end(), padded.begin());
+    frame = neotape::check_frame(padded.data(), padded.size());
+    REQUIRE(frame.hash_ok);
+    REQUIRE_FALSE(frame.padding_ok);
 
     // A longer physical record is a framing error, not a hash comparison.
     std::vector<uint8_t> longer = record;

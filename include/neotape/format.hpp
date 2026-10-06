@@ -92,6 +92,8 @@ struct CheckedFrame {
     FrameHeader header;
     bool size_ok = false; // record length equals the decoded block size
     bool hash_ok = false; // implies size_ok
+    bool padding_ok =
+        false; // bytes after the payload are zero; implies size_ok
 };
 CheckedFrame check_frame(const uint8_t *data, std::size_t size);
 std::string make_uuid_v4();

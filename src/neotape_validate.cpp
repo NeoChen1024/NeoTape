@@ -120,6 +120,9 @@ std::optional<string> FrameValidator::validate(const CheckedFrame &frame,
     if (!frame.hash_ok && !allow_bad_hash)
         return format("frame hash mismatch at global_seq={}",
                       header.global_frame_seq_num);
+    if (!frame.padding_ok)
+        return format("non-zero payload padding at global_seq={}",
+                      header.global_frame_seq_num);
 
     // --- volume_block_size consistency ---
     if (volume_block_size == 0) {
@@ -234,11 +237,13 @@ FrameValidator::validate_salvage_frame(const CheckedFrame &frame,
                                        const uint8_t *data) {
     FrameHeader const &header = frame.header;
     last_was_replay = false;
-    if (!frame.size_ok || !frame.hash_ok)
+    if (!frame.size_ok || !frame.hash_ok || !frame.padding_ok)
         return make_restore_validation(
             RestoreFrameValidationStatus::fatal,
             format("frame {} at global_seq={}",
-                   frame.size_ok ? "hash mismatch" : "size mismatch",
+                   !frame.size_ok   ? "size mismatch"
+                   : !frame.hash_ok ? "hash mismatch"
+                                    : "has non-zero payload padding",
                    header.global_frame_seq_num));
     if (archive_uuid != header.archive_uuid) {
         replay_history_.clear();

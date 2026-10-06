@@ -20,8 +20,8 @@ All fixed header field tables in this specification use the following datatypes:
 | `char[N]`      | Fixed N-byte character array. NUL-terminated or NUL-padded per field rules.           |
 | `byte[N]`      | Fixed N-byte raw binary array.                                                        |
 | `byte[*]`      | Auto-calculated zero padding. Expands to the number of zero bytes needed to fill the 512-byte fixed header area. Writers MUST write zero; readers MUST include all bytes in `frame_hash`. |
-| `nt_name`      | Fixed N-byte UTF-8 text field. NUL-terminated, NUL-padded after the terminator, required to end with NUL. |
-| `nt_uuid`      | NUL-terminated UUID string per RFC 4122. 37 bytes.                                    |
+| `nt_name`      | Fixed N-byte UTF-8 text field. NUL-terminated, NUL-padded after the terminator, required to end with NUL. Readers MUST reject non-zero bytes after the terminator. |
+| `nt_uuid`      | NUL-terminated UUID string per RFC 4122. 37 bytes. Padded and checked like `nt_name`. |
 | `nt_hash`      | BLAKE3 256-bit hash. 32 bytes.                                                        |
 
 ## Magic Value
@@ -111,7 +111,9 @@ The writer-side sequence is:
 
 Payload bytes MUST begin in the same NeoTape record immediately after the 512-byte fixed field area, without padding or alignment gap.
 
-Any bytes after `frame_payload_size` and before the end of the decoded record size are zero padding. Writers MUST write this padding as zero. Readers include padding bytes in `frame_hash` verification.
+Any bytes after `frame_payload_size` and before the end of the decoded record size are zero padding. Writers MUST write this padding as zero. Readers include padding bytes in `frame_hash` verification and MUST reject a frame whose padding is not all zero.
+
+Every byte of a frame is covered by `frame_hash`, and every byte that is not a field value is required to be zero. A frame therefore has no region that a writer can fill freely without the reader noticing, which denies collision attacks on the hash the unconstrained input they rely on.
 
 ## Block Size Constraints
 

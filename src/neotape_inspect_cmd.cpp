@@ -291,7 +291,9 @@ int do_inspect(const Options &opts) {
             header.global_frame_seq_num, header.slice_seq_num,
             channel_abbrev(header.channel_type), header.channel_frame_seq_num,
             header.frame_payload_size, flags_str(header.flags),
-            frame.hash_ok ? "OK" : "MISMATCH");
+            !frame.hash_ok      ? "MISMATCH"
+            : !frame.padding_ok ? "PAD"
+                                : "OK");
     }
 
     print_separator();

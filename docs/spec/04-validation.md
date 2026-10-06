@@ -59,6 +59,8 @@ For every received frame record, the validator MUST check:
 - Allowed `channel_type`
 - Allowed flag bits for the current `header_version`
 - Reserved fixed-header bytes that are required to be zero
+- `nt_name` and `nt_uuid` bytes after the terminator are zero
+- Payload padding bytes are zero
 - `SIDEBAND` clear and `sideband_data` all zero
 - `SIGNED` flag vs. signature-field consistency
 

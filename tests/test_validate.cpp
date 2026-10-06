@@ -244,6 +244,33 @@ TEST_CASE("validate: validator seed accepts volume local start and rejects gap",
                              "global_frame_seq_num 44 != expected 43"));
 }
 
+TEST_CASE("validate: non-zero payload padding is rejected in both modes",
+          "[unit][validation]") {
+    vector<std::byte> const payload = {std::byte{'p'}, std::byte{'a'},
+                                       std::byte{'d'}};
+    FrameHeader const header =
+        make_content_header(0, 0, 0, payload.size(), neotape::frame_flag_end);
+    vector<std::byte> record(neotape::decoded_block_size(header), std::byte{0});
+    std::ranges::copy(payload, record.begin() + neotape::fixed_header_size);
+    // Filled before finalization, so the hash and signature are valid.
+    record.back() = std::byte{0x5a};
+    FrameHeader finalized = header;
+    neotape::finalize_record(finalized, record);
+    REQUIRE(neotape::check_frame(
+                reinterpret_cast<const uint8_t *>(record.data()), record.size())
+                .hash_ok);
+
+    FrameValidator restoring;
+    RestoreFrameValidation result = restore(restoring, record);
+    REQUIRE(result.status == RestoreFrameValidationStatus::fatal);
+    REQUIRE_THAT(result.message, Catch::Matchers::ContainsSubstring("padding"));
+
+    FrameValidator salvaging;
+    result = salvage(salvaging, record);
+    REQUIRE(result.status == RestoreFrameValidationStatus::fatal);
+    REQUIRE_THAT(result.message, Catch::Matchers::ContainsSubstring("padding"));
+}
+
 TEST_CASE("validate: salvage relaxes consistency but keeps integrity",
           "[unit][validation]") {
     FrameValidator validator;

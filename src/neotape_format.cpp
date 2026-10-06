@@ -91,6 +91,10 @@ string get_fixed_string(const uint8_t *bytes, size_t offset,
 
     const auto *begin = reinterpret_cast<const char *>(bytes + offset);
     const char *end = std::find(begin, begin + field_size, '\0');
+    // The bytes after the terminator are covered by frame_hash and must not
+    // be usable as free space.
+    if (std::any_of(end, begin + field_size, [](char c) { return c != 0; }))
+        throw std::runtime_error("fixed string field with bytes after NUL");
     return string(begin, end);
 }
 
@@ -327,6 +331,10 @@ CheckedFrame check_frame(const uint8_t *data, std::size_t size) {
     frame.size_ok = size == decoded_block_size(frame.header);
     frame.hash_ok = frame.size_ok &&
                     compute_frame_hash(data, size) == frame.header.frame_hash;
+    frame.padding_ok =
+        frame.size_ok &&
+        std::all_of(data + fixed_header_size + frame.header.frame_payload_size,
+                    data + size, [](uint8_t byte) { return byte == 0; });
     return frame;
 }
 
