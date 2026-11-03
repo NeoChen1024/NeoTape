@@ -37,6 +37,7 @@ if(BUILD_TESTING)
     neotape_unit_test(test_tcp_protocol test_tcp_protocol.cpp neotape_protocol)
     neotape_unit_test(test_format test_format.cpp neotape_format NeoTape::Blake3)
     neotape_unit_test(test_validate test_validate.cpp neotape_validation neotape_frame_builder)
+    neotape_unit_test(test_volume_server test_volume_server.cpp neotape_volume_server)
     neotape_unit_test(test_signature test_signature.cpp
         neotape_frame_builder neotape_signature NeoTape::Signify)
     target_compile_definitions(test_signature PRIVATE

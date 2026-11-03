@@ -40,3 +40,9 @@ restores identity and sequence state from its resume file (see the
 granularity is the slice; there is no checkpoint inside a slice.
 
 Tape readers start at the current position; `RecordReader` never rewinds.
+
+The archiver, raw store and extractor serve one client connection at a time
+and outlive it. Only `tcp::ConnectionError` (thrown by `read_message` and
+`write_message` for I/O failures and broken framing) ends a connection and
+lets the next client retry; every other exception is a local fault and
+terminates the process with its message.

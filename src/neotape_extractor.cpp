@@ -243,8 +243,9 @@ struct ExtractorState {
                 return false;
             }
         }
-    } catch (const std::exception &e) {
-        std::cerr << format("neotape-extractor: {}\n", e.what());
+    } catch (const neotape::tcp::ConnectionError &e) {
+        std::cerr << format("neotape-extractor: reader connection failed: {}\n",
+                            e.what());
         return false;
     }
 }

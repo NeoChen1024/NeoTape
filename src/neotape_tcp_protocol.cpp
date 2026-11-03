@@ -19,7 +19,7 @@ std::size_t read_exact(int fd, void *buf, std::size_t n) {
             if (errno == EINTR) {
                 continue;
             }
-            throw std::runtime_error(
+            throw ConnectionError(
                 std::format("read failed: {}", std::strerror(errno)));
         }
         if (r == 0) {
@@ -37,13 +37,13 @@ void write_exact(int fd, const void *buf, std::size_t n) {
     while (remaining > 0) {
         ssize_t const w = ::write(fd, p, remaining);
         if (w == 0) {
-            throw std::runtime_error("write returned 0 bytes");
+            throw ConnectionError("write returned 0 bytes");
         }
         if (w < 0) {
             if (errno == EINTR) {
                 continue;
             }
-            throw std::runtime_error(
+            throw ConnectionError(
                 std::format("write failed: {}", std::strerror(errno)));
         }
         p += w;
@@ -65,12 +65,12 @@ std::optional<Message> read_message(int fd) {
         return std::nullopt;
     }
     if (got != message_header_size) {
-        throw std::runtime_error("short read on message header");
+        throw ConnectionError("short read on message header");
     }
 
     const uint8_t type_byte = static_cast<uint8_t>(header[0]);
     if (!is_valid_message_type(type_byte)) {
-        throw std::runtime_error(
+        throw ConnectionError(
             std::format("unknown message type 0x{:02x}", type_byte));
     }
 
@@ -81,7 +81,7 @@ std::optional<Message> read_message(int fd) {
     }
 
     if (length > max_message_payload_size) {
-        throw std::runtime_error(
+        throw ConnectionError(
             std::format("message payload {} exceeds maximum {}", length,
                         max_message_payload_size));
     }
@@ -92,7 +92,7 @@ std::optional<Message> read_message(int fd) {
         msg.payload.resize(length);
         got = read_exact(fd, msg.payload.data(), length);
         if (got != length) {
-            throw std::runtime_error("short read on message payload");
+            throw ConnectionError("short read on message payload");
         }
     }
     return msg;

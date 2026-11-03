@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -57,11 +58,18 @@ constexpr std::size_t message_header_size =
 // extensions while preventing allocation from a corrupt length field.
 constexpr std::size_t max_message_payload_size = 16 * 1024 * 1024;
 
-// Throws std::runtime_error on I/O or protocol errors.
+// The peer closed, failed, or broke message framing. A server that
+// outlives its connections ends the connection on this error alone; any
+// other exception is a local fault and propagates.
+class ConnectionError : public std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+// Throws ConnectionError on I/O or framing errors.
 // Returns std::nullopt if the peer closed cleanly before any message.
 std::optional<Message> read_message(int fd);
 
-// Throws std::runtime_error on I/O errors.
+// Throws ConnectionError on I/O errors.
 void write_message(int fd, const Message &msg);
 
 std::string message_type_name(MessageType type);

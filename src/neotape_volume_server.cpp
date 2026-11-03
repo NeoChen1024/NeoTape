@@ -302,11 +302,9 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
                                          frames_served};
             }
         }
-    } catch (const std::exception &e) {
-        NEOTAPE_DEBUG("{}: client error: {}\n", opts.log_label, e.what());
-        return VolumeServeResult{false, volume_committed, frames_served};
-    } catch (...) {
-        NEOTAPE_DEBUG("{}: unknown client error\n", opts.log_label);
+    } catch (const neotape::tcp::ConnectionError &e) {
+        write_diagnostic(format("{}: warning: client connection failed: {}",
+                                opts.log_label, e.what()));
         return VolumeServeResult{false, volume_committed, frames_served};
     }
 
