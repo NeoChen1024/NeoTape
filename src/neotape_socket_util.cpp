@@ -67,15 +67,14 @@ int create_listener(const std::string &addr) {
         (void)::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
         if (bind(fd, res->ai_addr, res->ai_addrlen) < 0) {
             ::close(fd);
-            throw std::runtime_error(format("bind {}:{}: {}", a.host, a.port,
-                                            std::strerror(errno)));
+            throw std::runtime_error(
+                format("bind {}:{}: {}", a.host, a.port, std::strerror(errno)));
         }
     }
 
     if (listen(fd, 1) < 0) {
         ::close(fd);
-        throw std::runtime_error(
-            format("listen: {}", std::strerror(errno)));
+        throw std::runtime_error(format("listen: {}", std::strerror(errno)));
     }
     return fd;
 }
@@ -122,8 +121,8 @@ int connect_to_server(const std::string &addr) {
         }
         if (connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
             ::close(fd);
-            throw std::runtime_error(format("connect {}:{}: {}", a.host,
-                                            a.port, std::strerror(errno)));
+            throw std::runtime_error(format("connect {}:{}: {}", a.host, a.port,
+                                            std::strerror(errno)));
         }
     }
     return fd;
@@ -135,6 +134,20 @@ void send_error(int client, const char *text) {
         reinterpret_cast<const std::byte *>(text) + std::strlen(text));
     neotape::tcp::write_message(
         client, Message{MessageType::error, std::move(payload)});
+}
+
+std::string error_payload_text(const std::vector<std::byte> &payload,
+                               std::string_view fallback) {
+    if (payload.empty()) {
+        return std::string(fallback);
+    }
+    return std::string(reinterpret_cast<const char *>(payload.data()),
+                       payload.size());
+}
+
+std::vector<std::byte> bytes_payload(std::span<const uint8_t> bytes) {
+    return {reinterpret_cast<const std::byte *>(bytes.data()),
+            reinterpret_cast<const std::byte *>(bytes.data() + bytes.size())};
 }
 
 std::vector<std::byte> uint64_to_le_bytes(uint64_t v) {

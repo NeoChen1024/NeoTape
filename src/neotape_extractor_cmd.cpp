@@ -116,7 +116,6 @@ int main(int argc, char **argv) {
         ex_opts.listen_address = opts.listen_address;
         ex_opts.output_path = opts.output_path;
         ex_opts.metadata_output_path = opts.metadata_output_path;
-        ex_opts.verbose = opts.verbose;
         ex_opts.require_signed = opts.require_signed;
         ex_opts.salvage = opts.salvage;
         for (const string &path : opts.verify_pubkey_paths) {

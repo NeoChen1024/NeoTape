@@ -22,6 +22,11 @@ struct VolumeRecord {
 
 using VolumeRecordQueue = ClosableQueue<VolumeRecord>;
 
+// Producer side: hand records to the server. Throws once the server has
+// stopped consuming.
+void push_record(VolumeRecordQueue &queue, VolumeRecord record);
+void push_frames(VolumeRecordQueue &queue, std::vector<BuiltFrame> frames);
+
 struct VolumeServeResult {
     bool archive_complete = false;
     bool volume_committed = false;

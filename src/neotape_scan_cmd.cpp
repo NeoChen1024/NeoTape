@@ -131,12 +131,8 @@ void record_first_frame(vector<string> &issues, uint64_t tapefile_num,
 template <typename Handler>
 vector<string> scan_spool_source(const fs::path &root, Handler &&handle) {
     vector<string> issues;
-    if (!fs::exists(root))
-        throw std::runtime_error("spool directory does not exist: " +
-                                 root.string());
     for (const auto &file : neotape::scan_spool_files(root)) {
-        uint64_t file_num = 0;
-        neotape::parse_spool_file_name(file, file_num);
+        uint64_t const file_num = *neotape::spool_file_number(file);
         try {
             FrameHeader const header = neotape::read_spool_file_header(file);
             handle(FirstFrame{file_num, header});

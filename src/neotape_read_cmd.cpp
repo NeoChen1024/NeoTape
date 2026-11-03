@@ -115,6 +115,7 @@ int main(int argc, char **argv) {
             switch (msg->type) {
             case MessageType::next_frame: {
                 neotape::MediaRecord event;
+                neotape::FrameHeader sent_header;
                 for (;;) {
                     event = reader.next();
                     if (event.event == neotape::RecordEvent::end)
@@ -123,26 +124,29 @@ int main(int argc, char **argv) {
                         ++filemark_count;
                         continue;
                     }
-                    if (saw_neotape_frame) {
-                        try {
-                            neotape::parse_fixed_header(
-                                reinterpret_cast<const uint8_t *>(
-                                    event.record.data()),
-                                event.record.size());
-                            break;
-                        } catch (const std::exception &error) {
-                            std::cerr << format(
-                                "neotape-read: unavailable record: {}\n",
-                                error.what());
-                            continue;
-                        }
+                    if (!saw_neotape_frame &&
+                        !neotape::has_frame_magic(event.record.data(),
+                                                  event.record.size())) {
+                        ++skipped_prefix_records;
+                        continue;
                     }
-                    if (neotape::has_frame_magic(event.record.data(),
-                                                 event.record.size())) {
-                        saw_neotape_frame = true;
-                        break;
+                    // The first frame must parse; later unreadable records
+                    // are skipped and the extractor decides about the gap.
+                    try {
+                        sent_header = neotape::parse_fixed_header(
+                            reinterpret_cast<const uint8_t *>(
+                                event.record.data()),
+                            event.record.size());
+                    } catch (const std::exception &error) {
+                        if (!saw_neotape_frame)
+                            throw;
+                        std::cerr
+                            << format("neotape-read: unavailable record: {}\n",
+                                      error.what());
+                        continue;
                     }
-                    ++skipped_prefix_records;
+                    saw_neotape_frame = true;
+                    break;
                 }
                 if (event.event == neotape::RecordEvent::end) {
                     neotape::tcp::write_message(
@@ -159,17 +163,9 @@ int main(int argc, char **argv) {
                         skipped_prefix_records);
                 }
 
-                auto const sent_header = neotape::parse_fixed_header(
-                    reinterpret_cast<const uint8_t *>(event.record.data()),
-                    event.record.size());
-                {
-                    vector<std::byte> frame_bytes;
-                    frame_bytes.swap(event.record);
-                    Message frame_msg;
-                    frame_msg.type = MessageType::frame_record;
-                    frame_msg.payload.swap(frame_bytes);
-                    neotape::tcp::write_message(fd, frame_msg);
-                }
+                neotape::tcp::write_message(fd,
+                                            Message{MessageType::frame_record,
+                                                    std::move(event.record)});
                 ++record_count;
 
                 auto ack = neotape::tcp::read_message(fd);
@@ -188,17 +184,9 @@ int main(int argc, char **argv) {
                                     neotape::ChannelType::ARCHIVE_END;
                 break;
             }
-            case MessageType::error: {
-                string reason;
-                reason.reserve(msg->payload.size());
-                for (std::byte const b : msg->payload) {
-                    reason.push_back(static_cast<char>(b));
-                }
-                if (reason.empty()) {
-                    reason = "extractor reported error";
-                }
-                fail(reason);
-            }
+            case MessageType::error:
+                fail(neotape::error_payload_text(msg->payload,
+                                                 "extractor reported error"));
             default:
                 fail(format("unexpected message type {}",
                             static_cast<int>(msg->type)));
@@ -213,5 +201,4 @@ int main(int argc, char **argv) {
     } catch (const std::exception &e) {
         fail(e.what());
     }
-    return 0;
 }

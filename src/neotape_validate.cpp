@@ -12,12 +12,6 @@ using std::string;
 
 namespace {
 
-RestoreFrameValidation
-make_restore_validation(RestoreFrameValidationStatus status,
-                        std::string message = {}) {
-    return RestoreFrameValidation{status, std::move(message)};
-}
-
 std::size_t channel_index(ChannelType type) {
     switch (type) {
     case ChannelType::CH_CONTENT:
@@ -222,14 +216,12 @@ FrameValidator::validate_restore_frame(const CheckedFrame &frame,
     // structurally placed in the stream.
     bool const advisory = frame.header.channel_type == ChannelType::CH_METADATA;
     if (auto err = validate(frame, data, advisory))
-        return make_restore_validation(RestoreFrameValidationStatus::fatal,
-                                       std::move(*err));
+        return {RestoreFrameValidationStatus::fatal, std::move(*err)};
     if (!frame.hash_ok)
-        return make_restore_validation(
-            RestoreFrameValidationStatus::warning,
-            format("metadata frame hash mismatch at global_seq={}",
-                   frame.header.global_frame_seq_num));
-    return make_restore_validation(RestoreFrameValidationStatus::ok);
+        return {RestoreFrameValidationStatus::warning,
+                format("metadata frame hash mismatch at global_seq={}",
+                       frame.header.global_frame_seq_num)};
+    return {RestoreFrameValidationStatus::ok, {}};
 }
 
 RestoreFrameValidation
@@ -238,13 +230,12 @@ FrameValidator::validate_salvage_frame(const CheckedFrame &frame,
     FrameHeader const &header = frame.header;
     last_was_replay = false;
     if (!frame.size_ok || !frame.hash_ok || !frame.padding_ok)
-        return make_restore_validation(
-            RestoreFrameValidationStatus::fatal,
-            format("frame {} at global_seq={}",
-                   !frame.size_ok   ? "size mismatch"
-                   : !frame.hash_ok ? "hash mismatch"
-                                    : "has non-zero payload padding",
-                   header.global_frame_seq_num));
+        return {RestoreFrameValidationStatus::fatal,
+                format("frame {} at global_seq={}",
+                       !frame.size_ok   ? "size mismatch"
+                       : !frame.hash_ok ? "hash mismatch"
+                                        : "has non-zero payload padding",
+                       header.global_frame_seq_num)};
     if (archive_uuid != header.archive_uuid) {
         replay_history_.clear();
         replay_next_.reset();
@@ -252,13 +243,12 @@ FrameValidator::validate_salvage_frame(const CheckedFrame &frame,
         archive_uuid = header.archive_uuid;
     }
     if (auto error = check_replay(frame, data))
-        return make_restore_validation(RestoreFrameValidationStatus::fatal,
-                                       *error);
+        return {RestoreFrameValidationStatus::fatal, std::move(*error)};
     if (!last_was_replay) {
         remember_record(frame);
         expected_global_frame_seq = header.global_frame_seq_num + 1;
     }
-    return make_restore_validation(RestoreFrameValidationStatus::ok);
+    return {RestoreFrameValidationStatus::ok, {}};
 }
 
 void FrameValidator::reset() {

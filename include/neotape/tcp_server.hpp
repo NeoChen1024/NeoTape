@@ -6,24 +6,14 @@
 #include "neotape/tcp_protocol.hpp"
 #include "neotape/volume_server.hpp"
 
-#include <cstdint>
-#include <optional>
-#include <string>
-
 namespace neotape {
 
 struct TcpArchiverOptions {
-    std::string listen_address; // "tcp://0.0.0.0:9123" or "unix:///path"
-    uint32_t volume_block_size = 4 * 1024 * 1024;
-    std::string archive_name;
-    uint64_t initial_volume_seq_num = 1;
-    uint64_t retention_frame_count = 256;
-    std::optional<SignifySecretKey> frame_signer;
+    // log_label and on_ack are owned by run_tcp_archiver. A resumed archive
+    // sets archive_uuid and first_global_seq together with pax.first_slice.
+    VolumeServerOptions server;
     // Store pax.plan_path as the archive catalog at the start of slice 0.
     bool write_plan_catalog = true;
-    // Resuming an archive from pax.first_slice; see VolumeServerOptions.
-    std::optional<std::string> archive_uuid;
-    uint64_t first_global_seq = 0;
     // Records slice starts for a later resume; not owned.
     ResumeLog *resume_log = nullptr;
 

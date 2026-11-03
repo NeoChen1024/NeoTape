@@ -7,7 +7,9 @@
 #include <climits>
 #include <clocale>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <format>
 #include <iterator>
@@ -255,17 +257,14 @@ void ensure_utf8_ctype_locale() {
 
 namespace fs = std::filesystem;
 
-string strip_trailing_slashes(string_view path) {
-    while (path.size() > 1 && path.back() == '/') {
-        path.remove_suffix(1);
-    }
-    return string(path);
-}
-
 SourceSpec make_source_spec(const string &arg) {
     SourceSpec spec;
 
-    string cleaned = strip_trailing_slashes(arg);
+    string_view trimmed = arg;
+    while (trimmed.size() > 1 && trimmed.back() == '/') {
+        trimmed.remove_suffix(1);
+    }
+    string const cleaned(trimmed);
     spec.archive_prefix = cleaned;
     if (!spec.archive_prefix.empty() && spec.archive_prefix[0] == '/') {
         spec.archive_prefix.erase(0, 1);
@@ -291,6 +290,34 @@ string archive_path_for_source(const SourceSpec &spec,
         return spec.archive_prefix;
     }
     return (fs::path(spec.archive_prefix) / relative).generic_string();
+}
+
+StdioFile::~StdioFile() {
+    if (file_ != nullptr && owned_) {
+        std::fclose(file_);
+    }
+}
+
+StdioFile StdioFile::open(const string &path, const char *mode) {
+    FILE *file = std::fopen(path.c_str(), mode);
+    if (file == nullptr) {
+        throw std::runtime_error(format("open {}: {}",
+                                        escape_bytes_for_diagnostic(path),
+                                        std::strerror(errno)));
+    }
+    return StdioFile(file, true);
+}
+
+void StdioFile::close(string_view name) {
+    if (file_ == nullptr) {
+        return;
+    }
+    FILE *const file = std::exchange(file_, nullptr);
+    int const result = owned_ ? std::fclose(file) : std::fflush(file);
+    if (result != 0) {
+        throw std::runtime_error(format("{} {}: {}", owned_ ? "close" : "flush",
+                                        name, std::strerror(errno)));
+    }
 }
 
 } // namespace neotape

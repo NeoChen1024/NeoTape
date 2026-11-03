@@ -182,21 +182,9 @@ class PaxOutputSession {
     }
 
     void finish() {
-        if (opts_.slice_output_prefix.has_value()) {
-            if (file_ != nullptr) {
-                close_file("close slice output");
-            }
-            return;
-        }
-
-        if (file_ != nullptr && owned_ && std::fclose(file_) != 0) {
-            file_ = nullptr;
-            owned_ = false;
-            throw_pax_output_errno(string("close ") + opts_.output_path);
-        }
-
-        file_ = nullptr;
-        owned_ = false;
+        close_file(opts_.slice_output_prefix.has_value() ? "close slice output"
+                   : opts_.output_path == "-"            ? "flush stdout"
+                                                         : "close output");
     }
 
     string output_target() const {
@@ -224,19 +212,17 @@ class PaxOutputSession {
         }
     }
 
-    void close_file(const char *context) {
-        if (file_ == nullptr || !owned_) {
-            file_ = nullptr;
-            owned_ = false;
+    // Close an owned file or flush stdout; either way the file is released
+    // before an error is reported.
+    void close_file(const string &context) {
+        if (file_ == nullptr) {
             return;
         }
-        if (std::fclose(file_) != 0) {
-            file_ = nullptr;
-            owned_ = false;
+        FILE *const file = std::exchange(file_, nullptr);
+        bool const owned = std::exchange(owned_, false);
+        if ((owned ? std::fclose(file) : std::fflush(file)) != 0) {
             throw_pax_output_errno(context);
         }
-        file_ = nullptr;
-        owned_ = false;
     }
 };
 
@@ -298,10 +284,13 @@ void print_pax_progress(uint64_t in_rate, uint64_t out_rate, uint64_t file_rate,
 
 // ====================== Diagnostics ==========================
 
-[[noreturn]] void throw_archive(const char *context, archive *a) {
+string archive_message(const char *context, archive *a) {
     const char *msg = archive_error_string(a);
-    throw std::runtime_error(format(
-        "pax: {}{}", context, msg != nullptr ? format(": {}", msg) : string()));
+    return msg != nullptr ? format("{}: {}", context, msg) : string(context);
+}
+
+[[noreturn]] void throw_archive(const char *context, archive *a) {
+    throw std::runtime_error("pax: " + archive_message(context, a));
 }
 
 [[noreturn]] void throw_errno(const string &context) {
@@ -309,24 +298,19 @@ void print_pax_progress(uint64_t in_rate, uint64_t out_rate, uint64_t file_rate,
         format("pax: {}: {}", context, std::strerror(errno)));
 }
 
+void warn_archive(const char *context, archive *a) {
+    write_diagnostic("pax: warning: " + archive_message(context, a));
+}
+
 void check_archive_throw(int r, archive *a, const char *context) {
     if (r == ARCHIVE_OK) {
         return;
     }
     if (r == ARCHIVE_WARN) {
-        const char *msg = archive_error_string(a);
-        write_diagnostic(
-            format("pax: warning: {}{}", context,
-                   msg != nullptr ? format(": {}", msg) : string()));
+        warn_archive(context, a);
         return;
     }
     throw_archive(context, a);
-}
-
-void warn_archive(const char *context, archive *a) {
-    const char *msg = archive_error_string(a);
-    write_diagnostic(format("pax: warning: {}{}", context,
-                            msg != nullptr ? format(": {}", msg) : string()));
 }
 
 // ====================== Entry Formatting =====================
@@ -726,7 +710,7 @@ class PaxPipeline {
   public:
     PaxPipeline(const Options &opts, PaxWriterCallbacks &callbacks,
                 ArchiveStats &stats, blake3_hasher &hasher,
-                uint64_t output_slice = 0)
+                uint64_t output_slice)
         : opts_(opts), callbacks_(callbacks), stats_(stats), hasher_(hasher),
           bb1_(opts.output_buf_size),
           order_queue_(pipeline_order_queue_capacity(opts)),
@@ -747,13 +731,9 @@ class PaxPipeline {
     }
 
     void start() {
-        if (joined_) {
-            throw std::runtime_error("pax pipeline cannot start after join");
-        }
-        if (started_ && !joined_) {
+        if (started_) {
             throw std::runtime_error("pax pipeline already started");
         }
-
         started_ = true;
         try {
             output_thread_ = std::thread([this] { output_main(); });
@@ -935,9 +915,9 @@ void dispatch_entry_to_pipeline(const Options &opts, ArchiveStats &stats,
     }
 
     uint64_t const seq = next_seq++;
-    unsigned const nworkers = opts.io_thread > 0 ? opts.io_thread - 1 : 0;
     bool queued = false;
-    if (nworkers == 0 || std::cmp_greater(size, SMALL_FILE_THRESHOLD)) {
+    if (pipeline_worker_count(opts) == 0 ||
+        std::cmp_greater(size, SMALL_FILE_THRESHOLD)) {
         queued = pipeline.enqueue_large(seq, std::move(entry));
     } else {
         queued = pipeline.enqueue_small(seq, std::move(entry));
@@ -962,13 +942,15 @@ class SlicePipeline {
         }
     }
 
-    void begin_slice(uint64_t slice) {
-        if (active_slice_.has_value()) {
-            throw std::runtime_error("slice output already active");
+    // Make `slice` the active slice, finishing the previous one first.
+    void ensure_slice(uint64_t slice) {
+        if (active_slice_ == slice) {
+            return;
         }
-
+        finish_slice();
         callbacks_.begin_slice(slice);
         active_slice_ = slice;
+        ++slice_count_;
         next_seq_ = 0;
         {
             std::scoped_lock lock(pipeline_mtx_);
@@ -985,20 +967,20 @@ class SlicePipeline {
         }
     }
 
+    [[nodiscard]] bool active() const { return active_slice_.has_value(); }
+    [[nodiscard]] uint64_t slice_count() const { return slice_count_; }
+
     void emit_entry(EntryHandle entry) {
         if (!active_slice_.has_value()) {
             throw std::runtime_error("slice pipeline is not active");
-        }
-        if (pipeline_ == nullptr) {
-            throw std::runtime_error("slice pipeline is not available");
         }
         dispatch_entry_to_pipeline(opts_, stats_, *pipeline_, next_seq_,
                                    std::move(entry));
     }
 
     void emit_eoa() {
-        if (pipeline_ == nullptr) {
-            throw std::runtime_error("slice pipeline is not available");
+        if (!active_slice_.has_value()) {
+            throw std::runtime_error("slice pipeline is not active");
         }
         if (!pipeline_->enqueue_inline(
                 next_seq_++, vector<std::byte>(1024, std::byte{0}), false)) {
@@ -1011,9 +993,6 @@ class SlicePipeline {
     void finish_slice() {
         if (!active_slice_.has_value()) {
             return;
-        }
-        if (pipeline_ == nullptr) {
-            throw std::runtime_error("slice pipeline is not available");
         }
         pipeline_->finish_input();
         pipeline_->join();
@@ -1067,9 +1046,10 @@ class SlicePipeline {
     ArchiveStats &stats_;
     blake3_hasher &hasher_;
     std::optional<uint64_t> active_slice_;
+    uint64_t slice_count_ = 0;
     // Protect lifetime while the stats thread samples the active buffer.
     mutable std::mutex pipeline_mtx_;
-    std::unique_ptr<PaxPipeline> pipeline_;
+    std::unique_ptr<PaxPipeline> pipeline_; // set while a slice is active
     uint64_t next_seq_ = 0;
 };
 
@@ -1111,11 +1091,13 @@ ResolverHandle make_link_resolver() {
     return resolver;
 }
 
-PaxWriteResult write_pax_archive(const Options &opts,
-                                 PaxWriterCallbacks callbacks) {
+} // namespace
+
+PaxWriteResult write_pax(const PaxWriterOptions &opts,
+                         PaxWriterCallbacks callbacks) {
     ensure_utf8_ctype_locale();
     if (!callbacks.write_chunk)
-        callbacks.write_chunk = [](PaxChunk) {};
+        throw std::invalid_argument("write_pax requires a write_chunk sink");
     if (opts.chdir_dir && chdir(opts.chdir_dir->c_str()) != 0)
         throw_errno(string("chdir ") + *opts.chdir_dir);
 
@@ -1124,9 +1106,10 @@ PaxWriteResult write_pax_archive(const Options &opts,
     blake3_hasher hasher;
     blake3_hasher_init(&hasher);
     SlicePipeline slices(opts, callbacks, stats, hasher);
-    std::optional<uint64_t> active_slice;
-    std::atomic<uint64_t> slice_count{0};
     RateSampler rates;
+    // slice_count is read by the progress thread while the main thread
+    // starts slices; the slice pipeline is read under its own lock.
+    std::atomic<uint64_t> slice_count{0};
     PeriodicProgress progress([&] {
         if (callbacks.progress_paused())
             return;
@@ -1139,13 +1122,8 @@ PaxWriteResult write_pax_archive(const Options &opts,
     });
 
     auto begin_slice = [&](uint64_t number) {
-        if (active_slice && *active_slice == number)
-            return;
-        if (active_slice)
-            slices.finish_slice();
-        slices.begin_slice(number);
-        active_slice = number;
-        ++slice_count;
+        slices.ensure_slice(number);
+        slice_count.store(slices.slice_count());
     };
     auto emit_linked = [&](archive_entry *raw) {
         archive_entry *spare = nullptr;
@@ -1183,7 +1161,7 @@ PaxWriteResult write_pax_archive(const Options &opts,
                 begin_slice(entry.slice);
                 emit_linked(planned_entry_from_path(disk.get(), entry.path));
             }
-            if (opts.first_slice > 0 && !active_slice)
+            if (opts.first_slice > 0 && !slices.active())
                 throw std::runtime_error(
                     std::format("plan has no slice {}", opts.first_slice));
         } else {
@@ -1233,7 +1211,7 @@ PaxWriteResult write_pax_archive(const Options &opts,
             if (other)
                 slices.emit_entry(std::move(other));
         }
-        if (active_slice) {
+        if (slices.active()) {
             slices.emit_eoa();
             slices.finish_slice();
         }
@@ -1243,21 +1221,15 @@ PaxWriteResult write_pax_archive(const Options &opts,
     }
     progress.stop();
     if (opts.plan_path) {
-        print_pax_progress(0, 0, 0, slice_count.load(),
+        print_pax_progress(0, 0, 0, slices.slice_count(),
                            stats.output_bytes.load(), 0);
         finish_progress();
     }
     std::array<uint8_t, BLAKE3_OUT_LEN> hash{};
     blake3_hasher_finalize(&hasher, hash.data(), hash.size());
     return {stats.input_bytes.load(), stats.output_bytes.load(),
-            stats.walked_entries.load(), slice_count.load(), hex_encode(hash)};
-}
-
-} // namespace
-
-PaxWriteResult write_pax(const PaxWriterOptions &opts,
-                         PaxWriterCallbacks callbacks) {
-    return write_pax_archive(opts, std::move(callbacks));
+            stats.walked_entries.load(), slices.slice_count(),
+            hex_encode(hash)};
 }
 
 PaxLocalOutputResult

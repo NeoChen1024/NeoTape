@@ -18,15 +18,6 @@ namespace {
 
 using std::string;
 
-void push_frames(VolumeRecordQueue &queue, std::vector<BuiltFrame> frames) {
-    for (auto &frame : frames) {
-        if (!queue.push(VolumeRecord{std::move(frame.record),
-                                     frame.global_seq_num, false, false})) {
-            throw std::runtime_error("frame consumer disconnected");
-        }
-    }
-}
-
 PaxWriterCallbacks make_server_callbacks(FrameBuilder &builder,
                                          VolumeRecordQueue &queue,
                                          ResumeLog *resume_log) {
@@ -46,9 +37,10 @@ PaxWriterCallbacks make_server_callbacks(FrameBuilder &builder,
         .end_slice =
             [&](uint64_t) {
                 push_frames(queue, builder.flush());
-                if (!queue.push(VolumeRecord{{}, 0, true, false})) {
-                    throw std::runtime_error("frame consumer disconnected");
-                }
+                push_record(queue, VolumeRecord{.record = {},
+                                                .global_seq_num = 0,
+                                                .tape_eof = true,
+                                                .done = false});
             },
     };
 }
@@ -84,16 +76,8 @@ void write_catalog(const std::filesystem::path &plan_path,
 } // namespace
 
 VolumeServerSummary run_tcp_archiver(const TcpArchiverOptions &opts) {
-    VolumeServerOptions server_opts;
-    server_opts.listen_address = opts.listen_address;
-    server_opts.volume_block_size = opts.volume_block_size;
-    server_opts.archive_name = opts.archive_name;
-    server_opts.initial_volume_seq_num = opts.initial_volume_seq_num;
-    server_opts.retention_frame_count = opts.retention_frame_count;
+    VolumeServerOptions server_opts = opts.server;
     server_opts.log_label = "neotape-archiver";
-    server_opts.frame_signer = opts.frame_signer;
-    server_opts.archive_uuid = opts.archive_uuid;
-    server_opts.first_global_seq = opts.first_global_seq;
     if (opts.resume_log != nullptr)
         server_opts.on_ack = [log = opts.resume_log](uint64_t seq,
                                                      uint64_t volume) {
@@ -102,8 +86,9 @@ VolumeServerSummary run_tcp_archiver(const TcpArchiverOptions &opts) {
 
     return run_volume_server(server_opts, [&](const string &archive_uuid,
                                               VolumeRecordQueue &frame_queue) {
-        FrameBuilder builder(opts.volume_block_size, archive_uuid,
-                             opts.archive_name, opts.first_global_seq);
+        FrameBuilder builder(opts.server.volume_block_size, archive_uuid,
+                             opts.server.archive_name,
+                             opts.server.first_global_seq);
         // A resumed run starts after slice 0, which holds the catalog.
         if (opts.pax.plan_path && opts.write_plan_catalog &&
             opts.pax.first_slice == 0)
@@ -112,10 +97,11 @@ VolumeServerSummary run_tcp_archiver(const TcpArchiverOptions &opts) {
             make_server_callbacks(builder, frame_queue, opts.resume_log);
         write_pax(opts.pax, std::move(callbacks));
         push_frames(frame_queue, builder.flush());
-        if (!frame_queue.push(
-                VolumeRecord{{}, builder.next_global_seq_num(), false, true})) {
-            throw std::runtime_error("frame consumer disconnected");
-        }
+        push_record(frame_queue, VolumeRecord{.record = {},
+                                              .global_seq_num =
+                                                  builder.next_global_seq_num(),
+                                              .tape_eof = false,
+                                              .done = true});
     });
 }
 

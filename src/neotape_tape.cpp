@@ -4,7 +4,6 @@
 #include "neotape/tape.hpp"
 #include "neotape/tape_ioctl.hpp"
 
-#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -26,10 +25,9 @@ namespace fs = std::filesystem;
 
 constexpr string_view spool_prefix = "neotape-";
 constexpr string_view spool_ext = ".nts";
-constexpr string_view _spool_temp_ext = ".pending";
 
-using neotape::parse_spool_file_name;
 using neotape::scan_spool_files;
+using neotape::spool_file_number;
 
 std::string spool_suffix_for_header(const neotape::FrameHeader &header) {
     switch (header.channel_type) {
@@ -44,8 +42,8 @@ std::string spool_suffix_for_header(const neotape::FrameHeader &header) {
 
 fs::path spool_final_path(const fs::path &root, uint64_t file_num,
                           const neotape::FrameHeader &header) {
-    return root / format("{}{:06}.{}.nts", spool_prefix, file_num,
-                         spool_suffix_for_header(header));
+    return root / format("{}{:06}.{}{}", spool_prefix, file_num,
+                         spool_suffix_for_header(header), spool_ext);
 }
 
 fs::path spool_temp_path(const fs::path &root, uint64_t file_num) {
@@ -91,7 +89,7 @@ bool Status::online() const noexcept { return (gstat_ & GMT_ONLINE) != 0; }
 // -----------------------------------------------------------------------
 
 TapeDevice::TapeDevice(std::string_view device_path, bool read_write)
-    : device_path_(device_path), read_write_(read_write) {
+    : device_path_(device_path) {
     int const oflags = read_write ? O_RDWR : O_RDONLY;
 
     fd_ = ::open(device_path_.c_str(), oflags | O_NONBLOCK);
@@ -113,8 +111,8 @@ TapeDevice::TapeDevice(std::string_view device_path, bool read_write)
     }
 }
 
-TapeDevice::TapeDevice(int fd, std::string_view path, bool read_write)
-    : fd_(fd), device_path_(path), read_write_(read_write) {}
+TapeDevice::TapeDevice(int fd, std::string_view path)
+    : fd_(fd), device_path_(path) {}
 
 TapeDevice::~TapeDevice() {
     try {
@@ -138,8 +136,7 @@ void TapeDevice::close() {
 void TapeDevice::write_record(const void *data, std::size_t size) {
     if (size == 0)
         throw Error(device_path_, "empty record", EINVAL);
-    NEOTAPE_DEBUG("[tape {}] write_record begin size={}\n", device_path_,
-                  size);
+    NEOTAPE_DEBUG("[tape {}] write_record begin size={}\n", device_path_, size);
     ssize_t written;
     do {
         written = ::write(fd_, data, size);
@@ -173,6 +170,9 @@ void TapeDevice::do_mtop(int op, int count) {
 // -- positioning -------------------------------------------------------
 
 void TapeDevice::rewind() { do_mtop(MTREW, 1); }
+
+// Some drives report EIO for MTEOM after they have already reached EOD;
+// the status query tells the two apart.
 void TapeDevice::space_to_eod() {
     try {
         do_mtop(MTEOM, 1);
@@ -189,17 +189,7 @@ void TapeDevice::space_to_eod() {
     }
 }
 void TapeDevice::space_fwd(int count) { do_mtop(MTFSF, count); }
-void TapeDevice::space_bwd(int count) { do_mtop(MTBSF, count); }
-void TapeDevice::space_fwd_filemark(int count) { do_mtop(MTFSFM, count); }
-void TapeDevice::space_bwd_filemark(int count) { do_mtop(MTBSFM, count); }
 void TapeDevice::space_fwd_records(int count) { do_mtop(MTFSR, count); }
-void TapeDevice::space_bwd_records(int count) { do_mtop(MTBSR, count); }
-
-void TapeDevice::seek_block(long block_no) {
-    do_mtop(MTSEEK, static_cast<int>(block_no));
-}
-
-Position TapeDevice::tell() { return do_tell(); }
 
 // -- markers -----------------------------------------------------------
 
@@ -212,16 +202,6 @@ void TapeDevice::set_variable_block_mode() { do_mtop(MTSETBLK, 0); }
 // -- status queries ----------------------------------------------------
 
 Status TapeDevice::status() { return do_status(); }
-
-// -- virtual (real implementation) -------------------------------------
-
-Position TapeDevice::do_tell() {
-    mtpos pos{};
-    if (::ioctl(fd_, MTIOCPOS, &pos) < 0) {
-        throw Error(device_path_, "tell", errno);
-    }
-    return Position{pos.mt_blkno};
-}
 
 Status TapeDevice::do_status() {
     mtget raw{};
@@ -242,37 +222,18 @@ Status TapeDevice::do_status() {
     return st;
 }
 
-SpoolTapeDevice::SpoolTapeDevice(const fs::path &root, bool read_write)
-    : TapeDevice(-1, root.string(), read_write), root_(root),
-      read_write_(read_write) {
-    if (read_write_) {
-        fs::create_directories(root_);
-    }
+// -----------------------------------------------------------------------
+// SpoolTapeDevice
+// -----------------------------------------------------------------------
 
+SpoolTapeDevice::SpoolTapeDevice(const fs::path &root)
+    : TapeDevice(-1, root.string()), root_(root) {
+    fs::create_directories(root_);
     files_ = scan_spool_files(root_);
-    for (const auto &file : files_) {
-        uint64_t file_num = 0;
-        if (parse_spool_file_name(file, file_num) &&
-            file_num >= next_file_num_) {
-            next_file_num_ = file_num + 1;
-        }
-    }
-
-    if (read_write_) {
-        current_file_num_ = next_file_num_;
-        current_path_ = spool_temp_path(root_, current_file_num_);
-        spool_fd_ = open_fd(current_path_, O_RDWR | O_CREAT | O_TRUNC);
-        current_is_temp_ = true;
-        return;
-    }
-
-    if (!files_.empty()) {
-        current_file_num_ = 0;
-        parse_spool_file_name(files_.front(), current_file_num_);
-        current_path_ = files_.front();
-        spool_fd_ = open_fd(current_path_, O_RDONLY);
-        current_block_size_ = 0;
-    }
+    // scan_spool_files orders by file number, so the last file is the highest.
+    current_file_num_ =
+        files_.empty() ? 0 : *spool_file_number(files_.back()) + 1;
+    open_next_file();
 }
 
 SpoolTapeDevice::~SpoolTapeDevice() {
@@ -280,41 +241,41 @@ SpoolTapeDevice::~SpoolTapeDevice() {
         ::close(spool_fd_);
         spool_fd_ = -1;
     }
-    if (read_write_ && current_is_temp_ && current_record_ > 0) {
-        // Finalize any trailing tape file that was never explicitly closed
-        // with a filemark.  Destructors must not throw, so swallow errors.
+    if (current_path_.empty())
+        return;
+    // A trailing tape file never closed with a filemark is finalized here;
+    // an empty one is removed. Destructors must not throw.
+    if (current_record_ > 0) {
         try {
             finalize_current_file();
+            return;
         } catch (...) {
-            std::error_code ec;
-            fs::remove(current_path_, ec);
         }
-    } else if (read_write_ && current_is_temp_ && !current_path_.empty()) {
-        std::error_code ec;
-        fs::remove(current_path_, ec);
     }
+    std::error_code ec;
+    fs::remove(current_path_, ec);
+}
+
+// Start a fresh pending file numbered current_file_num_.
+void SpoolTapeDevice::open_next_file() {
+    current_path_ = spool_temp_path(root_, current_file_num_);
+    spool_fd_ = open_fd(current_path_, O_RDWR | O_CREAT | O_TRUNC);
+    current_block_size_ = 0;
+    current_record_ = 0;
 }
 
 void SpoolTapeDevice::finalize_current_file() {
-    if (!current_is_temp_ || current_path_.empty()) {
-        return;
-    }
-
     auto header = neotape::read_spool_file_header(current_path_);
     current_block_size_ = neotape::decoded_block_size(header);
     fs::path const final_path =
         spool_final_path(root_, current_file_num_, header);
     fs::rename(current_path_, final_path);
-    current_is_temp_ = false;
     current_path_.clear();
 }
 
 int SpoolTapeDevice::fd() const noexcept { return spool_fd_; }
 
 void SpoolTapeDevice::write_record(const void *data, std::size_t size) {
-    if (!read_write_) {
-        throw Error(device_path(), "write_record", EROFS);
-    }
     if (spool_fd_ < 0) {
         throw Error(device_path(), "write_record", EBADF);
     }
@@ -345,9 +306,6 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
 
     switch (op) {
     case MTWEOF: {
-        if (!read_write_) {
-            throw Error(device_path(), "write filemark", ENOTSUP);
-        }
         if (count != 1) {
             throw Error(device_path(), "write filemark", ENOTSUP);
         }
@@ -364,90 +322,37 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
         spool_fd_ = -1;
 
         finalize_current_file();
-
-        ++next_file_num_;
-        current_file_num_ = next_file_num_;
-        current_path_ = spool_temp_path(root_, current_file_num_);
-        spool_fd_ = open_fd(current_path_, O_RDWR | O_CREAT | O_TRUNC);
-        current_is_temp_ = true;
-        current_block_size_ = 0;
-        current_record_ = 0;
+        ++current_file_num_;
+        open_next_file();
         return;
     }
 
-    case MTFSF:
-    case MTFSFM: {
-        if (read_write_) {
-            throw Error(device_path(), "filemark spacing", ENOTSUP);
-        }
+    case MTREW: {
+        // Rewind to BOT: remove every spool file and restart numbering.
         if (spool_fd_ >= 0) {
             ::close(spool_fd_);
             spool_fd_ = -1;
         }
-
-        auto it = std::ranges::find(files_, current_path_);
-        size_t const index =
-            it == files_.end()
-                ? 0
-                : static_cast<size_t>(std::distance(files_.begin(), it)) + 1;
-        if (index >= files_.size()) {
+        std::error_code ec;
+        if (!current_path_.empty()) {
+            fs::remove(current_path_, ec);
             current_path_.clear();
-            return;
         }
-
-        current_path_ = files_[index];
-        parse_spool_file_name(current_path_, current_file_num_);
-        spool_fd_ = open_fd(current_path_, O_RDONLY);
-        current_record_ = 0;
-        current_block_size_ = 0;
+        for (auto &entry : fs::directory_iterator(root_)) {
+            if (!entry.is_regular_file())
+                continue;
+            auto name = entry.path().filename().string();
+            if (name.size() <= spool_prefix.size() + spool_ext.size() ||
+                !name.starts_with(spool_prefix) || !name.ends_with(spool_ext)) {
+                continue;
+            }
+            fs::remove(entry.path(), ec);
+        }
+        files_.clear();
+        current_file_num_ = 0;
+        open_next_file();
         return;
     }
-
-    case MTREW:
-        if (read_write_) {
-            // In write mode, rewind-to-BOT means:
-            // remove all existing .nts files, reset numbering, start fresh.
-            if (spool_fd_ >= 0) {
-                ::close(spool_fd_);
-                spool_fd_ = -1;
-            }
-            std::error_code ec;
-            if (!current_path_.empty()) {
-                fs::remove(current_path_, ec);
-                current_path_.clear();
-            }
-            current_is_temp_ = false;
-            // Remove all finalized spool files.
-            for (auto &entry : fs::directory_iterator(root_)) {
-                if (!entry.is_regular_file())
-                    continue;
-                auto name = entry.path().filename().string();
-                if (name.size() <= spool_prefix.size() + spool_ext.size() ||
-                    !name.starts_with(spool_prefix) ||
-                    !name.ends_with(spool_ext)) {
-                    continue;
-                }
-                fs::remove(entry.path(), ec);
-            }
-            next_file_num_ = 0;
-            current_file_num_ = 0;
-            current_record_ = 0;
-            current_block_size_ = 0;
-            files_.clear();
-            current_path_ = spool_temp_path(root_, current_file_num_);
-            spool_fd_ = open_fd(current_path_, O_RDWR | O_CREAT | O_TRUNC);
-            current_is_temp_ = true;
-            return;
-        }
-        // Read mode: seek to start of current file.
-        if (spool_fd_ < 0) {
-            throw Error(device_path(), "rewind", EBADF);
-        }
-        if (::lseek(spool_fd_, 0, SEEK_SET) < 0) {
-            throw Error(device_path(), "lseek", errno);
-        }
-        current_record_ = 0;
-        return;
 
     case MTEOM:
         if (spool_fd_ < 0) {
@@ -458,50 +363,29 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
         }
         return;
 
-    case MTBSF:
-    case MTBSFM:
-        throw Error(device_path(), "filemark spacing", ENOTSUP);
-
-    case MTFSR:
-    case MTBSR:
-        throw Error(device_path(), "record spacing", ENOTSUP);
-
     default:
         throw Error(device_path(), "mtop", ENOTSUP);
     }
 }
 
-Position SpoolTapeDevice::do_tell() {
-    if (spool_fd_ < 0) {
-        throw Error(device_path(), "tell", EBADF);
-    }
-    off_t const pos = ::lseek(spool_fd_, 0, SEEK_CUR);
-    if (pos < 0) {
-        throw Error(device_path(), "tell", errno);
-    }
-    return Position{static_cast<long>(pos)};
-}
-
 Status SpoolTapeDevice::do_status() {
     long gstat = GMT_ONLINE;
-    if (read_write_) {
-        if (current_is_temp_ && spool_fd_ >= 0) {
-            off_t const cur = ::lseek(spool_fd_, 0, SEEK_CUR);
-            off_t const end = ::lseek(spool_fd_, 0, SEEK_END);
-            if (cur >= 0) {
-                ::lseek(spool_fd_, cur, SEEK_SET);
-            }
-            if (end == 0) {
-                gstat |= GMT_BOT | GMT_EOD;
-            } else {
-                gstat |= GMT_EOD;
-            }
+    if (spool_fd_ >= 0) {
+        off_t const cur = ::lseek(spool_fd_, 0, SEEK_CUR);
+        off_t const end = ::lseek(spool_fd_, 0, SEEK_END);
+        if (cur >= 0) {
+            ::lseek(spool_fd_, cur, SEEK_SET);
         }
-        // If there are finalized tape files on disk, the tape is no longer
-        // empty even if the current temp file is empty.
-        if (!files_.empty()) {
-            gstat &= ~GMT_EOD;
+        if (end == 0) {
+            gstat |= GMT_BOT | GMT_EOD;
+        } else {
+            gstat |= GMT_EOD;
         }
+    }
+    // Finalized tape files on disk mean the tape is not empty even when the
+    // pending file is.
+    if (!files_.empty()) {
+        gstat &= ~GMT_EOD;
     }
     return Status(0, 0, static_cast<long>(current_block_size_), gstat, 0,
                   static_cast<int>(current_file_num_),

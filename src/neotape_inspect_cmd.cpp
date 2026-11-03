@@ -49,7 +49,6 @@ using neotape::parse_media;
 struct Options {
     SourceLocator source;
     bool debug = false;
-    bool raw = false; // raw header dump
     bool require_signed = false;
     vector<string> verify_pubkey_paths;
     vector<neotape::SignifyPublicKey> verify_keys;
@@ -58,8 +57,7 @@ struct Options {
 void usage(const char *prog) {
     std::cerr << format("usage: {} -s|--source <spool:./dir|tape:/dev/nst0>\n"
                         "       [-k|--verify-pubkey <file.pub>]...\n"
-                        "       [-S|--require-signed] [-d|--debug] [-r|--raw] "
-                        "[-h]\n",
+                        "       [-S|--require-signed] [-d|--debug] [-h]\n",
                         prog);
 }
 
@@ -67,7 +65,6 @@ Options parse_args(int argc, char **argv) {
     static const struct option long_opts[] = {
         {"source", required_argument, nullptr, 's'},
         {"debug", no_argument, nullptr, 'd'},
-        {"raw", no_argument, nullptr, 'r'},
         {"verify-pubkey", required_argument, nullptr, 'k'},
         {"require-signed", no_argument, nullptr, 'S'},
         {"help", no_argument, nullptr, 'h'},
@@ -75,17 +72,13 @@ Options parse_args(int argc, char **argv) {
 
     Options opts;
     int c = 0;
-    while ((c = getopt_long(argc, argv, "s:drk:Sh", long_opts, nullptr)) !=
-           -1) {
+    while ((c = getopt_long(argc, argv, "s:dk:Sh", long_opts, nullptr)) != -1) {
         switch (c) {
         case 's':
             opts.source = parse_media(optarg);
             break;
         case 'd':
             opts.debug = true;
-            break;
-        case 'r':
-            opts.raw = true;
             break;
         case 'k':
             opts.verify_pubkey_paths.emplace_back(optarg);
@@ -113,9 +106,6 @@ Options parse_args(int argc, char **argv) {
 }
 
 // -----------------------------------------------------------------------
-// Frame reader abstraction
-// -----------------------------------------------------------------------
-
 // Format helpers
 // -----------------------------------------------------------------------
 
@@ -173,7 +163,6 @@ int do_inspect(const Options &opts) {
     neotape::RecordReader reader(opts.source);
 
     FrameValidator validator;
-    // Disable hash verification for raw dump mode.
     Stats stats;
     uint64_t frame_number = 0;
     bool starts_at_zero = false;
@@ -187,8 +176,7 @@ int do_inspect(const Options &opts) {
                         "{:>8s} | {:>7s} | {:>5s} | {:>5s}\n",
                         "#", "File", "GblSeq", "SliceSeq", "Channel",
                         "ChFrmSeq", "Payload", "Flags", "Hash");
-    std::cout << "------+------+--------+----------+-----------+----------+"
-                 "---------+-------+-------\n";
+    print_separator();
 
     for (;;) {
         auto rr = reader.next();

@@ -13,7 +13,6 @@ struct ExtractorOptions {
     std::string output_path;    // empty = stdout
     // Receives the concatenated ch_metadata payloads; empty = discard.
     std::string metadata_output_path;
-    bool verbose = false;
     bool require_signed = false;
     bool salvage = false;
     std::vector<SignifyPublicKey> verify_keys;

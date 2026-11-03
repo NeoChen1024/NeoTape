@@ -64,7 +64,8 @@ struct FrameHeader {
 };
 
 // Both directions enforce every frame-local header rule and throw
-// std::runtime_error on violation.
+// std::runtime_error on violation. Strings must fit their field with a
+// terminating NUL; they are never truncated.
 HeaderBytes serialize_frame_header(const FrameHeader &header);
 FrameHeader parse_fixed_header(const uint8_t *data, std::size_t size);
 // Whether a record begins with the NeoTape magic. Records before the first
@@ -73,8 +74,6 @@ FrameHeader parse_fixed_header(const uint8_t *data, std::size_t size);
 bool has_frame_magic(const void *data, std::size_t size);
 
 std::string channel_type_name(ChannelType type);
-std::string hash_hex(const Hash &hash);
-Hash blake3_hash(const uint8_t *data, std::size_t size);
 // BLAKE3 over the canonical image of a complete record.
 Hash compute_frame_hash(const uint8_t *data, std::size_t size);
 // The frame_hash the record would carry on volume `volume_seq_num`. A replay

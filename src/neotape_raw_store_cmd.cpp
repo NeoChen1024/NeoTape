@@ -38,10 +38,6 @@ struct Options {
     bool debug = false;
 };
 
-[[noreturn]] void fail_errno(const string &context) {
-    fail(format("{}: {}", context, std::strerror(errno)));
-}
-
 void usage(const char *prog) {
     std::cerr << format(
         "usage: {} -l|--listen <tcp://host:port|unix://path>\n"
@@ -126,6 +122,10 @@ Options parse_args(int argc, char **argv) {
     if (!neotape::valid_block_size(opts.volume_block_size)) {
         usage_error("invalid volume block size");
     }
+    if (opts.archive_name.size() >= neotape::archive_label_size) {
+        usage_error(format("--archive-name is longer than {} bytes",
+                           neotape::archive_label_size - 1));
+    }
     if (opts.sign_passphrase_file.has_value() &&
         !opts.sign_secret_key_file.has_value()) {
         usage_error("--sign-passphrase-file requires --sign-secret-key");
@@ -133,21 +133,6 @@ Options parse_args(int argc, char **argv) {
 
     return opts;
 }
-
-struct FileGuard {
-    FILE *file = nullptr;
-    bool owned = false;
-    FileGuard(FILE *f, bool own) : file(f), owned(own) {}
-    ~FileGuard() {
-        if (owned && file != nullptr) {
-            std::fclose(file);
-        }
-    }
-    FileGuard(const FileGuard &) = delete;
-    FileGuard &operator=(const FileGuard &) = delete;
-    FileGuard(FileGuard &&) = delete;
-    FileGuard &operator=(FileGuard &&) = delete;
-};
 
 void produce_raw_frames(FILE *input, const string &archive_uuid,
                         const Options &opts,
@@ -158,15 +143,8 @@ void produce_raw_frames(FILE *input, const string &archive_uuid,
     for (;;) {
         size_t const n = std::fread(buf.data(), 1, buf.size(), input);
         if (n > 0) {
-            auto frames =
-                builder.feed(std::span<const std::byte>(buf.data(), n));
-            for (auto &frame : frames) {
-                if (!queue.push(neotape::VolumeRecord{std::move(frame.record),
-                                                      frame.global_seq_num,
-                                                      false, false})) {
-                    throw std::runtime_error("frame consumer disconnected");
-                }
-            }
+            neotape::push_frames(
+                queue, builder.feed(std::span<const std::byte>(buf.data(), n)));
         }
         if (n < buf.size()) {
             if (std::ferror(input) != 0) {
@@ -177,20 +155,18 @@ void produce_raw_frames(FILE *input, const string &archive_uuid,
         }
     }
 
-    for (auto &final_frame : builder.flush()) {
-        if (!queue.push(neotape::VolumeRecord{std::move(final_frame.record),
-                                              final_frame.global_seq_num, false,
-                                              false})) {
-            throw std::runtime_error("frame consumer disconnected");
-        }
-    }
-    if (!queue.push(neotape::VolumeRecord{{}, 0, true, false})) {
-        throw std::runtime_error("frame consumer disconnected");
-    }
-    if (!queue.push(neotape::VolumeRecord{
-            {}, builder.next_global_seq_num(), false, true})) {
-        throw std::runtime_error("frame consumer disconnected");
-    }
+    neotape::push_frames(queue, builder.flush());
+    neotape::push_record(queue, neotape::VolumeRecord{.record = {},
+                                                      .global_seq_num = 0,
+                                                      .tape_eof = true,
+                                                      .done = false});
+    neotape::push_record(queue,
+                         neotape::VolumeRecord{
+                             .record = {},
+                             .global_seq_num = builder.next_global_seq_num(),
+                             .tape_eof = false,
+                             .done = true,
+                         });
 }
 
 neotape::VolumeServerSummary run_raw_store(FILE *input, const Options &opts) {
@@ -228,21 +204,13 @@ int main(int argc, char **argv) {
             fail("failed to ignore SIGPIPE");
         }
 
-        FILE *raw_input = nullptr;
-        bool owned = false;
-        if (opts.input_name == "-") {
-            raw_input = stdin;
-        } else {
-            raw_input = std::fopen(opts.input_name.c_str(), "rb");
-            if (raw_input == nullptr) {
-                fail_errno(string("open ") + opts.input_name);
-            }
-            owned = true;
-        }
-        FileGuard const input_guard(raw_input, owned);
+        neotape::StdioFile const input =
+            opts.input_name == "-"
+                ? neotape::StdioFile(stdin)
+                : neotape::StdioFile::open(opts.input_name, "rb");
 
         neotape::VolumeServerSummary const summary =
-            run_raw_store(raw_input, opts);
+            run_raw_store(input.get(), opts);
         neotape::write_diagnostic(
             format("neotape-raw-store: archive complete: volumes={} "
                    "committed_frames={} frame_transmissions={} connections={} "

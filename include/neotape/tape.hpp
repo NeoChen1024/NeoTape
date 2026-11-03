@@ -52,20 +52,12 @@ class Status final {
 };
 
 // -----------------------------------------------------------------------
-// Position — MTIOCPOS result
-// -----------------------------------------------------------------------
-
-struct Position final {
-    long block_no;
-};
-
-// -----------------------------------------------------------------------
 // TapeDevice — RAII tape device handle
 // -----------------------------------------------------------------------
 
 class TapeDevice {
   public:
-    explicit TapeDevice(std::string_view device_path, bool read_write = false);
+    TapeDevice(std::string_view device_path, bool read_write);
     virtual ~TapeDevice();
 
     TapeDevice(const TapeDevice &) = delete;
@@ -76,7 +68,6 @@ class TapeDevice {
 
     // -- accessors -----------------------------------------------------
 
-    // fd() is virtual — see declaration near bottom of class
     [[nodiscard]] const std::string &device_path() const noexcept {
         return device_path_;
     }
@@ -92,16 +83,8 @@ class TapeDevice {
 
     void rewind();
     void space_to_eod();
-
     void space_fwd(int count = 1);
-    void space_bwd(int count = 1);
-    void space_fwd_filemark(int count = 1);
-    void space_bwd_filemark(int count = 1);
     void space_fwd_records(int count = 1);
-    void space_bwd_records(int count = 1);
-
-    void seek_block(long block_no);
-    Position tell();
 
     // -- markers -------------------------------------------------------
 
@@ -117,30 +100,30 @@ class TapeDevice {
 
     Status status();
 
-    // fd() is virtual so test doubles can return a different fd
+    // Virtual so SpoolTapeDevice and test doubles can present their own fd.
     [[nodiscard]] virtual int fd() const noexcept { return fd_; }
 
   protected:
-    // Subclass constructor — skip char-device validation (for test doubles)
-    TapeDevice(int fd, std::string_view path, bool read_write);
+    // Subclass constructor without char-device validation, for
+    // SpoolTapeDevice and test doubles.
+    TapeDevice(int fd, std::string_view path);
 
     // All MTIOCTOP operations route through this single virtual dispatch.
     virtual void do_mtop(int op, int count);
 
-    // tell() and status() are separate ioctls (no mtop struct).
-    virtual Position do_tell();
+    // status() is a separate ioctl (no mtop struct).
     virtual Status do_status();
 
   private:
     int fd_ = -1;
     std::string device_path_;
-    bool read_write_ = false;
 };
 
+// Write-only tape emulation over a spool directory. Reading a spool goes
+// through neotape::RecordReader.
 class SpoolTapeDevice final : public TapeDevice {
   public:
-    explicit SpoolTapeDevice(const std::filesystem::path &root,
-                             bool read_write = false);
+    explicit SpoolTapeDevice(const std::filesystem::path &root);
     ~SpoolTapeDevice() override;
 
     SpoolTapeDevice(const SpoolTapeDevice &) = delete;
@@ -154,21 +137,19 @@ class SpoolTapeDevice final : public TapeDevice {
 
   protected:
     void do_mtop(int op, int count) override;
-    Position do_tell() override;
     Status do_status() override;
 
   private:
     std::filesystem::path root_;
     int spool_fd_ = -1;
-    bool read_write_ = false;
+    // Finalized tape files present when the device was opened.
     std::vector<std::filesystem::path> files_;
-    uint64_t next_file_num_ = 0;
     uint64_t current_file_num_ = 0;
     uint64_t current_record_ = 0;
     uint32_t current_block_size_ = 0;
-    bool current_is_temp_ = false;
     std::filesystem::path current_path_;
 
+    void open_next_file();
     void finalize_current_file();
 };
 

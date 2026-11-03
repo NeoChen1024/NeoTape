@@ -66,7 +66,6 @@ CliOptions parse_args(int argc, char **argv) {
                 break;
             case 'f':
                 opts.output = optarg;
-                opts.writer.output_name = optarg;
                 break;
             case 'P':
                 opts.writer.buffer_percent = static_cast<unsigned>(

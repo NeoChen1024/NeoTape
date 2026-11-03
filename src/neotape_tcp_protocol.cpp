@@ -51,12 +51,12 @@ void write_exact(int fd, const void *buf, std::size_t n) {
     }
 }
 
-} // namespace
-
 // valid message types: 0x01 through 0x07
 constexpr bool is_valid_message_type(uint8_t const b) {
     return b >= 0x01 && b <= 0x07;
 }
+
+} // namespace
 
 std::optional<Message> read_message(int fd) {
     std::byte header[message_header_size];

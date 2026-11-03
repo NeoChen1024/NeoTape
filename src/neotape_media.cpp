@@ -41,7 +41,7 @@ FrameHeader read_spool_file_header(const fs::path &path) {
 namespace {
 struct SpoolName {
     uint64_t number;
-    std::optional<uint64_t> slice;
+    std::optional<uint64_t> slice; // nullopt: archive-end file
 };
 
 std::optional<SpoolName> spool_name(const fs::path &path) {
@@ -95,43 +95,40 @@ std::optional<SpoolName> spool_name(const fs::path &path) {
 }
 } // namespace
 
-bool parse_spool_file_name(const fs::path &path, uint64_t &number) {
-    auto parsed = spool_name(path);
-    if (!parsed)
-        return false;
-    number = parsed->number;
-    return true;
+std::optional<uint64_t> spool_file_number(const fs::path &path) {
+    auto const parsed = spool_name(path);
+    return parsed ? std::optional(parsed->number) : std::nullopt;
 }
 
 std::vector<fs::path> scan_spool_files(const fs::path &root) {
-    std::vector<fs::path> files;
-    if (!fs::exists(root))
-        return files;
+    if (!fs::is_directory(root))
+        throw std::runtime_error("spool directory does not exist: " +
+                                 root.string());
+    std::vector<std::pair<uint64_t, fs::path>> numbered;
     for (const auto &entry : fs::directory_iterator(root)) {
-        uint64_t n;
-        if (entry.is_regular_file() && parse_spool_file_name(entry.path(), n))
-            files.push_back(entry.path());
+        if (!entry.is_regular_file())
+            continue;
+        if (auto const number = spool_file_number(entry.path()))
+            numbered.emplace_back(*number, entry.path());
     }
-    std::ranges::sort(files, [](const auto &a, const auto &b) {
-        uint64_t x = 0, y = 0;
-        parse_spool_file_name(a, x);
-        parse_spool_file_name(b, y);
-        return x != y ? x < y : a < b;
-    });
-    for (std::size_t i = 1; i < files.size(); ++i) {
-        uint64_t previous = 0, current = 0;
-        parse_spool_file_name(files[i - 1], previous);
-        parse_spool_file_name(files[i], current);
+    std::ranges::sort(numbered);
+    for (std::size_t i = 1; i < numbered.size(); ++i) {
+        auto const [previous, previous_path] = numbered[i - 1];
+        auto const [current, current_path] = numbered[i];
         if (previous == current)
             throw std::runtime_error(
                 format("duplicate spool file number {}: {} and {}", current,
-                       files[i - 1].filename().string(),
-                       files[i].filename().string()));
+                       previous_path.filename().string(),
+                       current_path.filename().string()));
         if (current - previous > 1)
             std::cerr << format(
                 "neotape: missing spool file numbers between {} and {}\n",
                 previous, current);
     }
+    std::vector<fs::path> files;
+    files.reserve(numbered.size());
+    for (auto &[number, path] : numbered)
+        files.push_back(std::move(path));
     return files;
 }
 
@@ -163,7 +160,10 @@ void RecordReader::open_spool() {
     if (spool_fd_ < 0)
         throw std::runtime_error(format("open {}: {}", files_[index_].string(),
                                         std::strerror(errno)));
-    parse_spool_file_name(files_[index_], file_num_);
+    // scan_spool_files only lists names that parse.
+    SpoolName const name = *spool_name(files_[index_]);
+    file_num_ = name.number;
+    file_slice_ = name.slice;
 }
 
 RecordReader::RecordReader(const MediaLocator &source) {
@@ -183,9 +183,6 @@ RecordReader::RecordReader(const MediaLocator &source) {
         }
         buffer_.resize(max_block_size);
     } else if (source.kind == MediaLocator::spool) {
-        if (!fs::exists(source.path))
-            throw std::runtime_error("spool directory does not exist: " +
-                                     source.path);
         files_ = scan_spool_files(source.path);
         open_spool();
     } else
@@ -306,27 +303,20 @@ MediaRecord RecordReader::next() {
     }
     if (n != fixed_header_size)
         throw std::runtime_error("truncated header in " + result.source_name);
-    size_t size = spool_block_size_;
-    try {
-        auto header = parse_fixed_header(
-            reinterpret_cast<const uint8_t *>(result.record.data()),
-            result.record.size());
-        if (!spool_block_size_)
-            spool_block_size_ = decoded_block_size(header);
-        size = spool_block_size_;
-    } catch (...) {
-        if (!spool_block_size_)
-            throw;
-        size = spool_block_size_;
-    }
+    auto const *data = reinterpret_cast<const uint8_t *>(result.record.data());
+    // The first header of an archive establishes the record size; later
+    // records keep that framing even when their own header is unreadable.
+    if (!spool_block_size_)
+        spool_block_size_ =
+            decoded_block_size(parse_fixed_header(data, result.record.size()));
+    size_t const size = spool_block_size_;
     result.record.resize(size);
+    data = reinterpret_cast<const uint8_t *>(result.record.data());
     if (read_stream(spool_fd_, result.record.data() + fixed_header_size,
                     size - fixed_header_size) != size - fixed_header_size)
         throw std::runtime_error("truncated record in " + result.source_name);
     std::optional<FrameHeader> valid_header;
     try {
-        auto const *data =
-            reinterpret_cast<const uint8_t *>(result.record.data());
         auto frame = check_frame(data, result.record.size());
         if (frame.hash_ok)
             valid_header = std::move(frame.header);
@@ -334,10 +324,9 @@ MediaRecord RecordReader::next() {
         // Retain known framing across an unavailable header.
     }
     if (valid_header) {
-        auto name = spool_name(files_[index_]);
         bool const end = valid_header->channel_type == ChannelType::ARCHIVE_END;
-        if (end == name->slice.has_value() ||
-            (name->slice && *name->slice != valid_header->slice_seq_num))
+        if (end == file_slice_.has_value() ||
+            (file_slice_ && *file_slice_ != valid_header->slice_seq_num))
             throw std::runtime_error(
                 "spool filename disagrees with frame header: " +
                 result.source_name);

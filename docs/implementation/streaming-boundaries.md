@@ -7,9 +7,9 @@ CLI and streaming refactor; its work log is in git history.
 
 - Bounded asynchronous output with ACK-based retention and back-pressure.
 - Writer exit codes 0/1/2/3 and the archiver's mbuffer-style progress line.
-- `TapeDevice` keeps forward and backward tape-file positioning for future
-  slice checkpoints. `RecordSink` narrows streaming writes only; it does not
-  remove media control.
+- `TapeDevice` keeps the positioning the tools use (rewind, space to EOD,
+  forward filemarks and records). `RecordSink` narrows streaming writes
+  only; it does not remove media control.
 - `neotape-scan` reads only the first record of each tape file, and
   `neotape-dump` copies without validation.
 - Mechanisms are shared; validation and reporting policy stay with each tool.
@@ -31,8 +31,8 @@ waiters and a blocked socket receiver. Successful write is not a new durability
 guarantee: tape/spool persistence semantics remain those of the existing backend.
 Progress snapshots in the writer are taken under one state lock.
 
-Positioning remains available through `TapeDevice::space_fwd`,
-`space_bwd`, `space_fwd_filemark`, `space_bwd_filemark`, rewind and seek.
+`TapeDevice` keeps only the positioning the tools use: `rewind`,
+`space_to_eod`, `space_fwd` (filemarks) and `space_fwd_records`.
 Resuming an interrupted archive does not use them: the operator positions the
 medium and `neotape-write --resume-mode` writes from there, while the archiver
 restores identity and sequence state from its resume file (see the

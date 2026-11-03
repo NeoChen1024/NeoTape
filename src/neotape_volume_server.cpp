@@ -28,15 +28,6 @@ using neotape::tcp::MessageType;
 using std::format;
 using std::string;
 
-std::vector<std::byte>
-detached_signature_payload(const DetachedSignatureBytes &signature) {
-    std::vector<std::byte> payload(signature.size());
-    for (std::size_t i = 0; i < signature.size(); ++i) {
-        payload[i] = static_cast<std::byte>(signature[i]);
-    }
-    return payload;
-}
-
 bool handle_auth_challenge(int client, const VolumeServerOptions &opts,
                            const std::vector<std::byte> &payload) {
     if (payload.size() != auth_nonce_size) {
@@ -51,14 +42,11 @@ bool handle_auth_challenge(int client, const VolumeServerOptions &opts,
     }
 
     AuthNonceBytes nonce{};
-    for (std::size_t i = 0; i < nonce.size(); ++i) {
-        nonce[i] = static_cast<uint8_t>(payload[i]);
-    }
+    std::ranges::transform(payload, nonce.begin(), std::to_integer<uint8_t>);
     DetachedSignatureBytes const signature =
         sign_auth_nonce(*opts.frame_signer, nonce);
-    neotape::tcp::write_message(client,
-                                Message{MessageType::auth_response,
-                                        detached_signature_payload(signature)});
+    neotape::tcp::write_message(
+        client, Message{MessageType::auth_response, bytes_payload(signature)});
     return true;
 }
 
@@ -101,6 +89,21 @@ int process_ack_payload(int client, const VolumeServerOptions &opts,
 }
 
 } // namespace
+
+void push_record(VolumeRecordQueue &queue, VolumeRecord record) {
+    if (!queue.push(std::move(record))) {
+        throw std::runtime_error("frame consumer disconnected");
+    }
+}
+
+void push_frames(VolumeRecordQueue &queue, std::vector<BuiltFrame> frames) {
+    for (auto &frame : frames) {
+        push_record(queue, VolumeRecord{.record = std::move(frame.record),
+                                        .global_seq_num = frame.global_seq_num,
+                                        .tape_eof = false,
+                                        .done = false});
+    }
+}
 
 VolumeServeResult
 serve_volume_client(int client, const VolumeServerOptions &opts,

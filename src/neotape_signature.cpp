@@ -117,17 +117,15 @@ ArmoredBlob parse_armored_blob(const string &path) {
 }
 
 template <size_t N>
-array<uint8_t, N> decode_armored_payload(const string &path, string *comment) {
-    ArmoredBlob const blob = parse_armored_blob(path);
+array<uint8_t, N> decode_armored_payload(const string &path, string &comment) {
+    ArmoredBlob blob = parse_armored_blob(path);
     array<uint8_t, N> decoded{};
     int const rv =
         neotape_b64_pton(blob.base64.c_str(), decoded.data(), decoded.size());
     if (rv != static_cast<int>(N)) {
         fail_parse(path, "invalid base64 payload");
     }
-    if (comment != nullptr) {
-        *comment = blob.comment;
-    }
+    comment = std::move(blob.comment);
     return decoded;
 }
 
@@ -252,7 +250,7 @@ AuthNonceBytes random_auth_nonce() {
 SignifyPublicKey load_signify_public_key(const string &path) {
     string comment;
     array<uint8_t, public_key_blob_size> const blob =
-        decode_armored_payload<public_key_blob_size>(path, &comment);
+        decode_armored_payload<public_key_blob_size>(path, comment);
 
     verify_algorithms(path, pkalg, std::span(blob).subspan(0, 2), "public key");
 
@@ -269,7 +267,7 @@ SignifySecretKey load_signify_secret_key(const string &path,
                                          std::optional<string> passphrase) {
     string comment;
     array<uint8_t, secret_key_blob_size> blob =
-        decode_armored_payload<secret_key_blob_size>(path, &comment);
+        decode_armored_payload<secret_key_blob_size>(path, comment);
 
     verify_algorithms(path, pkalg, std::span(blob).subspan(0, 2), "secret key");
     verify_algorithms(path, kdfalg, std::span(blob).subspan(2, 2),
@@ -289,15 +287,14 @@ SignifySecretKey load_signify_secret_key(const string &path,
         if (passphrase->empty()) {
             fail_parse(path, "empty passphrase for encrypted secret key");
         }
-        if (bcrypt_pbkdf(passphrase->data(), passphrase->size(),
-                         blob.data() + 8, salt_size, xor_key.data(),
-                         xor_key.size(), rounds) == -1) {
-            zeroize_string(*passphrase);
+        int const derived = bcrypt_pbkdf(
+            passphrase->data(), passphrase->size(), blob.data() + 8, salt_size,
+            xor_key.data(), xor_key.size(), rounds);
+        zeroize_string(*passphrase);
+        if (derived == -1) {
             throw std::runtime_error(format("{}: bcrypt_pbkdf failed", path));
         }
-        zeroize_string(*passphrase);
-    }
-    if (passphrase.has_value()) {
+    } else if (passphrase.has_value()) {
         zeroize_string(*passphrase);
     }
 

@@ -34,16 +34,16 @@ using std::string;
 using std::vector;
 
 struct ExtractorState {
+    ExtractorState(const ExtractorOptions &options, FILE *metadata)
+        : opts(options), metadata_output(metadata) {}
+    const ExtractorOptions &opts;
+    FILE *metadata_output; // null: discard ch_metadata payloads
     FrameValidator validator;
     bool saw_archive_end = false;
-    bool require_signed = false;
-    vector<SignifyPublicKey> verify_keys;
     bool warned_signed_unverified = false;
-    bool salvage = false;
     std::optional<uint64_t> output_slice_seq;
     uint64_t processed_frames = 0;
     bool fatal_error = false;
-    FILE *metadata_output = nullptr;
 };
 
 [[nodiscard]] bool write_output(FILE *output, const uint8_t *data,
@@ -83,13 +83,14 @@ struct ExtractorState {
                                  const CheckedFrame &frame, FILE *output) {
     FrameHeader const &header = frame.header;
     uint64_t const prev_slice_seq = state.validator.current_slice_seq_num;
-    if (!frame.hash_ok && !state.verify_keys.empty() &&
+    bool const salvage = state.opts.salvage;
+    if (!frame.hash_ok && !state.opts.verify_keys.empty() &&
         has_frame_flag_signed(header.flags)) {
         std::cerr << "neotape-extractor: signed frame hash mismatch\n";
         return false;
     }
     auto const signature_validation = validate_frame_signature(
-        header, state.verify_keys, state.require_signed);
+        header, state.opts.verify_keys, state.opts.require_signed);
     if (signature_validation.error) {
         std::cerr << format("neotape-extractor: {}\n",
                             *signature_validation.error);
@@ -105,13 +106,13 @@ struct ExtractorState {
     }
 
     auto const validation =
-        state.salvage ? state.validator.validate_salvage_frame(frame, data)
-                      : state.validator.validate_restore_frame(frame, data);
+        salvage ? state.validator.validate_salvage_frame(frame, data)
+                : state.validator.validate_restore_frame(frame, data);
     if (validation.status == RestoreFrameValidationStatus::fatal) {
         std::cerr << format("neotape-extractor: {}{}\n",
-                            state.salvage ? "salvage skipped frame: " : "",
+                            salvage ? "salvage skipped frame: " : "",
                             validation.message);
-        return state.salvage;
+        return salvage;
     }
     if (validation.status == RestoreFrameValidationStatus::warning)
         std::cerr << format("neotape-extractor: warning: {}\n",
@@ -134,8 +135,8 @@ struct ExtractorState {
                (!has_frame_flag_end(header.flags) ||
                 flush_output(state.metadata_output));
     }
-    if ((!state.salvage && state.validator.saw_archive_end) ||
-        (state.salvage && header.channel_type == ChannelType::ARCHIVE_END)) {
+    if ((!salvage && state.validator.saw_archive_end) ||
+        (salvage && header.channel_type == ChannelType::ARCHIVE_END)) {
         if (!flush_output(output)) {
             return false;
         }
@@ -145,9 +146,9 @@ struct ExtractorState {
 
     // Preserve a useful output boundary for pipes and regular files.
     bool const slice_changed =
-        state.salvage ? state.output_slice_seq.has_value() &&
-                            header.slice_seq_num != *state.output_slice_seq
-                      : header.slice_seq_num != prev_slice_seq;
+        salvage ? state.output_slice_seq.has_value() &&
+                      header.slice_seq_num != *state.output_slice_seq
+                : header.slice_seq_num != prev_slice_seq;
     if (slice_changed) {
         if (!flush_output(output)) {
             return false;
@@ -229,19 +230,11 @@ struct ExtractorState {
                 // Reader is about to disconnect — return to accept next reader.
                 return false;
             }
-            case MessageType::error: {
-                string reason;
-                reason.reserve(resp->payload.size());
-                for (std::byte const b : resp->payload) {
-                    reason.push_back(static_cast<char>(b));
-                }
-                if (reason.empty()) {
-                    reason = "reader reported error";
-                }
-                std::cerr << format("neotape-extractor: reader error: {}\n",
-                                    reason);
+            case MessageType::error:
+                std::cerr << format(
+                    "neotape-extractor: reader error: {}\n",
+                    error_payload_text(resp->payload, "reader reported error"));
                 return false;
-            }
             case MessageType::next_frame:
             case MessageType::ack_frame:
             case MessageType::auth_challenge:
@@ -265,52 +258,26 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
                         opts.listen_address);
 
     // Open output file once if a path is given; otherwise write to stdout.
-    FILE *output = stdout;
-    bool output_owned = false;
+    StdioFile output = opts.output_path.empty()
+                           ? StdioFile(stdout)
+                           : StdioFile::open(opts.output_path, "wb");
     if (!opts.output_path.empty()) {
-        output = std::fopen(opts.output_path.c_str(), "wb");
-        if (output == nullptr) {
-            throw std::runtime_error(
-                format("open {}: {}", opts.output_path, std::strerror(errno)));
-        }
-        output_owned = true;
         std::cerr << format("neotape-extractor: writing to {}\n",
                             opts.output_path);
     }
-
-    struct OutputGuard {
-        FILE *file;
-        bool owned;
-        ~OutputGuard() {
-            if (owned && file != nullptr) {
-                std::fclose(file);
-            }
-        }
-    };
-    OutputGuard const output_guard{output, output_owned};
-
-    FILE *metadata_output = nullptr;
+    std::optional<StdioFile> metadata_output;
     if (!opts.metadata_output_path.empty()) {
-        metadata_output = std::fopen(opts.metadata_output_path.c_str(), "wb");
-        if (metadata_output == nullptr) {
-            throw std::runtime_error(format("open {}: {}",
-                                            opts.metadata_output_path,
-                                            std::strerror(errno)));
-        }
+        metadata_output.emplace(
+            StdioFile::open(opts.metadata_output_path, "wb"));
     }
-    OutputGuard const metadata_guard{metadata_output, true};
 
-    ExtractorState state;
-    state.metadata_output = metadata_output;
-    state.require_signed = opts.require_signed;
-    state.verify_keys = opts.verify_keys;
-    state.salvage = opts.salvage;
-    if (state.salvage) {
+    ExtractorState state(opts,
+                         metadata_output ? metadata_output->get() : nullptr);
+    if (opts.salvage) {
         std::cerr << "neotape-extractor: warning: SALVAGE MODE: output is not "
                      "fully verified; "
                      "invalid frames will be skipped\n";
     }
-    uint64_t total_frames = 0;
 
     while (!state.saw_archive_end) {
         int const client = accept(listener, nullptr, nullptr);
@@ -322,25 +289,24 @@ uint64_t run_tcp_extractor(const ExtractorOptions &opts) {
         NEOTAPE_DEBUG("neotape-extractor: accepted reader connection\n");
         FdGuard const client_guard(client);
 
-        bool const complete = serve_client(client, state, output);
+        bool const complete = serve_client(client, state, output.get());
         if (state.fatal_error) {
             throw std::runtime_error("unrecoverable frame validation failure");
         }
         if (complete) {
-            total_frames = state.processed_frames;
-            return total_frames;
+            break;
         }
-
-        // Connection dropped before completion.  Count the frames we
-        // validated (the next expected seq minus 1), then wait for the
-        // next reader to reconnect.
-        total_frames = state.processed_frames;
         std::cerr << format("neotape-extractor: reader disconnected: "
                             "processed_frames={}; waiting for next reader\n",
-                            total_frames);
+                            state.processed_frames);
     }
-
-    return total_frames;
+    // Frames were flushed at archive_end; closing reports any error that
+    // flush could not see.
+    if (metadata_output) {
+        metadata_output->close(opts.metadata_output_path);
+    }
+    output.close(opts.output_path.empty() ? "stdout" : opts.output_path);
+    return state.processed_frames;
 }
 
 } // namespace neotape

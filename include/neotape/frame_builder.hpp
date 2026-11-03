@@ -15,11 +15,6 @@ namespace neotape {
 
 // ── Frame record helpers ──────────────────────────────────────────────
 
-// Copy serialized header bytes into the first fixed_header_size bytes of
-// a record vector.
-void copy_header_to_record(const HeaderBytes &header,
-                           std::vector<std::byte> &record);
-
 // Serialize the header into the record, compute BLAKE3 frame hash over
 // the full record, optionally sign `frame_hash`, and patch the final
 // header back into the record in-place.

@@ -17,7 +17,6 @@ struct PaxChunk {
 };
 
 struct PaxWriterOptions {
-    std::string output_name = "-";
     std::vector<std::string> sources;
     std::optional<std::filesystem::path> plan_path;
     // Plan mode: emit only slices from this one on. Earlier entries are

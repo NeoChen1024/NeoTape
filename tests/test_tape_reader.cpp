@@ -84,10 +84,6 @@ extern "C" int __wrap_ioctl(int fd, unsigned long request, ...) {
         ++cursor;
         return 0;
     }
-    if (fd == tape_fd && request == MTIOCPOS) {
-        errno = EIO;
-        return -1;
-    }
     return __real_ioctl(fd, request, argument);
 }
 

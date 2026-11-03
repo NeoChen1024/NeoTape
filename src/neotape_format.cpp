@@ -76,11 +76,20 @@ uint64_t get_u64(const uint8_t *bytes, size_t offset) {
     return value;
 }
 
+void validate_fixed_string(string_view value, size_t field_size,
+                           string_view name) {
+    if (value.size() >= field_size)
+        throw std::runtime_error(
+            std::format("{} longer than {} bytes", name, field_size - 1));
+    if (value.find('\0') != string_view::npos)
+        throw std::runtime_error(std::format("{} contains a NUL byte", name));
+}
+
 void put_fixed_string(HeaderBytes &bytes, size_t offset, size_t field_size,
                       string_view value) {
-    const size_t n = std::min(value.size(), field_size - 1);
-    std::memcpy(bytes.data() + offset, value.data(), n);
-    std::memset(bytes.data() + offset + n, 0, field_size - n);
+    std::memcpy(bytes.data() + offset, value.data(), value.size());
+    std::memset(bytes.data() + offset + value.size(), 0,
+                field_size - value.size());
 }
 
 string get_fixed_string(const uint8_t *bytes, size_t offset,
@@ -204,6 +213,11 @@ void validate_header(const FrameHeader &header) {
 } // namespace
 
 HeaderBytes serialize_frame_header(const FrameHeader &header) {
+    get_channel_type(static_cast<uint8_t>(header.channel_type));
+    validate_fixed_string(header.archive_uuid, nt_uuid_size, "archive UUID");
+    validate_fixed_string(header.archive_label, archive_label_size,
+                          "archive label");
+    validate_header(header);
     validate_serialized_signature(header);
 
     HeaderBytes bytes{};
@@ -229,8 +243,6 @@ HeaderBytes serialize_frame_header(const FrameHeader &header) {
               bytes.begin() + static_cast<std::ptrdiff_t>(off_signature));
     std::copy(header.frame_hash.begin(), header.frame_hash.end(),
               bytes.begin() + static_cast<std::ptrdiff_t>(off_frame_hash));
-
-    parse_fixed_header(bytes.data(), bytes.size());
     return bytes;
 }
 
@@ -289,17 +301,6 @@ std::string channel_type_name(ChannelType type) {
         return "ARCHIVE_END";
     }
     return "unknown";
-}
-
-std::string hash_hex(const Hash &hash) { return hex_encode(hash); }
-
-Hash blake3_hash(const uint8_t *data, std::size_t size) {
-    Hash hash{};
-    blake3_hasher hasher;
-    blake3_hasher_init(&hasher);
-    blake3_hasher_update(&hasher, data, size);
-    blake3_hasher_finalize(&hasher, hash.data(), hash.size());
-    return hash;
 }
 
 Hash frame_hash_with_volume_seq(const uint8_t *data, std::size_t size,

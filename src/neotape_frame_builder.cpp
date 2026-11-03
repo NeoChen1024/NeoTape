@@ -10,12 +10,16 @@ namespace neotape {
 
 // ── Frame record helpers ──────────────────────────────────────────────
 
+namespace {
+
 void copy_header_to_record(const HeaderBytes &header,
                            std::vector<std::byte> &record) {
     for (std::size_t i = 0; i < header.size(); ++i) {
         record[i] = static_cast<std::byte>(header[i]);
     }
 }
+
+} // namespace
 
 void finalize_record(FrameHeader &header, std::vector<std::byte> &record,
                      const SignifySecretKey *signer) {
@@ -75,8 +79,7 @@ std::vector<std::byte> build_archive_end_record(
 }
 
 FrameBuilder::FrameBuilder(uint32_t block_size, std::string archive_uuid,
-                           std::string archive_name,
-                           uint64_t first_global_seq)
+                           std::string archive_name, uint64_t first_global_seq)
     : block_size_(block_size), archive_uuid_(std::move(archive_uuid)),
       archive_name_(std::move(archive_name)),
       global_frame_seq_num_(first_global_seq) {}

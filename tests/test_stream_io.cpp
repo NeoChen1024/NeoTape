@@ -126,14 +126,10 @@ TEST_CASE("plan reader rejects overflow negative IDs and unknown kinds",
 
 TEST_CASE("spool filename grammar rejects overflow and ignores unrelated files",
           "[unit][media]") {
-    uint64_t number = 0;
-    REQUIRE(neotape::parse_spool_file_name(
-        "neotape-00012.slice-000003-copy_1.nts", number));
-    REQUIRE(number == 12);
-    REQUIRE_FALSE(
-        neotape::parse_spool_file_name("neotape-12.unknown.nts", number));
-    REQUIRE_FALSE(
-        neotape::parse_spool_file_name("neotape-12.slice-.nts", number));
-    REQUIRE_THROWS(neotape::parse_spool_file_name(
-        "neotape-18446744073709551616.archive-end.nts", number));
+    REQUIRE(neotape::spool_file_number(
+                "neotape-00012.slice-000003-copy_1.nts") == 12);
+    REQUIRE_FALSE(neotape::spool_file_number("neotape-12.unknown.nts"));
+    REQUIRE_FALSE(neotape::spool_file_number("neotape-12.slice-.nts"));
+    REQUIRE_THROWS(neotape::spool_file_number(
+        "neotape-18446744073709551616.archive-end.nts"));
 }

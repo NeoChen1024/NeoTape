@@ -7,6 +7,7 @@
 #include "neotape/tcp_protocol.hpp"
 #include "neotape/writer.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
@@ -123,67 +124,53 @@ Options parse_args(int argc, char **argv) {
     int c = 0;
     while ((c = getopt_long(argc, argv, "s:t:eacR:r:B:m:dk:h", long_opts,
                             nullptr)) != -1) {
-        switch (c) {
-        case 's':
-            opts.source_address = optarg;
-            break;
-        case 't':
-            opts.target = neotape::parse_media(optarg, true);
-            break;
-        case 'e':
-            opts.erase = true;
-            break;
-        case 'a':
-            opts.append = true;
-            break;
-        case 'c':
-            opts.resume_mode = true;
-            break;
-        case 'R':
-            opts.recovery_bundle = fs::path(optarg);
-            break;
-        case 'r': {
-            try {
+        try {
+            switch (c) {
+            case 's':
+                opts.source_address = optarg;
+                break;
+            case 't':
+                opts.target = neotape::parse_media(optarg, true);
+                break;
+            case 'e':
+                opts.erase = true;
+                break;
+            case 'a':
+                opts.append = true;
+                break;
+            case 'c':
+                opts.resume_mode = true;
+                break;
+            case 'R':
+                opts.recovery_bundle = fs::path(optarg);
+                break;
+            case 'r':
                 opts.recovery_bundle_block_size =
                     neotape::parse_size(optarg, "recovery bundle block size");
-            } catch (const std::exception &e) {
-                std::cerr << format("neotape-write: {}\n", e.what());
-                std::exit(2);
-            }
-            break;
-        }
-        case 'B': {
-            try {
+                break;
+            case 'B':
                 opts.output_buffer_size = static_cast<size_t>(
                     neotape::parse_size(optarg, "output buffer size",
                                         std::numeric_limits<size_t>::max()));
-            } catch (const std::exception &e) {
-                std::cerr << format("neotape-write: {}\n", e.what());
-                std::exit(2);
-            }
-            break;
-        }
-        case 'm': {
-            try {
+                break;
+            case 'm':
                 opts.max_volume_bytes =
                     neotape::parse_size(optarg, "max volume bytes");
-            } catch (const std::exception &e) {
-                std::cerr << format("neotape-write: {}\n", e.what());
+                break;
+            case 'd':
+                opts.debug = true;
+                break;
+            case 'k':
+                opts.verify_pubkey_paths.emplace_back(optarg);
+                break;
+            case 'h':
+                usage(argv[0]);
+                std::exit(0);
+            case '?':
                 std::exit(2);
             }
-            break;
-        }
-        case 'd':
-            opts.debug = true;
-            break;
-        case 'k':
-            opts.verify_pubkey_paths.emplace_back(optarg);
-            break;
-        case 'h':
-            usage(argv[0]);
-            std::exit(0);
-        case '?':
-            std::exit(2);
+        } catch (const std::exception &e) {
+            usage_error(e.what());
         }
     }
 
@@ -255,40 +242,15 @@ Options parse_args(int argc, char **argv) {
     return opts;
 }
 
-string decode_error_payload(const vector<std::byte> &payload,
-                            string_view fallback) {
-    string reason;
-    reason.reserve(payload.size());
-    for (std::byte const b : payload) {
-        reason.push_back(static_cast<char>(b));
-    }
-    if (reason.empty()) {
-        reason = fallback;
-    }
-    return reason;
-}
-
-std::vector<std::byte>
-auth_challenge_payload(const neotape::AuthNonceBytes &nonce) {
-    std::vector<std::byte> payload(nonce.size());
-    for (std::size_t i = 0; i < nonce.size(); ++i) {
-        payload[i] = static_cast<std::byte>(nonce[i]);
-    }
-    return payload;
-}
-
 neotape::DetachedSignatureBytes
 decode_auth_response_payload(const vector<std::byte> &payload) {
-    if (payload.size() != neotape::DetachedSignatureBytes{}.size()) {
-        throw std::runtime_error(
-            format("auth_response payload must be {} bytes",
-                   neotape::DetachedSignatureBytes{}.size()));
-    }
-
     neotape::DetachedSignatureBytes signature{};
-    for (std::size_t i = 0; i < signature.size(); ++i) {
-        signature[i] = static_cast<uint8_t>(payload[i]);
+    if (payload.size() != signature.size()) {
+        throw std::runtime_error(
+            format("auth_response payload must be {} bytes", signature.size()));
     }
+    std::ranges::transform(payload, signature.begin(),
+                           std::to_integer<uint8_t>);
     return signature;
 }
 
@@ -301,7 +263,7 @@ void authenticate_source_server(int fd,
     neotape::AuthNonceBytes const nonce = neotape::random_auth_nonce();
     neotape::tcp::write_message(
         fd, neotape::tcp::Message{neotape::tcp::MessageType::auth_challenge,
-                                  auth_challenge_payload(nonce)});
+                                  neotape::bytes_payload(nonce)});
     auto response = neotape::tcp::read_message(fd);
     if (!response.has_value()) {
         throw std::runtime_error("unexpected disconnect during auth handshake");
@@ -326,8 +288,8 @@ void authenticate_source_server(int fd,
         return;
     }
     case MessageType::error:
-        throw std::runtime_error(
-            decode_error_payload(response->payload, "archiver auth failure"));
+        throw std::runtime_error(neotape::error_payload_text(
+            response->payload, "archiver auth failure"));
     default:
         throw std::runtime_error(
             format("expected auth_response, got {}",
@@ -452,7 +414,7 @@ int main(int argc, char **argv) {
                          "--erase or --append");
                 }
                 dev = std::make_unique<mt::SpoolTapeDevice>(
-                    std::filesystem::path(opts.target.path), true);
+                    std::filesystem::path(opts.target.path));
             }
 
             // Default policy: refuse to overwrite existing tape content.

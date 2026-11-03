@@ -35,7 +35,7 @@ if(BUILD_TESTING)
         NEOTAPE_PAX_PIPELINE_TEST="$<TARGET_FILE:test_pax_pipeline>"
     )
     neotape_unit_test(test_tcp_protocol test_tcp_protocol.cpp neotape_protocol)
-    neotape_unit_test(test_format test_format.cpp neotape_format)
+    neotape_unit_test(test_format test_format.cpp neotape_format NeoTape::Blake3)
     neotape_unit_test(test_validate test_validate.cpp neotape_validation neotape_frame_builder)
     neotape_unit_test(test_signature test_signature.cpp
         neotape_frame_builder neotape_signature NeoTape::Signify)

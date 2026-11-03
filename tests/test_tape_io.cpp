@@ -17,7 +17,7 @@ int write_error = EIO;
 bool interrupt_first = false, fail_close = false;
 
 struct Device : mt::TapeDevice {
-    explicit Device(int fd) : TapeDevice(fd, "test-tape", true) {}
+    explicit Device(int fd) : TapeDevice(fd, "test-tape") {}
 };
 struct Injection {
     Injection() {
@@ -108,7 +108,7 @@ TEST_CASE("tape surfaces close failures without retrying released descriptors",
 TEST_CASE("tape flush errors leave the just-written record unacknowledged",
           "[unit][tape]") {
     struct DeferredFailure : mt::TapeDevice {
-        DeferredFailure() : TapeDevice(-1, "deferred-error-tape", true) {}
+        DeferredFailure() : TapeDevice(-1, "deferred-error-tape") {}
         int writes = 0, status_calls = 0;
         void write_record(const void *, std::size_t) override { ++writes; }
         mt::Status do_status() override {
@@ -127,7 +127,7 @@ TEST_CASE("tape flush errors leave the just-written record unacknowledged",
 TEST_CASE("tape requests variable block mode from the st driver",
           "[unit][tape]") {
     struct Recorder : mt::TapeDevice {
-        Recorder() : TapeDevice(-1, "recording-tape", true) {}
+        Recorder() : TapeDevice(-1, "recording-tape") {}
         std::vector<std::pair<int, int>> operations;
         void do_mtop(int op, int count) override {
             operations.emplace_back(op, count);

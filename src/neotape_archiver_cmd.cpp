@@ -167,6 +167,11 @@ Options parse_args(int argc, char **argv) {
     if (opts.listen_address.empty()) {
         fail("--listen is required");
     }
+    if (opts.archive_name &&
+        opts.archive_name->size() >= neotape::archive_label_size) {
+        usage_error(format("--archive-name is longer than {} bytes",
+                           neotape::archive_label_size - 1));
+    }
     if (opts.sign_passphrase_file.has_value() &&
         !opts.sign_secret_key_file.has_value()) {
         fail("--sign-passphrase-file requires --sign-secret-key");
@@ -195,22 +200,22 @@ Options parse_args(int argc, char **argv) {
 std::unique_ptr<neotape::ResumeLog>
 setup_resume(const Options &opts, neotape::TcpArchiverOptions &server_opts) {
     using neotape::ResumeHeader;
+    neotape::VolumeServerOptions &server = server_opts.server;
     const string &path = *opts.resume_file;
-    string const key_id =
-        server_opts.frame_signer
-            ? neotape::hex_encode(server_opts.frame_signer->key_id)
-            : string{};
+    string const key_id = server.frame_signer
+                              ? neotape::hex_encode(server.frame_signer->key_id)
+                              : string{};
     string const plan_hash = neotape::blake3_file_hex(*opts.pax.plan_path);
 
     if (!std::filesystem::exists(path)) {
-        server_opts.archive_uuid = neotape::make_uuid_v4();
+        server.archive_uuid = neotape::make_uuid_v4();
         return std::make_unique<neotape::ResumeLog>(
             path, ResumeHeader{
-                      .archive_uuid = *server_opts.archive_uuid,
-                      .block_size_kib = server_opts.volume_block_size / 1024,
+                      .archive_uuid = *server.archive_uuid,
+                      .block_size_kib = server.volume_block_size / 1024,
                       .sign_key_id = key_id,
                       .plan_blake3 = plan_hash,
-                      .archive_name = server_opts.archive_name,
+                      .archive_name = server.archive_name,
                   });
     }
 
@@ -252,12 +257,12 @@ setup_resume(const Options &opts, neotape::TcpArchiverOptions &server_opts) {
                    opts.pax.plan_path->string()));
     }
 
-    server_opts.archive_uuid = header.archive_uuid;
-    server_opts.archive_name = header.archive_name;
-    server_opts.volume_block_size = header.block_size_kib * 1024;
+    server.archive_uuid = header.archive_uuid;
+    server.archive_name = header.archive_name;
+    server.volume_block_size = header.block_size_kib * 1024;
     if (point) {
-        server_opts.first_global_seq = point->global_seq;
-        server_opts.initial_volume_seq_num = point->volume;
+        server.first_global_seq = point->global_seq;
+        server.initial_volume_seq_num = point->volume;
         server_opts.pax.first_slice = point->slice;
     }
     neotape::write_diagnostic(
@@ -284,16 +289,16 @@ int main(int argc, char **argv) {
         }
 
         neotape::TcpArchiverOptions server_opts;
-        server_opts.listen_address = opts.listen_address;
+        server_opts.server.listen_address = opts.listen_address;
         if (opts.volume_block_size)
-            server_opts.volume_block_size = *opts.volume_block_size;
-        server_opts.archive_name = opts.archive_name.value_or("archive");
-        server_opts.retention_frame_count = opts.retention_frame_count;
+            server_opts.server.volume_block_size = *opts.volume_block_size;
+        server_opts.server.archive_name = opts.archive_name.value_or("archive");
+        server_opts.server.retention_frame_count = opts.retention_frame_count;
         server_opts.pax = opts.pax;
         if (opts.write_plan_catalog)
             server_opts.write_plan_catalog = *opts.write_plan_catalog;
         if (opts.sign_secret_key_file.has_value()) {
-            server_opts.frame_signer = neotape::load_signify_secret_key(
+            server_opts.server.frame_signer = neotape::load_signify_secret_key(
                 *opts.sign_secret_key_file,
                 opts.sign_passphrase_file.has_value()
                     ? std::optional<string>(

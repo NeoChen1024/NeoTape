@@ -1,3 +1,4 @@
+#include "neotape/common.hpp"
 #include "neotape/format.hpp"
 #include "neotape/media.hpp"
 #include "neotape/signature.hpp"
@@ -105,7 +106,7 @@ int main(int argc, char **argv) {
                    << unsigned(header.channel_type) << '\t'
                    << header.channel_frame_seq_num << '\t'
                    << record.record.size() << '\t'
-                   << neotape::hash_hex(header.frame_hash) << '\n';
+                   << neotape::hex_encode(header.frame_hash) << '\n';
             ++count;
             bytes += record.record.size();
             last = header.global_frame_seq_num;

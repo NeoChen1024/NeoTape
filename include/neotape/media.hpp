@@ -3,6 +3,7 @@
 #include "neotape/format.hpp"
 #include "neotape/tape.hpp"
 #include <memory>
+#include <optional>
 
 namespace neotape {
 struct MediaLocator {
@@ -10,7 +11,10 @@ struct MediaLocator {
     std::string path;
 };
 MediaLocator parse_media(std::string_view text, bool allow_null = false);
-bool parse_spool_file_name(const std::filesystem::path &path, uint64_t &number);
+// The file number of a spool tape file name, or nullopt for any other name.
+std::optional<uint64_t> spool_file_number(const std::filesystem::path &path);
+// Spool tape files in file-number order. Throws when the directory is
+// missing or two files share a number.
 std::vector<std::filesystem::path>
 scan_spool_files(const std::filesystem::path &root);
 // Parse the fixed header of the first record in one spool file.
@@ -45,6 +49,8 @@ class RecordReader {
     std::vector<std::byte> buffer_;
     size_t index_ = 0;
     uint64_t file_num_ = 0;
+    // Slice named by the open spool file; nullopt names an archive-end file.
+    std::optional<uint64_t> file_slice_;
     int spool_fd_ = -1;
     bool ended_ = false;
     uint32_t spool_block_size_ = 0;

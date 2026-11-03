@@ -121,7 +121,6 @@ Options parse_args(int argc, char **argv) {
     Options opts;
     bool saw_chdir = false;
     int c = 0;
-    optind = 1;
     while ((c = getopt_long(argc, argv, "C:o:s:m:j:xvh", long_opts, nullptr)) !=
            -1) {
         try {
@@ -303,11 +302,13 @@ LstatResult stat_entry(size_t index, const fs::path &path,
     return r;
 }
 
+// Parallel lstat over the children of one directory. Results come back in
+// submission order.
 class WorkerPool {
     neotape::ClosableQueue<LstatWork> jobs_;
     neotape::ClosableQueue<LstatResult> results_;
     std::vector<std::thread> workers_;
-    size_t queue_capacity_ = 0;
+    size_t queue_capacity_;
 
     static LstatResult run_lstat(const LstatWork &w) {
         try {
@@ -334,22 +335,17 @@ class WorkerPool {
     }
 
   public:
-    explicit WorkerPool(unsigned nworkers = 0)
-        : jobs_(nworkers == 0 ? 0 : static_cast<size_t>(nworkers) * 4),
-          results_(nworkers == 0 ? 0 : static_cast<size_t>(nworkers) * 4),
-          queue_capacity_(nworkers == 0 ? 0
-                                        : static_cast<size_t>(nworkers) * 4) {}
-
-    ~WorkerPool() { stop(); }
-
-    void start(unsigned nworkers) {
-        if (nworkers == 0) {
-            return;
-        }
+    // `nworkers` must be positive; a serial scan uses no pool.
+    explicit WorkerPool(unsigned nworkers)
+        : jobs_(static_cast<size_t>(nworkers) * 4),
+          results_(static_cast<size_t>(nworkers) * 4),
+          queue_capacity_(static_cast<size_t>(nworkers) * 4) {
         for (unsigned i = 0; i < nworkers; i++) {
             workers_.emplace_back(&WorkerPool::worker_loop, this);
         }
     }
+
+    ~WorkerPool() { stop(); }
 
     void submit(LstatWork w) {
         if (!jobs_.push(std::move(w))) {
@@ -365,7 +361,7 @@ class WorkerPool {
         std::map<size_t, LstatResult> pending;
         size_t submitted = 0;
         size_t received = 0;
-        size_t window = queue_capacity_ == 0 ? count : queue_capacity_;
+        size_t const window = queue_capacity_;
 
         auto submit_more = [&] {
             while (submitted < count && submitted - received < window) {
@@ -399,10 +395,6 @@ class WorkerPool {
             out.push_back(std::move(r));
         }
         return out;
-    }
-
-    [[nodiscard]] unsigned nworkers() const {
-        return static_cast<unsigned>(workers_.size());
     }
 
     void stop() {
@@ -615,7 +607,7 @@ class PlannerScanner {
     vector<LstatResult> stat_children(const vector<fs::path> &children,
                                       const neotape::SourceSpec &spec,
                                       std::optional<dev_t> root_device) {
-        if ((pool_ != nullptr) && pool_->nworkers() > 0) {
+        if (pool_ != nullptr) {
             return pool_->collect(children, opts_.one_file_system, root_device,
                                   spec);
         }
@@ -697,16 +689,11 @@ class PlannerScanner {
 };
 
 void run_plan(Options &opts) {
-    if (opts.output_path == "-") {
-        opts.meta_out = stdout;
-    } else {
-        opts.meta_out = fopen(opts.output_path.c_str(), "wb");
-        if (opts.meta_out == nullptr) {
-            fail(format("open {}: {}",
-                        neotape::escape_bytes_for_diagnostic(opts.output_path),
-                        std::strerror(errno)));
-        }
-    }
+    neotape::StdioFile output =
+        opts.output_path == "-"
+            ? neotape::StdioFile(stdout)
+            : neotape::StdioFile::open(opts.output_path, "wb");
+    opts.meta_out = output.get();
 
     if (!opts.chdir_dir.empty()) {
         if (chdir(opts.chdir_dir.c_str()) != 0) {
@@ -727,24 +714,25 @@ void run_plan(Options &opts) {
     uint64_t slice_num = 0;
 
     unsigned const nworkers = opts.io_threads > 0 ? opts.io_threads - 1 : 0;
-    WorkerPool pool(nworkers);
-    pool.start(nworkers);
+    std::optional<WorkerPool> pool;
+    if (nworkers > 0) {
+        pool.emplace(nworkers);
+    }
 
     PlannerScanner scanner(opts, current_slice, slice_num, totals, slice_sizes,
-                           nworkers > 0 ? &pool : nullptr);
+                           pool ? &*pool : nullptr);
     for (const neotape::SourceSpec &spec : sources) {
         scanner.scan_source(spec);
     }
 
-    pool.stop();
+    pool.reset();
 
     if (!current_slice.entries.empty()) {
         emit_slice(current_slice, opts, slice_num++, slice_sizes);
     }
-
-    if ((opts.meta_out != nullptr) && opts.meta_out != stdout) {
-        fclose(opts.meta_out);
-    }
+    // Plan records were checked as written; the close reports what the
+    // stdio buffer still held.
+    output.close(opts.output_path);
 
     std::cerr << format("neotape-plan: scan complete: entries={} "
                         "total_size={} target_slice={} buffer_size={}\n",
@@ -791,6 +779,4 @@ int main(int argc, char **argv) {
     } catch (const std::exception &e) {
         fail(e.what());
     }
-
-    return 0;
 }

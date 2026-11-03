@@ -1,5 +1,6 @@
 #include "neotape/format.hpp"
 
+#include <blake3.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -32,6 +33,16 @@ uint64_t le64(const neotape::HeaderBytes &b, std::size_t off) {
         value |= static_cast<uint64_t>(b[off + i]) << (8 * i);
     }
     return value;
+}
+
+// Reference BLAKE3 digest, independent of the frame codec.
+neotape::Hash blake3_of(const std::vector<uint8_t> &bytes) {
+    neotape::Hash hash{};
+    blake3_hasher hasher;
+    blake3_hasher_init(&hasher);
+    blake3_hasher_update(&hasher, bytes.data(), bytes.size());
+    blake3_hasher_finalize(&hasher, hash.data(), hash.size());
+    return hash;
 }
 
 neotape::FrameHeader make_content_header() {
@@ -172,6 +183,28 @@ TEST_CASE("format: unsigned serializer rejects signature", "[unit][format]") {
     REQUIRE_THROWS_AS(neotape::serialize_frame_header(header), std::exception);
 }
 
+TEST_CASE("format: strings must fit their field and are never truncated",
+          "[unit][format]") {
+    neotape::FrameHeader header = make_content_header();
+    header.archive_label = std::string(neotape::archive_label_size - 1, 'x');
+    auto const bytes = neotape::serialize_frame_header(header);
+    REQUIRE(
+        neotape::parse_fixed_header(bytes.data(), bytes.size()).archive_label ==
+        header.archive_label);
+
+    header.archive_label.push_back('x');
+    REQUIRE_THROWS_AS(neotape::serialize_frame_header(header),
+                      std::runtime_error);
+    header = make_content_header();
+    header.archive_label = std::string("a\0b", 3);
+    REQUIRE_THROWS_AS(neotape::serialize_frame_header(header),
+                      std::runtime_error);
+    header = make_content_header();
+    header.archive_uuid = std::string(neotape::nt_uuid_size, '0');
+    REQUIRE_THROWS_AS(neotape::serialize_frame_header(header),
+                      std::runtime_error);
+}
+
 TEST_CASE("format: validation", "[unit][format]") {
     neotape::FrameHeader const header = make_content_header();
     neotape::HeaderBytes bytes = neotape::serialize_frame_header(header);
@@ -259,7 +292,7 @@ TEST_CASE("format: frame hash canonicalization", "[unit][format]") {
     std::vector<uint8_t> canonical = record;
     std::fill(canonical.begin() + 408, canonical.begin() + 480, 0);
     std::fill(canonical.begin() + 480, canonical.begin() + 512, 0);
-    REQUIRE(hash == neotape::blake3_hash(canonical.data(), canonical.size()));
+    REQUIRE(hash == blake3_of(canonical));
 
     std::vector<uint8_t> changed_sig_and_hash = record;
     changed_sig_and_hash[408] ^= 0xff;
@@ -331,7 +364,6 @@ TEST_CASE("format: replay identity ignores only the volume ordinal",
     for (std::size_t i = 0; i < 8; ++i)
         canonical[114 + i] = i == 0 ? 7 : 0;
     std::fill(canonical.begin() + 408, canonical.begin() + 512, 0);
-    REQUIRE(
-        neotape::frame_hash_with_volume_seq(record.data(), record.size(), 7) ==
-        neotape::blake3_hash(canonical.data(), canonical.size()));
+    REQUIRE(neotape::frame_hash_with_volume_seq(record.data(), record.size(),
+                                                7) == blake3_of(canonical));
 }

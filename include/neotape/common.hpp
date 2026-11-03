@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <format>
 #include <iostream>
@@ -9,6 +10,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace neotape {
 
@@ -52,9 +54,35 @@ struct SourceSpec {
     std::filesystem::path open_path;
 };
 
-std::string strip_trailing_slashes(std::string_view path);
 SourceSpec make_source_spec(const std::string &arg);
 std::string archive_path_for_source(const SourceSpec &spec,
                                     const std::string &source_path);
+
+// Owns a stdio stream for one scope. A standard stream is flushed but never
+// closed. close() reports buffered write errors; the destructor does not.
+class StdioFile {
+  public:
+    // Adopt a standard stream such as stdout.
+    explicit StdioFile(FILE *standard_stream)
+        : file_(standard_stream), owned_(false) {}
+    ~StdioFile();
+    StdioFile(StdioFile &&other) noexcept
+        : file_(std::exchange(other.file_, nullptr)), owned_(other.owned_) {}
+    StdioFile(const StdioFile &) = delete;
+    StdioFile &operator=(const StdioFile &) = delete;
+    StdioFile &operator=(StdioFile &&) = delete;
+
+    // fopen(); throws std::runtime_error naming `path` on failure.
+    static StdioFile open(const std::string &path, const char *mode);
+
+    [[nodiscard]] FILE *get() const { return file_; }
+    // Flush a standard stream or close an owned one; throws on failure.
+    void close(std::string_view name);
+
+  private:
+    StdioFile(FILE *file, bool owned) : file_(file), owned_(owned) {}
+    FILE *file_;
+    bool owned_;
+};
 
 } // namespace neotape
