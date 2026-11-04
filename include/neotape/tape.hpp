@@ -1,7 +1,11 @@
 #pragma once
 
+#include "neotape/format.hpp"
+
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -52,6 +56,20 @@ class Status final {
 };
 
 // -----------------------------------------------------------------------
+// MediaRecord — one read from a tape
+// -----------------------------------------------------------------------
+
+enum class RecordEvent { record, filemark, end };
+struct MediaRecord {
+    RecordEvent event = RecordEvent::end;
+    std::vector<std::byte> record;
+    // Tape files passed since the device was opened, or the spool file
+    // number. A filemark carries the number of the file it ends.
+    uint64_t file_num = 0;
+    std::string source_name; // device path or spool file name
+};
+
+// -----------------------------------------------------------------------
 // TapeDevice — RAII tape device handle
 // -----------------------------------------------------------------------
 
@@ -75,6 +93,11 @@ class TapeDevice {
     void close();
 
     // -- I/O -----------------------------------------------------------
+
+    // Read the next physical record from the current position. A filemark
+    // and the end of recorded data are events. An unreadable record is
+    // skipped only once the driver confirms it has advanced past it.
+    virtual MediaRecord read_record();
 
     // Write exactly one physical record. A positive short write is an error.
     virtual void write_record(const void *data, std::size_t size);
@@ -100,12 +123,12 @@ class TapeDevice {
 
     Status status();
 
-    // Virtual so SpoolTapeDevice and test doubles can present their own fd.
+    // Virtual so spool devices and test doubles can present their own fd.
     [[nodiscard]] virtual int fd() const noexcept { return fd_; }
 
   protected:
-    // Subclass constructor without char-device validation, for
-    // SpoolTapeDevice and test doubles.
+    // Subclass constructor without char-device validation, for spool
+    // devices and test doubles.
     TapeDevice(int fd, std::string_view path);
 
     // All MTIOCTOP operations route through this single virtual dispatch.
@@ -117,19 +140,25 @@ class TapeDevice {
   private:
     int fd_ = -1;
     std::string device_path_;
+    // Read-side state of a physical drive.
+    std::vector<std::byte> read_buffer_;
+    std::size_t read_size_ = neotape::max_block_size;
+    uint64_t file_num_ = 0;
 };
 
-// Write-only tape emulation over a spool directory. Reading a spool goes
-// through neotape::RecordReader.
-class SpoolTapeDevice final : public TapeDevice {
+// Write-only tape emulation over a spool directory. Records append to a
+// pending file; a filemark finalizes it as the next numbered tape file.
+// Running out of space ends the volume like EOT: the record that did not
+// fit is truncated away and never acknowledged.
+class SpoolTapeWriter final : public TapeDevice {
   public:
-    explicit SpoolTapeDevice(const std::filesystem::path &root);
-    ~SpoolTapeDevice() override;
+    explicit SpoolTapeWriter(const std::filesystem::path &root);
+    ~SpoolTapeWriter() override;
 
-    SpoolTapeDevice(const SpoolTapeDevice &) = delete;
-    SpoolTapeDevice &operator=(const SpoolTapeDevice &) = delete;
-    SpoolTapeDevice(SpoolTapeDevice &&) = delete;
-    SpoolTapeDevice &operator=(SpoolTapeDevice &&) = delete;
+    SpoolTapeWriter(const SpoolTapeWriter &) = delete;
+    SpoolTapeWriter &operator=(const SpoolTapeWriter &) = delete;
+    SpoolTapeWriter(SpoolTapeWriter &&) = delete;
+    SpoolTapeWriter &operator=(SpoolTapeWriter &&) = delete;
 
     [[nodiscard]] int fd() const noexcept override;
 
@@ -146,11 +175,48 @@ class SpoolTapeDevice final : public TapeDevice {
     std::vector<std::filesystem::path> files_;
     uint64_t current_file_num_ = 0;
     uint64_t current_record_ = 0;
+    uint64_t current_bytes_ = 0;
     uint32_t current_block_size_ = 0;
     std::filesystem::path current_path_;
 
     void open_next_file();
-    void finalize_current_file();
+    void commit_current_file();
+};
+
+// Read-only tape emulation over a spool directory: one record per block as
+// framed by its header, a filemark at each file boundary, EOD after the
+// last file. A partial record at the end of a file is reported and
+// ignored.
+class SpoolTapeReader final : public TapeDevice {
+  public:
+    explicit SpoolTapeReader(const std::filesystem::path &root);
+    ~SpoolTapeReader() override;
+
+    SpoolTapeReader(const SpoolTapeReader &) = delete;
+    SpoolTapeReader &operator=(const SpoolTapeReader &) = delete;
+    SpoolTapeReader(SpoolTapeReader &&) = delete;
+    SpoolTapeReader &operator=(SpoolTapeReader &&) = delete;
+
+    [[nodiscard]] int fd() const noexcept override;
+
+    MediaRecord read_record() override;
+    void write_record(const void *data, std::size_t size) override;
+
+  protected:
+    void do_mtop(int op, int count) override;
+    Status do_status() override;
+
+  private:
+    std::vector<std::filesystem::path> files_;
+    std::size_t index_ = 0;
+    int spool_fd_ = -1;
+    uint64_t file_num_ = 0;
+    // Slice named by the open file; nullopt names an archive-end file.
+    std::optional<uint64_t> file_slice_;
+    uint32_t block_size_ = 0;
+
+    void open_file(std::size_t index);
+    MediaRecord end_of_file();
 };
 
 } // namespace mt

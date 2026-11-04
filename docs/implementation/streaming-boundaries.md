@@ -20,7 +20,8 @@ CLI and streaming refactor; its work log is in git history.
 | --- | --- | --- |
 | `writer.hpp` / `write_volume` | Validation, bounded queue, ordered record/filemark/archive-end writes, ACK, terminal result | Authentication before opening media, rewind/append, bundle installation, CLI exit mapping |
 | `RecordSink` | Streaming writes and capacity accounting; null discards through the same session | Tape positioning and ioctl controls remain on the caller-owned `TapeDevice` |
-| `media.hpp` | Media locators, spool ordering, record/filemark/EOD events, tape-file skip | Archive validation, salvage policy, display; scan still reads only the first header per spool file |
+| `tape.hpp` | `TapeDevice::read_record`: one record, filemark or EOD per call, for a drive or a spool directory; spool writing with ENOSPC as EOT | Archive validation, salvage policy, display |
+| `media.hpp` | Media locators, spool name grammar and ordering, `RecordReader` (opens the device for reading, tape-file skip) | Scan still reads only the first header per spool file |
 | `progress.hpp` | Timer lifetime, rates, count formatting and buffer ratio | Tool-specific mbuffer renderers and final diagnostics |
 | `plan.hpp` | NUL-LF framing and plan metadata codec, one-record-at-a-time input | Traversal, slice packing, filesystem metadata collection |
 | Pax archive session | Common resource cleanup, link resolution, slice pipeline and end marker | Planned input and directory traversal retain their distinct entry sources |

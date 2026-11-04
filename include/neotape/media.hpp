@@ -11,8 +11,14 @@ struct MediaLocator {
     std::string path;
 };
 MediaLocator parse_media(std::string_view text, bool allow_null = false);
-// The file number of a spool tape file name, or nullopt for any other name.
-std::optional<uint64_t> spool_file_number(const std::filesystem::path &path);
+
+// The numbers in a spool tape file name.
+struct SpoolFileName {
+    uint64_t number;
+    std::optional<uint64_t> slice; // nullopt: an archive-end file
+};
+// Nullopt for any other name.
+std::optional<SpoolFileName> spool_file_name(const std::filesystem::path &path);
 // Spool tape files in file-number order. Throws when the directory is
 // missing or two files share a number.
 std::vector<std::filesystem::path>
@@ -20,40 +26,21 @@ scan_spool_files(const std::filesystem::path &root);
 // Parse the fixed header of the first record in one spool file.
 FrameHeader read_spool_file_header(const std::filesystem::path &path);
 
-enum class RecordEvent { record, filemark, end };
-struct MediaRecord {
-    RecordEvent event = RecordEvent::end;
-    std::vector<std::byte> record;
-    uint64_t file_num = 0;
-    std::string source_name;
-};
+using mt::MediaRecord;
+using mt::RecordEvent;
 
-// Physical tape records are opaque. Spool streams need only header parsing to
-// locate record boundaries; hash/signature/archive validation belongs to
-// callers.
+// Records of a tape or spool source in media order. Hash, signature and
+// archive validation belong to callers.
 // A tape source is read from its current position: an archive need not start
 // at BOT, so positioning is left to the operator. Spool sources start at their
 // first file.
 class RecordReader {
   public:
     explicit RecordReader(const MediaLocator &source);
-    ~RecordReader();
-    RecordReader(const RecordReader &) = delete;
-    RecordReader &operator=(const RecordReader &) = delete;
     MediaRecord next();
     void skip_file(); // first-record-only scan; never drain the file to skip it
   private:
-    void open_spool();
-    std::unique_ptr<mt::TapeDevice> tape_;
-    std::vector<std::filesystem::path> files_;
-    std::vector<std::byte> buffer_;
-    size_t index_ = 0;
-    uint64_t file_num_ = 0;
-    // Slice named by the open spool file; nullopt names an archive-end file.
-    std::optional<uint64_t> file_slice_;
-    int spool_fd_ = -1;
+    std::unique_ptr<mt::TapeDevice> device_;
     bool ended_ = false;
-    uint32_t spool_block_size_ = 0;
-    std::size_t tape_read_size_ = max_block_size;
 };
 } // namespace neotape

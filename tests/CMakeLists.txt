@@ -24,7 +24,7 @@ if(BUILD_TESTING)
 
     neotape_unit_test(test_tape_reader test_tape_reader.cpp neotape_tape)
     target_link_options(test_tape_reader PRIVATE "-Wl,--wrap=read" "-Wl,--wrap=ioctl")
-    neotape_unit_test(test_tape_io test_tape_io.cpp neotape_writer)
+    neotape_unit_test(test_tape_io test_tape_io.cpp neotape_writer neotape_test_support)
     target_link_options(test_tape_io PRIVATE "-Wl,--wrap=write" "-Wl,--wrap=close")
     neotape_unit_test(test_common test_common.cpp neotape_common)
     neotape_unit_test(test_resume test_resume.cpp

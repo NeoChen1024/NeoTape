@@ -413,7 +413,7 @@ int main(int argc, char **argv) {
                     fail("spool appears to contain a recovery bundle; use "
                          "--erase or --append");
                 }
-                dev = std::make_unique<mt::SpoolTapeDevice>(
+                dev = std::make_unique<mt::SpoolTapeWriter>(
                     std::filesystem::path(opts.target.path));
             }
 

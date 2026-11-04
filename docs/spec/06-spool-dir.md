@@ -97,6 +97,19 @@ Appending a new archive to an existing spool is permitted.
 
 Spool files MUST preserve the same `volume_block_size_kib` semantics as tape mode. Each NeoTape record within a spool file is exactly `volume_block_size_kib * 1024` bytes. A spool writer MUST store records as fixed-size blocks within the regular file, and the reader MUST be able to determine record boundaries from the file contents alone.
 
+### Partial Records
+
+An interrupted write (no space left, a crash) can leave a file ending in
+fewer bytes than one record. Such a partial record is not part of the
+archive. A writer MUST NOT acknowledge it and SHOULD remove it, so that the
+frame is written again on the next volume. A reader MUST treat it as the end
+of that tape file, exactly as a record that was never written, and SHOULD
+report that it was ignored.
+
+Running out of space on the spool's filesystem is the spool equivalent of
+physical EOT: the writer ends the volume, and the archive continues in
+another spool directory.
+
 ## Reader Model
 
 A reader SHOULD be able to accept either a tape device path or a spool directory path. When reading from a spool directory, the reader SHOULD validate:

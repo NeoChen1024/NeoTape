@@ -27,7 +27,7 @@ constexpr string_view spool_prefix = "neotape-";
 constexpr string_view spool_ext = ".nts";
 
 using neotape::scan_spool_files;
-using neotape::spool_file_number;
+using neotape::spool_file_name;
 
 std::string spool_suffix_for_header(const neotape::FrameHeader &header) {
     switch (header.channel_type) {
@@ -53,10 +53,28 @@ fs::path spool_temp_path(const fs::path &root, uint64_t file_num) {
 int open_fd(const fs::path &path, int flags) {
     int const fd = ::open(path.c_str(), flags, 0666);
     if (fd < 0) {
-        throw std::runtime_error(
-            format("open {}: {}", path.string(), std::strerror(errno)));
+        throw Error(path.string(), "open", errno);
     }
     return fd;
+}
+
+// Read up to `size` bytes; fewer only at end of file.
+size_t read_stream(int fd, const fs::path &path, std::byte *data, size_t size) {
+    size_t done = 0;
+    while (done < size) {
+        ssize_t const n = ::read(fd, data + done, size - done);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            throw Error(path.string(), "read", errno);
+        }
+        if (n == 0) {
+            break;
+        }
+        done += static_cast<size_t>(n);
+    }
+    return done;
 }
 
 } // anonymous namespace
@@ -84,6 +102,7 @@ bool Status::bot() const noexcept { return (gstat_ & GMT_BOT) != 0; }
 bool Status::eot() const noexcept { return (gstat_ & GMT_EOT) != 0; }
 bool Status::eod() const noexcept { return (gstat_ & GMT_EOD) != 0; }
 bool Status::online() const noexcept { return (gstat_ & GMT_ONLINE) != 0; }
+
 // -----------------------------------------------------------------------
 // TapeDevice
 // -----------------------------------------------------------------------
@@ -133,6 +152,76 @@ void TapeDevice::close() {
         throw Error(device_path_, "close", errno);
 }
 
+MediaRecord TapeDevice::read_record() {
+    if (read_buffer_.empty())
+        read_buffer_.resize(neotape::max_block_size);
+    for (;;) {
+        // The driver's file/block counters establish local progress.
+        // MTIOCPOS asks for a physical address that some LTO drives do
+        // not support and must not be retried for every record.
+        auto const before = status();
+        ssize_t n;
+        do {
+            n = ::read(fd_, read_buffer_.data(), read_size_);
+        } while (n < 0 && errno == EINTR);
+        int const read_error = errno;
+        if (n > 0) {
+            // Bootstrap with the maximum buffer, then use the verified
+            // archive record size to avoid short-record sense handling
+            // and pinning eight MiB for every one-MiB read.
+            if (read_size_ == neotape::max_block_size ||
+                (n >= static_cast<ssize_t>(neotape::fixed_header_size) &&
+                 read_buffer_[9] == std::byte{255})) {
+                try {
+                    auto const *data =
+                        reinterpret_cast<const uint8_t *>(read_buffer_.data());
+                    auto const frame = neotape::check_frame(data, n);
+                    if (frame.hash_ok)
+                        read_size_ =
+                            frame.header.channel_type ==
+                                    neotape::ChannelType::ARCHIVE_END
+                                ? neotape::max_block_size
+                                : neotape::decoded_block_size(frame.header);
+                } catch (const std::exception &) {
+                    // Non-NeoTape prefixes and unavailable headers do not
+                    // establish a new record size.
+                }
+            }
+            return {RecordEvent::record,
+                    {read_buffer_.begin(), read_buffer_.begin() + n},
+                    file_num_,
+                    device_path_};
+        }
+        if (n < 0 && read_error != EIO)
+            throw Error(device_path_, "read", read_error);
+        auto const after_read = status();
+        if (after_read.eod())
+            return {RecordEvent::end, {}, file_num_, device_path_};
+        if (n == 0)
+            return {RecordEvent::filemark, {}, file_num_++, device_path_};
+        // EIO is not a filemark. Continue only after confirming physical
+        // progress to a known record boundary; never retry in place
+        // forever.
+        if (before.fileno() < 0 || before.blkno() < 0 ||
+            after_read.fileno() != before.fileno() ||
+            after_read.blkno() < before.blkno())
+            throw Error(device_path_, "read: unknown tape position", EIO);
+        auto after = after_read;
+        if (after.blkno() == before.blkno()) {
+            space_fwd_records(1);
+            after = status();
+        }
+        if (after.fileno() != before.fileno() ||
+            after.blkno() <= before.blkno())
+            throw Error(device_path_,
+                        "read: cannot advance past unreadable block", EIO);
+        neotape::write_diagnostic(
+            format("neotape: unreadable tape record at file {} block {}; "
+                   "resumed at block {}",
+                   before.fileno(), before.blkno(), after.blkno()));
+    }
+}
+
 void TapeDevice::write_record(const void *data, std::size_t size) {
     if (size == 0)
         throw Error(device_path_, "empty record", EINVAL);
@@ -165,6 +254,8 @@ void TapeDevice::do_mtop(int op, int count) {
     }
     NEOTAPE_DEBUG("[tape {}] mtop op={} count={} done\n", device_path_, op,
                   count);
+    if (op == MTFSF)
+        file_num_ += static_cast<uint64_t>(count);
 }
 
 // -- positioning -------------------------------------------------------
@@ -223,48 +314,64 @@ Status TapeDevice::do_status() {
 }
 
 // -----------------------------------------------------------------------
-// SpoolTapeDevice
+// SpoolTapeWriter
 // -----------------------------------------------------------------------
 
-SpoolTapeDevice::SpoolTapeDevice(const fs::path &root)
+SpoolTapeWriter::SpoolTapeWriter(const fs::path &root)
     : TapeDevice(-1, root.string()), root_(root) {
     fs::create_directories(root_);
     files_ = scan_spool_files(root_);
     // scan_spool_files orders by file number, so the last file is the highest.
     current_file_num_ =
-        files_.empty() ? 0 : *spool_file_number(files_.back()) + 1;
+        files_.empty() ? 0 : spool_file_name(files_.back())->number + 1;
     open_next_file();
 }
 
-SpoolTapeDevice::~SpoolTapeDevice() {
-    if (spool_fd_ >= 0) {
-        ::close(spool_fd_);
-        spool_fd_ = -1;
-    }
+SpoolTapeWriter::~SpoolTapeWriter() {
     if (current_path_.empty())
         return;
-    // A trailing tape file never closed with a filemark is finalized here;
-    // an empty one is removed. Destructors must not throw.
+    // Records in the pending file were acknowledged, so a trailing tape
+    // file never closed with a filemark is committed here. Destructors must
+    // not throw; a file that cannot be committed is left in place.
     if (current_record_ > 0) {
         try {
-            finalize_current_file();
-            return;
-        } catch (...) {
+            commit_current_file();
+        } catch (const std::exception &error) {
+            neotape::write_diagnostic(
+                format("neotape: warning: {}; records remain in {}",
+                       error.what(), current_path_.string()));
+            if (spool_fd_ >= 0)
+                ::close(spool_fd_);
         }
+        return;
     }
+    if (spool_fd_ >= 0)
+        ::close(spool_fd_);
     std::error_code ec;
     fs::remove(current_path_, ec);
 }
 
 // Start a fresh pending file numbered current_file_num_.
-void SpoolTapeDevice::open_next_file() {
+void SpoolTapeWriter::open_next_file() {
     current_path_ = spool_temp_path(root_, current_file_num_);
     spool_fd_ = open_fd(current_path_, O_RDWR | O_CREAT | O_TRUNC);
     current_block_size_ = 0;
     current_record_ = 0;
+    current_bytes_ = 0;
 }
 
-void SpoolTapeDevice::finalize_current_file() {
+// Make the pending file durable and give it its final name.
+void SpoolTapeWriter::commit_current_file() {
+    if (spool_fd_ >= 0) {
+        if (::fsync(spool_fd_) < 0) {
+            throw Error(current_path_.string(), "fsync", errno);
+        }
+        int const fd = spool_fd_;
+        spool_fd_ = -1;
+        if (::close(fd) < 0) {
+            throw Error(current_path_.string(), "close", errno);
+        }
+    }
     auto header = neotape::read_spool_file_header(current_path_);
     current_block_size_ = neotape::decoded_block_size(header);
     fs::path const final_path =
@@ -273,9 +380,9 @@ void SpoolTapeDevice::finalize_current_file() {
     current_path_.clear();
 }
 
-int SpoolTapeDevice::fd() const noexcept { return spool_fd_; }
+int SpoolTapeWriter::fd() const noexcept { return spool_fd_; }
 
-void SpoolTapeDevice::write_record(const void *data, std::size_t size) {
+void SpoolTapeWriter::write_record(const void *data, std::size_t size) {
     if (spool_fd_ < 0) {
         throw Error(device_path(), "write_record", EBADF);
     }
@@ -284,22 +391,26 @@ void SpoolTapeDevice::write_record(const void *data, std::size_t size) {
     std::size_t remaining = size;
     while (remaining > 0) {
         ssize_t const w = ::write(spool_fd_, p, remaining);
-        if (w < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            throw Error(device_path(), "write_record", errno);
+        if (w < 0 && errno == EINTR) {
+            continue;
         }
-        if (w == 0) {
-            throw Error(device_path(), "write_record", EIO);
+        if (w <= 0) {
+            // The record is not written at all: a partial record would be
+            // read back as damage, and the writer never acknowledges it.
+            int const error = w < 0 ? errno : EIO;
+            if (::ftruncate(spool_fd_, static_cast<off_t>(current_bytes_)) == 0)
+                ::lseek(spool_fd_, static_cast<off_t>(current_bytes_),
+                        SEEK_SET);
+            throw Error(device_path(), "write_record", error);
         }
         p += w;
         remaining -= static_cast<std::size_t>(w);
     }
+    current_bytes_ += size;
     ++current_record_;
 }
 
-void SpoolTapeDevice::do_mtop(int op, int count) {
+void SpoolTapeWriter::do_mtop(int op, int count) {
     if (count <= 0) {
         return;
     }
@@ -312,16 +423,7 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
         if (spool_fd_ < 0) {
             throw Error(device_path(), "write filemark", EBADF);
         }
-
-        if (::fsync(spool_fd_) < 0) {
-            throw Error(device_path(), "fsync", errno);
-        }
-        if (::close(spool_fd_) < 0) {
-            throw Error(device_path(), "close", errno);
-        }
-        spool_fd_ = -1;
-
-        finalize_current_file();
+        commit_current_file();
         ++current_file_num_;
         open_next_file();
         return;
@@ -338,7 +440,7 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
             fs::remove(current_path_, ec);
             current_path_.clear();
         }
-        for (auto &entry : fs::directory_iterator(root_)) {
+        for (const auto &entry : fs::directory_iterator(root_)) {
             if (!entry.is_regular_file())
                 continue;
             auto name = entry.path().filename().string();
@@ -368,19 +470,10 @@ void SpoolTapeDevice::do_mtop(int op, int count) {
     }
 }
 
-Status SpoolTapeDevice::do_status() {
+Status SpoolTapeWriter::do_status() {
     long gstat = GMT_ONLINE;
     if (spool_fd_ >= 0) {
-        off_t const cur = ::lseek(spool_fd_, 0, SEEK_CUR);
-        off_t const end = ::lseek(spool_fd_, 0, SEEK_END);
-        if (cur >= 0) {
-            ::lseek(spool_fd_, cur, SEEK_SET);
-        }
-        if (end == 0) {
-            gstat |= GMT_BOT | GMT_EOD;
-        } else {
-            gstat |= GMT_EOD;
-        }
+        gstat |= current_bytes_ == 0 ? GMT_BOT | GMT_EOD : GMT_EOD;
     }
     // Finalized tape files on disk mean the tape is not empty even when the
     // pending file is.
@@ -390,6 +483,126 @@ Status SpoolTapeDevice::do_status() {
     return Status(0, 0, static_cast<long>(current_block_size_), gstat, 0,
                   static_cast<int>(current_file_num_),
                   static_cast<int>(current_record_));
+}
+
+// -----------------------------------------------------------------------
+// SpoolTapeReader
+// -----------------------------------------------------------------------
+
+SpoolTapeReader::SpoolTapeReader(const fs::path &root)
+    : TapeDevice(-1, root.string()), files_(scan_spool_files(root)) {
+    open_file(0);
+}
+
+SpoolTapeReader::~SpoolTapeReader() {
+    if (spool_fd_ >= 0)
+        ::close(spool_fd_);
+}
+
+int SpoolTapeReader::fd() const noexcept { return spool_fd_; }
+
+// Open files_[index]; past the last file the reader is at EOD.
+void SpoolTapeReader::open_file(std::size_t index) {
+    if (spool_fd_ >= 0) {
+        ::close(spool_fd_);
+        spool_fd_ = -1;
+    }
+    index_ = index;
+    if (index_ >= files_.size()) {
+        index_ = files_.size();
+        return;
+    }
+    spool_fd_ = open_fd(files_[index_], O_RDONLY);
+    // scan_spool_files only lists names that parse.
+    auto const name = *spool_file_name(files_[index_]);
+    file_num_ = name.number;
+    file_slice_ = name.slice;
+}
+
+// The open file ended: report the filemark and move to the next file.
+MediaRecord SpoolTapeReader::end_of_file() {
+    MediaRecord const mark{RecordEvent::filemark,
+                           {},
+                           file_num_,
+                           files_[index_].filename().string()};
+    open_file(index_ + 1);
+    return mark;
+}
+
+MediaRecord SpoolTapeReader::read_record() {
+    if (index_ >= files_.size())
+        return {RecordEvent::end, {}, file_num_, device_path()};
+    const fs::path &path = files_[index_];
+    MediaRecord result{RecordEvent::record,
+                       std::vector<std::byte>(neotape::fixed_header_size),
+                       file_num_, path.filename().string()};
+    size_t const got = read_stream(spool_fd_, path, result.record.data(),
+                                   neotape::fixed_header_size);
+    if (got == 0)
+        return end_of_file();
+    auto const *data = reinterpret_cast<const uint8_t *>(result.record.data());
+    // The first header of an archive establishes the record size; later
+    // records keep that framing even when their own header is unreadable.
+    if (got == neotape::fixed_header_size && block_size_ == 0)
+        block_size_ = neotape::decoded_block_size(
+            neotape::parse_fixed_header(data, result.record.size()));
+    size_t const size = block_size_;
+    if (got == neotape::fixed_header_size) {
+        result.record.resize(size);
+        data = reinterpret_cast<const uint8_t *>(result.record.data());
+    }
+    if (got < neotape::fixed_header_size ||
+        read_stream(spool_fd_, path, result.record.data() + got, size - got) !=
+            size - got) {
+        // An interrupted write; the writer never acknowledged it.
+        neotape::write_diagnostic(
+            format("neotape: warning: ignoring partial record at the end "
+                   "of {}",
+                   result.source_name));
+        return end_of_file();
+    }
+    std::optional<neotape::FrameHeader> valid_header;
+    try {
+        auto frame = neotape::check_frame(data, result.record.size());
+        if (frame.hash_ok)
+            valid_header = std::move(frame.header);
+    } catch (const std::exception &) {
+        // Retain known framing across an unavailable header.
+    }
+    if (valid_header) {
+        bool const end =
+            valid_header->channel_type == neotape::ChannelType::ARCHIVE_END;
+        if (end == file_slice_.has_value() ||
+            (file_slice_ && *file_slice_ != valid_header->slice_seq_num))
+            throw std::runtime_error(
+                "spool filename disagrees with frame header: " +
+                result.source_name);
+        if (end)
+            block_size_ = 0;
+    }
+    return result;
+}
+
+void SpoolTapeReader::write_record(const void *, std::size_t) {
+    throw Error(device_path(), "write_record", EROFS);
+}
+
+void SpoolTapeReader::do_mtop(int op, int count) {
+    if (count <= 0) {
+        return;
+    }
+    if (op != MTFSF) {
+        throw Error(device_path(), "mtop", ENOTSUP);
+    }
+    open_file(index_ + static_cast<std::size_t>(count));
+}
+
+Status SpoolTapeReader::do_status() {
+    long gstat = GMT_ONLINE;
+    if (index_ >= files_.size())
+        gstat |= GMT_EOD;
+    return Status(0, 0, static_cast<long>(block_size_), gstat, 0,
+                  static_cast<int>(file_num_), 0);
 }
 
 } // namespace mt

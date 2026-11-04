@@ -132,7 +132,7 @@ template <typename Handler>
 vector<string> scan_spool_source(const fs::path &root, Handler &&handle) {
     vector<string> issues;
     for (const auto &file : neotape::scan_spool_files(root)) {
-        uint64_t const file_num = *neotape::spool_file_number(file);
+        uint64_t const file_num = neotape::spool_file_name(file)->number;
         try {
             FrameHeader const header = neotape::read_spool_file_header(file);
             handle(FirstFrame{file_num, header});

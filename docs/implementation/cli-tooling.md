@@ -61,7 +61,10 @@ An explicit `--max-volume-bytes` also provides a software capacity boundary
 for tape targets. It stops before the next complete record would exceed the
 limit, without waiting for physical EOT; tape recovery-bundle padding counts
 toward this limit. Without this option, tape writes stop at the drive's EOT
-indication. Both boundaries return status 3 when another volume is needed.
+indication. A spool target treats a full filesystem (`ENOSPC`) the same way:
+the record that did not fit is removed and not acknowledged. All of these
+boundaries return status 3 when another volume is needed; for a spool, the
+next volume is another spool directory.
 
 ## Resuming an interrupted archive
 

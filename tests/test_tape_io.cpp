@@ -1,10 +1,14 @@
+#include "neotape/format.hpp"
 #include "neotape/tape.hpp"
 #include "neotape/writer.hpp"
+#include "support/temp_directory.hpp"
+#include <algorithm>
 #include <array>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <cerrno>
 #include <fcntl.h>
+#include <filesystem>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -12,7 +16,8 @@
 namespace {
 int target_fd = -1;
 int write_calls = 0, close_calls = 0;
-ssize_t write_result = -2;
+ssize_t write_result = -2; // -2: pass through
+ssize_t partial_first = 0; // >0: first call transfers only this many bytes
 int write_error = EIO;
 bool interrupt_first = false, fail_close = false;
 
@@ -25,11 +30,24 @@ struct Injection {
         REQUIRE(target_fd >= 0);
         write_calls = close_calls = 0;
         write_result = -2;
+        partial_first = 0;
         write_error = EIO;
         interrupt_first = fail_close = false;
     }
     ~Injection() { target_fd = -1; }
 };
+
+std::vector<std::byte> frame_record() {
+    neotape::FrameHeader header;
+    header.volume_block_size_kib = 4;
+    header.archive_uuid = "00000000-0000-4000-8000-000000000123";
+    header.flags = neotape::frame_flag_end;
+    std::vector<std::byte> record(4096);
+    auto const encoded = neotape::serialize_frame_header(header);
+    std::ranges::transform(encoded, record.begin(),
+                           [](uint8_t b) { return std::byte{b}; });
+    return record;
+}
 } // namespace
 extern "C" ssize_t __real_write(int, const void *, size_t);
 extern "C" int __real_close(int);
@@ -41,8 +59,10 @@ extern "C" ssize_t __wrap_write(int fd, const void *data, size_t size) {
         errno = EINTR;
         return -1;
     }
+    if (partial_first > 0 && write_calls == 1)
+        return __real_write(fd, data, static_cast<size_t>(partial_first));
     if (write_result == -2)
-        return static_cast<ssize_t>(size);
+        return __real_write(fd, data, size);
     errno = write_error;
     return write_result;
 }
@@ -103,6 +123,38 @@ TEST_CASE("tape surfaces close failures without retrying released descriptors",
         REQUIRE_NOTHROW(device.close());
     }
     REQUIRE(close_calls == 1);
+}
+
+TEST_CASE("spool writer drops a partial record and reports ENOSPC like EOT",
+          "[unit][tape]") {
+    neotape::test::TemporaryDirectory temporary;
+    auto const record = frame_record();
+    Injection injection;
+    {
+        mt::SpoolTapeWriter writer(temporary.path());
+        target_fd = writer.fd();
+        REQUIRE_NOTHROW(writer.write_record(record.data(), record.size()));
+        // Disk full in the middle of the second record.
+        write_calls = 0;
+        partial_first = 100;
+        write_result = -1;
+        write_error = ENOSPC;
+        try {
+            writer.write_record(record.data(), record.size());
+            FAIL("expected ENOSPC");
+        } catch (const mt::Error &error) {
+            REQUIRE(error.error_code() == ENOSPC);
+        }
+        auto const pending = temporary.path() / "neotape-000000.pending";
+        REQUIRE(std::filesystem::file_size(pending) == record.size());
+        target_fd = -1;
+    }
+    // The acknowledged record is committed as a tape file; the partial one
+    // never reaches the medium.
+    auto const committed = temporary.path() / "neotape-000000.slice-000000.nts";
+    REQUIRE(std::filesystem::file_size(committed) == record.size());
+    REQUIRE_FALSE(
+        std::filesystem::exists(temporary.path() / "neotape-000000.pending"));
 }
 
 TEST_CASE("tape flush errors leave the just-written record unacknowledged",
