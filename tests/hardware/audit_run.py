@@ -29,7 +29,7 @@ for volume in range(1, volume_count + 1):
         size = int(row["bytes"])
         offset = offsets.get(file_number, 0)
         if sequence in retried:
-            path = next(directory.glob(f"neotape-{file_number}.*.nts"))
+            path = directory / f"NT{file_number:06d}.NTS"
             with path.open("rb") as stream:
                 stream.seek(offset)
                 image = bytearray(stream.read(size))
@@ -44,7 +44,7 @@ for volume in range(1, volume_count + 1):
     if current != list(range(current[0], current[-1] + 1)):
         raise RuntimeError(f"non-contiguous readback in volume {volume}")
     for file_number, size in offsets.items():
-        path = next(directory.glob(f"neotape-{file_number}.*.nts"))
+        path = directory / f"NT{file_number:06d}.NTS"
         if path.stat().st_size != size:
             raise RuntimeError("capture file length disagrees with record ledger")
     volumes.append(dict(volume=volume, records=len(current), first=current[0], last=current[-1],

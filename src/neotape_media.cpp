@@ -2,6 +2,7 @@
 #include "neotape/media.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <charconv>
 #include <cstring>
@@ -38,54 +39,22 @@ FrameHeader read_spool_file_header(const fs::path &path) {
     return parse_fixed_header(bytes.data(), bytes.size());
 }
 
-std::optional<SpoolFileName> spool_file_name(const fs::path &path) {
-    std::string const name = path.filename().string();
-    constexpr std::string_view prefix = "neotape-";
-    if (!name.starts_with(prefix) || !name.ends_with(".nts"))
+std::optional<uint64_t> spool_file_number(const fs::path &path) {
+    std::string name = path.filename().string();
+    std::ranges::transform(name, name.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    // NT + 1..6 digits + .NTS: an 8.3 name, so it fits FAT without long
+    // names and ISO 9660 Level 1.
+    if (name.size() < 7 || name.size() > 12 || !name.starts_with("NT") ||
+        !name.ends_with(".NTS"))
         return std::nullopt;
-    std::string_view rest(name.data() + prefix.size(),
-                          name.size() - prefix.size() - 4);
-    auto number = [](std::string_view &text) -> std::optional<uint64_t> {
-        auto end = text.find_first_not_of("0123456789");
-        if (end == std::string_view::npos)
-            end = text.size();
-        if (end == 0)
-            return std::nullopt;
-        uint64_t result = 0;
-        auto [ptr, error] =
-            std::from_chars(text.data(), text.data() + end, result);
-        if (error == std::errc::result_out_of_range)
-            throw std::runtime_error("spool filename number overflow");
-        if (error != std::errc{})
-            return std::nullopt;
-        text.remove_prefix(end);
-        return result;
-    };
-    auto file = number(rest);
-    if (!file || !rest.starts_with("."))
+    std::string_view const digits(name.data() + 2, name.size() - 6);
+    if (digits.find_first_not_of("0123456789") != std::string_view::npos)
         return std::nullopt;
-    rest.remove_prefix(1);
-    std::optional<uint64_t> slice;
-    if (rest.starts_with("slice-")) {
-        rest.remove_prefix(6);
-        slice = number(rest);
-        if (!slice)
-            return std::nullopt;
-    } else if (rest.starts_with("archive-end")) {
-        rest.remove_prefix(11);
-    } else {
-        return std::nullopt;
-    }
-    if (!rest.empty()) {
-        if (!rest.starts_with("-") || rest.size() == 1)
-            return std::nullopt;
-        rest.remove_prefix(1);
-        for (char c : rest)
-            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                  (c >= '0' && c <= '9') || c == '_' || c == '-'))
-                return std::nullopt;
-    }
-    return SpoolFileName{*file, slice};
+    uint64_t number = 0;
+    std::from_chars(digits.data(), digits.data() + digits.size(), number);
+    return number;
 }
 
 std::vector<fs::path> scan_spool_files(const fs::path &root) {
@@ -96,8 +65,8 @@ std::vector<fs::path> scan_spool_files(const fs::path &root) {
     for (const auto &entry : fs::directory_iterator(root)) {
         if (!entry.is_regular_file())
             continue;
-        if (auto const name = spool_file_name(entry.path()))
-            numbered.emplace_back(name->number, entry.path());
+        if (auto const number = spool_file_number(entry.path()))
+            numbered.emplace_back(*number, entry.path());
     }
     std::ranges::sort(numbered);
     for (std::size_t i = 1; i < numbered.size(); ++i) {

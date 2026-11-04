@@ -30,11 +30,9 @@ TEST_CASE("spool reader preserves file boundaries and ignores a partial "
     auto bytes = frame_bytes();
     // An interrupted write leaves part of a record: a cut body in one file,
     // a cut header in the next.
-    std::ofstream(temporary.path() / "neotape-000002.slice-000000.nts",
-                  std::ios::binary)
+    std::ofstream(temporary.path() / "NT000002.NTS", std::ios::binary)
         << bytes << bytes << bytes.substr(0, 600);
-    std::ofstream(temporary.path() / "neotape-000010.slice-000000.nts",
-                  std::ios::binary)
+    std::ofstream(temporary.path() / "NT000010.NTS", std::ios::binary)
         << bytes.substr(0, 300);
     neotape::RecordReader reader(
         {neotape::MediaLocator::spool, temporary.path().string()});
@@ -56,12 +54,9 @@ TEST_CASE("spool reader preserves file boundaries and ignores a partial "
 TEST_CASE("first-record scan skips an unreadable spool tail", "[unit][media]") {
     TemporaryDirectory temporary;
     auto bytes = frame_bytes();
-    std::ofstream(temporary.path() / "neotape-000000.slice-000000.nts",
-                  std::ios::binary)
+    std::ofstream(temporary.path() / "NT000000.NTS", std::ios::binary)
         << bytes << "damaged tail";
-    std::ofstream(temporary.path() / "neotape-000001.slice-000000.nts",
-                  std::ios::binary)
-        << bytes;
+    std::ofstream(temporary.path() / "NT000001.NTS", std::ios::binary) << bytes;
     neotape::RecordReader reader(
         {neotape::MediaLocator::spool, temporary.path().string()});
     REQUIRE(reader.next().event == neotape::RecordEvent::record);
@@ -94,10 +89,8 @@ TEST_CASE("plan reader consumes opaque records incrementally and rejects a "
 TEST_CASE("spool rejects duplicate numeric file numbers before playback",
           "[unit][media]") {
     TemporaryDirectory temporary;
-    std::ofstream(temporary.path() / "neotape-000001.slice-000000.nts")
-        << frame_bytes();
-    std::ofstream(temporary.path() / "neotape-1.archive-end.nts")
-        << frame_bytes();
+    std::ofstream(temporary.path() / "NT000001.NTS") << frame_bytes();
+    std::ofstream(temporary.path() / "NT1.NTS") << frame_bytes();
     REQUIRE_THROWS(neotape::RecordReader(
         {neotape::MediaLocator::spool, temporary.path().string()}));
 }
@@ -129,16 +122,14 @@ TEST_CASE("plan reader rejects overflow negative IDs and unknown kinds",
     REQUIRE_THROWS(reader.next());
 }
 
-TEST_CASE("spool filename grammar rejects overflow and ignores unrelated files",
+TEST_CASE("spool filename grammar is 8.3, case-insensitive, and ignores "
+          "unrelated files",
           "[unit][media]") {
-    auto const name =
-        neotape::spool_file_name("neotape-00012.slice-000003-copy_1.nts");
-    REQUIRE(name.has_value());
-    REQUIRE(name->number == 12);
-    REQUIRE(name->slice == 3);
-    REQUIRE_FALSE(neotape::spool_file_name("neotape-7.archive-end.nts")->slice);
-    REQUIRE_FALSE(neotape::spool_file_name("neotape-12.unknown.nts"));
-    REQUIRE_FALSE(neotape::spool_file_name("neotape-12.slice-.nts"));
-    REQUIRE_THROWS(neotape::spool_file_name(
-        "neotape-18446744073709551616.archive-end.nts"));
+    REQUIRE(neotape::spool_file_number("NT000012.NTS") == 12);
+    REQUIRE(neotape::spool_file_number("nt12.nts") == 12);
+    REQUIRE_FALSE(neotape::spool_file_number("NT000012.TMP"));
+    REQUIRE_FALSE(neotape::spool_file_number("NT.NTS"));
+    REQUIRE_FALSE(neotape::spool_file_number("NT1234567.NTS"));
+    REQUIRE_FALSE(neotape::spool_file_number("NTX00001.NTS"));
+    REQUIRE_FALSE(neotape::spool_file_number("RECOVERY.TAR"));
 }

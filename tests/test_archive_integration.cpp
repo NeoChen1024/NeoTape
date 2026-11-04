@@ -31,16 +31,7 @@ using neotape::test::wait_for_unix_socket;
 
 using neotape::test::require_success;
 
-std::vector<fs::path> spool_files(const fs::path &directory) {
-    std::vector<fs::path> files;
-    for (const fs::directory_entry &entry : fs::directory_iterator(directory)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".nts") {
-            files.push_back(entry.path());
-        }
-    }
-    std::ranges::sort(files);
-    return files;
-}
+using neotape::test::spool_files;
 
 using neotape::test::read_bytes;
 
@@ -188,7 +179,7 @@ TEST_CASE("raw spool passes inspect and scan reporting",
                         temporary.path().string(), "input.bin"}},
         30s));
     fs::create_directory(spool);
-    std::ofstream(spool / "recovery-bundle.tar") << "stale bundle\n";
+    std::ofstream(spool / "RECOVERY.TAR") << "stale bundle\n";
     ProcessResult const conflicting_options = Process::run(
         ProcessOptions{{NEOTAPE_WRITE, "--source", "unix:///nonexistent",
                         "--target", "spool:" + spool.string(), "--append",
@@ -211,7 +202,7 @@ TEST_CASE("raw spool passes inspect and scan reporting",
         30s);
     require_success(writer);
     require_success(raw_store.wait(30s));
-    REQUIRE(read_bytes(bundle) == read_bytes(spool / "recovery-bundle.tar"));
+    REQUIRE(read_bytes(bundle) == read_bytes(spool / "RECOVERY.TAR"));
 
     std::vector<fs::path> const files = spool_files(spool);
     REQUIRE(files.size() == 2);

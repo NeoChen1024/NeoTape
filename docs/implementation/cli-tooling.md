@@ -55,7 +55,7 @@ writes the bundle at BOT using separate 256 KiB records by default. Use
 `-r, --recovery-bundle-block-size <SIZE>` to override that size. The writer
 pads the final bundle record, writes a filemark, and then writes NeoTape frames
 at the volume's own block size. A spool target copies the original tar to
-`recovery-bundle.tar`; it is deliberately outside the numbered `.nts` stream.
+`RECOVERY.TAR`; it is deliberately outside the numbered `.NTS` stream.
 
 An explicit `--max-volume-bytes` also provides a software capacity boundary
 for tape targets. It stops before the next complete record would exceed the

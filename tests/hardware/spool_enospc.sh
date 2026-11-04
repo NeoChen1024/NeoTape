@@ -62,7 +62,7 @@ restore() {
 restore "$W/out1.pax"
 
 echo "--- crash simulation: partial record appended to vol1's last tape file"
-last=$(ls "$W/vol1"/*.nts | tail -1)
+last=$(ls "$W/vol1"/*.NTS | tail -1)
 head -c 123456 /dev/urandom >> "$last"
 stat -c "%n size=%s" "$last"
 restore "$W/out2.pax"

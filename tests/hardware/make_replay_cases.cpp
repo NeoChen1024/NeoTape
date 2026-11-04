@@ -64,8 +64,7 @@ int main(int argc, char **argv) {
             std::set<size_t> dropped;
             if (scenario == "missing-content")
                 dropped.insert(content[1]);
-            std::ofstream output(directory / "neotape-000000.slice-000000.nts",
-                                 std::ios::binary);
+            std::ofstream output(directory / "NT000000.NTS", std::ios::binary);
             for (size_t i = 0; i < records.size(); ++i) {
                 if (dropped.contains(i))
                     continue;
@@ -84,8 +83,7 @@ int main(int argc, char **argv) {
                                  record.size());
                 }
             }
-            std::ofstream ending(directory / "neotape-000001.archive-end.nts",
-                                 std::ios::binary);
+            std::ofstream ending(directory / "NT000001.NTS", std::ios::binary);
             ending.write(reinterpret_cast<const char *>(end.data()),
                          end.size());
         }

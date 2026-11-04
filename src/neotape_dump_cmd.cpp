@@ -92,10 +92,9 @@ Options parse_args(int argc, char **argv) {
 }
 
 fs::path dump_path(const fs::path &target, uint64_t file_num) {
-    // The dump intentionally does not parse records to invent a semantic
-    // slice/archive-end suffix. Spool readers order files by the numeric
-    // prefix and accept the optional detail portion opaquely.
-    return target / format("neotape-{:06}.dump.nts", file_num);
+    // Spool tape file names carry only the file number; the dump copies
+    // records without parsing them.
+    return target / format("NT{:06}.NTS", file_num);
 }
 
 void write_record(std::ofstream &output, const std::byte *data,

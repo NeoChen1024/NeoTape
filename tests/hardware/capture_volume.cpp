@@ -5,6 +5,7 @@
 #include "neotape/socket_util.hpp"
 #include "neotape/tcp_protocol.hpp"
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iostream>
 #include <sys/socket.h>
@@ -73,13 +74,7 @@ int main(int argc, char **argv) {
                 if (frames.is_open())
                     frames.close();
                 frames.clear();
-                auto type =
-                    header.channel_type == neotape::ChannelType::ARCHIVE_END
-                        ? std::string("archive-end")
-                        : "slice-" + std::to_string(header.slice_seq_num);
-                frames.open(root /
-                                ("neotape-" + std::to_string(record.file_num) +
-                                 "." + type + ".nts"),
+                frames.open(root / std::format("NT{:06}.NTS", record.file_num),
                             std::ios::binary);
                 file = record.file_num;
             }

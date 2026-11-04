@@ -5,7 +5,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -176,7 +175,6 @@ class SpoolTapeWriter final : public TapeDevice {
     uint64_t current_file_num_ = 0;
     uint64_t current_record_ = 0;
     uint64_t current_bytes_ = 0;
-    uint32_t current_block_size_ = 0;
     std::filesystem::path current_path_;
 
     void open_next_file();
@@ -211,8 +209,6 @@ class SpoolTapeReader final : public TapeDevice {
     std::size_t index_ = 0;
     int spool_fd_ = -1;
     uint64_t file_num_ = 0;
-    // Slice named by the open file; nullopt names an archive-end file.
-    std::optional<uint64_t> file_slice_;
     uint32_t block_size_ = 0;
 
     void open_file(std::size_t index);

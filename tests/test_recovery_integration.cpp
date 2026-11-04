@@ -228,10 +228,9 @@ TEST_CASE("reconnected readers replay a suffix without duplicating output",
     write_pattern(input, 3584 * 33 + 123);
     create_raw_spool(input, temporary.path() / "store.sock", spool);
     std::string records = read_file(content_file(spool));
-    for (auto const &entry : fs::directory_iterator(spool))
-        if (entry.path().filename().string().find(".archive-end.") !=
-            std::string::npos)
-            records += read_file(entry.path());
+    for (auto const &path : neotape::test::spool_files(spool))
+        if (neotape::test::first_channel_type(path) == 0xff)
+            records += read_file(path);
     auto socket = temporary.path() / "extract.sock";
     Process extractor(
         ProcessOptions{{NEOTAPE_EXTRACTOR, "--listen",
@@ -275,7 +274,7 @@ TEST_CASE("writer reports archive end spool finalization failure",
     auto spool = temporary.path() / "spool";
     auto socket = temporary.path() / "store.sock";
     std::ofstream(input) << "payload";
-    fs::create_directories(spool / "neotape-000001.archive-end.nts");
+    fs::create_directories(spool / "NT000001.NTS");
     Process archiver(ProcessOptions{
         {NEOTAPE_RAW_STORE, "--listen", "unix://" + socket.string(), "--input",
          input.string(), "--volume-block-size", "4096"}});

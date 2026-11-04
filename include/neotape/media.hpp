@@ -12,13 +12,9 @@ struct MediaLocator {
 };
 MediaLocator parse_media(std::string_view text, bool allow_null = false);
 
-// The numbers in a spool tape file name.
-struct SpoolFileName {
-    uint64_t number;
-    std::optional<uint64_t> slice; // nullopt: an archive-end file
-};
-// Nullopt for any other name.
-std::optional<SpoolFileName> spool_file_name(const std::filesystem::path &path);
+// The file number of a spool tape file name `NT<1-6 digits>.NTS` in any
+// letter case, or nullopt for any other name.
+std::optional<uint64_t> spool_file_number(const std::filesystem::path &path);
 // Spool tape files in file-number order. Throws when the directory is
 // missing or two files share a number.
 std::vector<std::filesystem::path>

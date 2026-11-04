@@ -46,8 +46,8 @@ bundle record and writes a filemark before switching to the volume's NeoTape
 frame size. It does not use the traditional 10 KiB tar record size.
 
 For a spool target, the writer preserves the tar byte-for-byte as
-`recovery-bundle.tar`. Readers ignore this file because it is outside the
-numbered `.nts` stream. `--recovery-bundle` is incompatible with `--append`.
+`RECOVERY.TAR`. Readers ignore this file because it is outside the
+numbered `.NTS` stream. `--recovery-bundle` is incompatible with `--append`.
 
 ## Bundle Contents
 
@@ -92,12 +92,12 @@ This design is deliberate:
 
 The format spec (`docs/spec/06-spool-dir.md`, `docs/spec/10-appendix-layout-examples.md`)
 defines the optional recovery bundle as a plain pax archive named
-`recovery-bundle.tar`, placed at the spool root or written as the first tape
+`RECOVERY.TAR`, placed at the spool root or written as the first tape
 file before the first slice; readers must skip it when locating the first
 NeoTape frame.
 
 The `bot_bundle` target conforms to the pax-format requirement via `--format=pax`.
 The file is produced as `build/dev/output/bot.tar`; when installed by
 `neotape-write` (see "Writing the Bundle"), a spool target stores it as
-`recovery-bundle.tar` and a tape target writes it as the first tape file at
+`RECOVERY.TAR` and a tape target writes it as the first tape file at
 BOT, followed by a filemark.

@@ -13,74 +13,78 @@ A spool writer MUST preserve the same logical sequence of NeoTape records as tap
 
 ## Directory Layout
 
-A spool archive is a directory tree:
+A spool archive is a directory:
 
 ```text
 <spool-root>/
-  recovery-bundle.tar
-  neotape-<file-num>.<type>.nts
+  RECOVERY.TAR
+  NT<file-num>.NTS
   ...
 ```
 
-The optional `recovery-bundle.tar` is a plain pax archive placed at the spool root for human recovery. It is not part of the NeoTape archive stream and a reader MUST ignore it when locating the first NeoTape frame.
+The optional `RECOVERY.TAR` is a plain pax archive placed at the spool root for human recovery. It is not part of the NeoTape archive stream and a reader MUST ignore it when locating the first NeoTape frame.
 
-The `<spool-root>` is the top-level directory of the spool archive, conventionally named `<archive_label>-<archive_uuid>/` for a single-archive spool.
+`<spool-root>` is any directory. Keep its name within 8 characters when the
+medium requires it.
 
 ## Tape File Names
 
-Each NeoTape tape file is stored as a regular file. The file name encodes the position, type, and identity of the tape file:
+Each NeoTape tape file is stored as a regular file. Names fit 8.3 so that a
+spool can be stored on FAT without long-name support and on ISO 9660 Level 1
+media:
 
 ```text
-neotape-<file-num>.<type>[-<detail>].nts
+NT<file-num>.NTS
 ```
 
-where:
+- `NT` — fixed prefix.
+- `<file-num>` — 1 to 6 decimal digits, the sequential tape-file number
+  within the spool (0-based). Writers pad to 6 digits; leading zeroes do not
+  affect identity.
+- `.NTS` — "NeoTape Spool".
 
-- `<file-num>` — zero-padded integer, the sequential tape-file number within the spool (0-based).
-- `<type>` — one of `slice-<slice-seq>`, `archive-end`.
-- `[-<detail>]` — optional non-empty ASCII qualifier using letters, digits, `_`, or `-`; it does not affect ordering or archive identity.
-- `.nts` — extension for "NeoTape Spool".
+Names are case-insensitive: readers MUST accept any letter case and writers
+MUST write upper case. Nothing else is encoded in a name. The frame headers
+are authoritative for archive identity, slice numbers and the archive end;
+the file holding an `archive_end` frame is named like any other.
+
+A writer MAY hold the file being written under another name and rename it
+when the tape file is complete; this implementation uses `NT<file-num>.TMP`.
+Readers ignore files that do not match the grammar.
 
 Examples:
 
 ```text
 Under spool-dir:
-recovery-bundle.tar
-neotape-000000.slice-000000.nts
-neotape-000001.slice-000001.nts
-neotape-000002.slice-000002.nts
-neotape-000003.archive-end.nts
-neotape-000004.slice-000000.nts
-neotape-000005.slice-000001.nts
-neotape-000006.slice-000002.nts
-neotape-000007.archive-end.nts
+RECOVERY.TAR
+NT000000.NTS      slice 0
+NT000001.NTS      slice 1
+NT000002.NTS      slice 2
+NT000003.NTS      archive_end
+NT000004.NTS      slice 0 of a second archive
+NT000005.NTS      slice 1
+NT000006.NTS      slice 2
+NT000007.NTS      archive_end
 ```
 
 There is no dedicated Volume Header tape file. Volume transitions are backend
 or operator events; `volume_seq_num` is advisory, and sequence checks validate
 logical continuity rather than identify physical boundaries.
 
-Sequence numbers embedded in filenames are deliberately present so that a reader can enumerate candidate files by scanning names matching the expected pattern, then sort them numerically to determine the correct playback order. Zero-padding to 6 digits is a convention. Tools MUST parse the numeric value from each name and sort numerically.
+The file number lets a reader enumerate candidate files by the grammar and
+sort them numerically to determine the playback order. Tools MUST parse the
+numeric value from each name and sort numerically.
 
 `file-num` is scoped to the spool root and continues increasing when a new
-archive is appended. `slice-seq` is scoped to one archive instance and restarts
-at 0 for each new `archive_uuid`, as illustrated above.
-
-`file-num` and `slice-seq` are unsigned decimal integers in `0..2^64-1`.
-Readers MUST reject numeric overflow. Leading zeroes do not affect identity.
-Before reading records, readers MUST reject two candidate files that parse to
-the same numeric `file-num`, regardless of their padding, type, or detail.
-They MUST report an error and stop; lexical tie-breaking is not allowed.
+archive is appended. Before reading records, readers MUST reject two
+candidate files that parse to the same numeric `file-num`, regardless of
+their padding. They MUST report an error and stop; lexical tie-breaking is
+not allowed.
 
 Writers MUST allocate consecutive file numbers. Readers MAY continue across
 missing file numbers only while reporting the missing tape-file boundary and
 applying the recovery rules in [04-validation.md](04-validation.md); filename
 gaps alone do not establish which frames or payload bytes are missing.
-
-Frame headers are authoritative for archive identity and logical sequence.
-The filename type and slice number MUST agree with the contained frames.
-A mismatch is a spool conformance error and MUST NOT be silently used to
-reinterpret the frame headers.
 
 ## Semantics
 
@@ -89,7 +93,7 @@ reinterpret the frame headers.
 
 ## Multiple Archives and Append
 
-A spool directory is not constrained to a single archive. A spool root MAY contain tapes from multiple independent archives in sequence. Each new archive begins after the previous `archive-end` file.
+A spool directory is not constrained to a single archive. A spool root MAY contain tapes from multiple independent archives in sequence. Each new archive begins in the tape file after the one holding the previous archive's `archive_end` frame.
 
 Appending a new archive to an existing spool is permitted.
 

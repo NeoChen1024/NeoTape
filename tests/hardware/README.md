@@ -70,3 +70,9 @@ capacities are not multiples of the 1 MiB block size. It archives across them,
 expecting status 3 on the full ones, restores through the extractor, compares
 with the source, then appends a partial record to the first spool file and
 checks that the reader ignores it with a warning and restores the same bytes.
+
+`spool_fat_iso.sh BIN_DIRECTORY` needs sudo, `mkfs.fat` and `xorriso`. It
+writes an archive across two FAT12 images mounted with the short-name-only
+`msdos` driver (the first fills up), restores from them, then images both
+spools as ISO 9660 Level 1 without Rock Ridge or Joliet and reads the archive
+back from the mounted image.

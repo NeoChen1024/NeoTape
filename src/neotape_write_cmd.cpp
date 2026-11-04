@@ -300,9 +300,8 @@ void authenticate_source_server(int fd,
 uint64_t install_spool_recovery_bundle(const fs::path &root,
                                        const fs::path &source) {
     fs::create_directories(root);
-    fs::path const destination = root / "recovery-bundle.tar";
-    fs::path const pending =
-        root / format("recovery-bundle.tar.pending.{}", ::getpid());
+    fs::path const destination = root / "RECOVERY.TAR";
+    fs::path const pending = root / "RECOVERY.TMP";
     std::error_code ec;
     fs::remove(pending, ec);
     ec.clear();
@@ -406,8 +405,7 @@ int main(int argc, char **argv) {
                 }
             } else if (opts.target.kind == TargetLocator::spool) {
                 fs::path const spool_root(opts.target.path);
-                fs::path const installed_bundle =
-                    spool_root / "recovery-bundle.tar";
+                fs::path const installed_bundle = spool_root / "RECOVERY.TAR";
                 if (!opts.erase && !opts.append && !opts.resume_mode &&
                     fs::exists(installed_bundle)) {
                     fail("spool appears to contain a recovery bundle; use "
@@ -451,8 +449,7 @@ int main(int argc, char **argv) {
                     static_cast<size_t>(bundle_block_size));
             } else if (opts.target.kind == TargetLocator::spool) {
                 fs::path const spool_root(opts.target.path);
-                fs::path const installed_bundle =
-                    spool_root / "recovery-bundle.tar";
+                fs::path const installed_bundle = spool_root / "RECOVERY.TAR";
                 if (opts.recovery_bundle.has_value()) {
                     recovery_bundle_bytes = install_spool_recovery_bundle(
                         spool_root, *opts.recovery_bundle);

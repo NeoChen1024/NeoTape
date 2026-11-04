@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <catch2/catch_test_macros.hpp>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -22,13 +23,44 @@ inline void require_contains(const ProcessResult &result,
     REQUIRE(output(result).find(text) != std::string::npos);
 }
 
-inline std::filesystem::path content_file(const std::filesystem::path &spool) {
+// Spool tape files in name order.
+inline std::vector<std::filesystem::path>
+spool_files(const std::filesystem::path &spool) {
     std::vector<std::filesystem::path> files;
     for (const auto &entry : std::filesystem::directory_iterator(spool)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".nts" &&
-            entry.path().filename().string().find(".slice-") !=
-                std::string::npos)
+        if (entry.is_regular_file() && entry.path().extension() == ".NTS")
             files.push_back(entry.path());
+    }
+    std::sort(files.begin(), files.end());
+    return files;
+}
+
+// channel_type byte of a spool file's first frame header (offset 9).
+inline unsigned first_channel_type(const std::filesystem::path &path) {
+    std::ifstream input(path, std::ios::binary);
+    REQUIRE(input.is_open());
+    input.seekg(9);
+    return static_cast<unsigned char>(input.get());
+}
+
+// slice_seq_num of a spool file's first frame header (offset 130, LE64).
+inline uint64_t first_slice_seq_num(const std::filesystem::path &path) {
+    std::ifstream input(path, std::ios::binary);
+    REQUIRE(input.is_open());
+    input.seekg(130);
+    uint64_t value = 0;
+    for (unsigned i = 0; i < 8; ++i)
+        value |= static_cast<uint64_t>(static_cast<unsigned char>(input.get()))
+                 << (8 * i);
+    REQUIRE(input.good());
+    return value;
+}
+
+inline std::filesystem::path content_file(const std::filesystem::path &spool) {
+    std::vector<std::filesystem::path> files;
+    for (const auto &path : spool_files(spool)) {
+        if (first_channel_type(path) != 0xff)
+            files.push_back(path);
     }
     // These fixtures contain one content tape file; do not silently choose one.
     REQUIRE(files.size() == 1);

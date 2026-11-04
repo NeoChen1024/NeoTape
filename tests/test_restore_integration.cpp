@@ -368,12 +368,10 @@ TEST_CASE("an interrupted plan-driven archive resumes from a slice start",
         std::stoull(last_record.substr(0, last_record.find('/')));
     REQUIRE(resume_slice >= 2);
     REQUIRE(resume_slice < 6);
-    std::string const partial_name = std::format(".slice-{:06}.", resume_slice);
     size_t removed = 0;
-    for (const auto &entry : fs::directory_iterator(spool)) {
-        if (entry.path().filename().string().find(partial_name) !=
-            std::string::npos) {
-            fs::remove(entry.path());
+    for (const auto &path : neotape::test::spool_files(spool)) {
+        if (neotape::test::first_slice_seq_num(path) == resume_slice) {
+            fs::remove(path);
             ++removed;
         }
     }

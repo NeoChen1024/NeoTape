@@ -312,8 +312,8 @@ semantics:
 - Treat each regular file boundary as one tape-file boundary
 - Apply the same frame and per-archive continuity validation rules as tape mode
 
-The optional `recovery-bundle.tar` is not part of the NeoTape stream and MUST
-be ignored for validation ordering.
+The optional `RECOVERY.TAR` is not part of the NeoTape stream and MUST be
+ignored for validation ordering.
 
 ## TCP Receiver Validation
 

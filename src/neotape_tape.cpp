@@ -4,6 +4,8 @@
 #include "neotape/tape.hpp"
 #include "neotape/tape_ioctl.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -23,31 +25,28 @@ using std::string_view;
 
 namespace fs = std::filesystem;
 
-constexpr string_view spool_prefix = "neotape-";
-constexpr string_view spool_ext = ".nts";
-
 using neotape::scan_spool_files;
-using neotape::spool_file_name;
+using neotape::spool_file_number;
 
-std::string spool_suffix_for_header(const neotape::FrameHeader &header) {
-    switch (header.channel_type) {
-    case neotape::ChannelType::CH_CONTENT:
-    case neotape::ChannelType::CH_METADATA:
-        return format("slice-{:06}", header.slice_seq_num);
-    case neotape::ChannelType::ARCHIVE_END:
-        return "archive-end";
-    }
-    throw std::runtime_error("unsupported spool channel type");
-}
-
-fs::path spool_final_path(const fs::path &root, uint64_t file_num,
-                          const neotape::FrameHeader &header) {
-    return root / format("{}{:06}.{}{}", spool_prefix, file_num,
-                         spool_suffix_for_header(header), spool_ext);
+// 8.3 names: NTnnnnnn.NTS for a tape file, NTnnnnnn.TMP while it is written.
+fs::path spool_final_path(const fs::path &root, uint64_t file_num) {
+    return root / format("NT{:06}.NTS", file_num);
 }
 
 fs::path spool_temp_path(const fs::path &root, uint64_t file_num) {
-    return root / format("{}{:06}.pending", spool_prefix, file_num);
+    return root / format("NT{:06}.TMP", file_num);
+}
+
+bool is_spool_temp_name(const fs::path &path) {
+    std::string name = path.filename().string();
+    std::ranges::transform(name, name.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    return name.starts_with("NT") && name.ends_with(".TMP") &&
+           name.size() <= 12 &&
+           std::string_view(name)
+                   .substr(2, name.size() - 6)
+                   .find_first_not_of("0123456789") == std::string_view::npos;
 }
 
 int open_fd(const fs::path &path, int flags) {
@@ -323,7 +322,7 @@ SpoolTapeWriter::SpoolTapeWriter(const fs::path &root)
     files_ = scan_spool_files(root_);
     // scan_spool_files orders by file number, so the last file is the highest.
     current_file_num_ =
-        files_.empty() ? 0 : spool_file_name(files_.back())->number + 1;
+        files_.empty() ? 0 : *spool_file_number(files_.back()) + 1;
     open_next_file();
 }
 
@@ -355,7 +354,6 @@ SpoolTapeWriter::~SpoolTapeWriter() {
 void SpoolTapeWriter::open_next_file() {
     current_path_ = spool_temp_path(root_, current_file_num_);
     spool_fd_ = open_fd(current_path_, O_RDWR | O_CREAT | O_TRUNC);
-    current_block_size_ = 0;
     current_record_ = 0;
     current_bytes_ = 0;
 }
@@ -372,11 +370,7 @@ void SpoolTapeWriter::commit_current_file() {
             throw Error(current_path_.string(), "close", errno);
         }
     }
-    auto header = neotape::read_spool_file_header(current_path_);
-    current_block_size_ = neotape::decoded_block_size(header);
-    fs::path const final_path =
-        spool_final_path(root_, current_file_num_, header);
-    fs::rename(current_path_, final_path);
+    fs::rename(current_path_, spool_final_path(root_, current_file_num_));
     current_path_.clear();
 }
 
@@ -441,14 +435,9 @@ void SpoolTapeWriter::do_mtop(int op, int count) {
             current_path_.clear();
         }
         for (const auto &entry : fs::directory_iterator(root_)) {
-            if (!entry.is_regular_file())
-                continue;
-            auto name = entry.path().filename().string();
-            if (name.size() <= spool_prefix.size() + spool_ext.size() ||
-                !name.starts_with(spool_prefix) || !name.ends_with(spool_ext)) {
-                continue;
-            }
-            fs::remove(entry.path(), ec);
+            if (entry.is_regular_file() && (spool_file_number(entry.path()) ||
+                                            is_spool_temp_name(entry.path())))
+                fs::remove(entry.path(), ec);
         }
         files_.clear();
         current_file_num_ = 0;
@@ -480,8 +469,7 @@ Status SpoolTapeWriter::do_status() {
     if (!files_.empty()) {
         gstat &= ~GMT_EOD;
     }
-    return Status(0, 0, static_cast<long>(current_block_size_), gstat, 0,
-                  static_cast<int>(current_file_num_),
+    return Status(0, 0, 0, gstat, 0, static_cast<int>(current_file_num_),
                   static_cast<int>(current_record_));
 }
 
@@ -514,9 +502,7 @@ void SpoolTapeReader::open_file(std::size_t index) {
     }
     spool_fd_ = open_fd(files_[index_], O_RDONLY);
     // scan_spool_files only lists names that parse.
-    auto const name = *spool_file_name(files_[index_]);
-    file_num_ = name.number;
-    file_slice_ = name.slice;
+    file_num_ = *spool_file_number(files_[index_]);
 }
 
 // The open file ended: report the filemark and move to the next file.
@@ -561,24 +547,15 @@ MediaRecord SpoolTapeReader::read_record() {
                    result.source_name));
         return end_of_file();
     }
-    std::optional<neotape::FrameHeader> valid_header;
+    // A following archive may use another block size; its first header
+    // establishes it again.
     try {
-        auto frame = neotape::check_frame(data, result.record.size());
-        if (frame.hash_ok)
-            valid_header = std::move(frame.header);
+        auto const frame = neotape::check_frame(data, result.record.size());
+        if (frame.hash_ok &&
+            frame.header.channel_type == neotape::ChannelType::ARCHIVE_END)
+            block_size_ = 0;
     } catch (const std::exception &) {
         // Retain known framing across an unavailable header.
-    }
-    if (valid_header) {
-        bool const end =
-            valid_header->channel_type == neotape::ChannelType::ARCHIVE_END;
-        if (end == file_slice_.has_value() ||
-            (file_slice_ && *file_slice_ != valid_header->slice_seq_num))
-            throw std::runtime_error(
-                "spool filename disagrees with frame header: " +
-                result.source_name);
-        if (end)
-            block_size_ = 0;
     }
     return result;
 }

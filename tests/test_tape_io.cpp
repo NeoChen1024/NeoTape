@@ -145,16 +145,15 @@ TEST_CASE("spool writer drops a partial record and reports ENOSPC like EOT",
         } catch (const mt::Error &error) {
             REQUIRE(error.error_code() == ENOSPC);
         }
-        auto const pending = temporary.path() / "neotape-000000.pending";
+        auto const pending = temporary.path() / "NT000000.TMP";
         REQUIRE(std::filesystem::file_size(pending) == record.size());
         target_fd = -1;
     }
     // The acknowledged record is committed as a tape file; the partial one
     // never reaches the medium.
-    auto const committed = temporary.path() / "neotape-000000.slice-000000.nts";
+    auto const committed = temporary.path() / "NT000000.NTS";
     REQUIRE(std::filesystem::file_size(committed) == record.size());
-    REQUIRE_FALSE(
-        std::filesystem::exists(temporary.path() / "neotape-000000.pending"));
+    REQUIRE_FALSE(std::filesystem::exists(temporary.path() / "NT000000.TMP"));
 }
 
 TEST_CASE("tape flush errors leave the just-written record unacknowledged",
