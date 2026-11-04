@@ -31,6 +31,10 @@ struct VolumeServeResult {
     bool archive_complete = false;
     bool volume_committed = false;
     uint64_t frame_transmissions = 0;
+    // Why the connection ended early, when it did so with an error. A
+    // writer that has filled its volume may drop the connection while a
+    // frame is in flight; that is only worth reporting before a commit.
+    std::string disconnect_reason;
 };
 
 struct VolumeServeState {

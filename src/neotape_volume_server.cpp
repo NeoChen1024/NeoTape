@@ -115,6 +115,13 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
     uint64_t frames_served = 0;
     uint64_t next_send_seq = state.next_unacked_global_frame();
     std::optional<uint64_t> archive_end_seq;
+    auto disconnected = [&](std::string reason = {}) {
+        return VolumeServeResult{false, volume_committed, frames_served,
+                                 std::move(reason)};
+    };
+    auto completed = [&] {
+        return VolumeServeResult{true, volume_committed, frames_served, {}};
+    };
 
     auto outstanding_frames = [&]() -> uint64_t {
         uint64_t const acked_count = state.next_unacked_global_frame();
@@ -148,8 +155,7 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
             pending_request->type == MessageType::auth_challenge) {
             if (!handle_auth_challenge(client, opts,
                                        pending_request->payload)) {
-                return VolumeServeResult{false, volume_committed,
-                                         frames_served};
+                return disconnected();
             }
             pending_request = neotape::tcp::read_message(client);
         }
@@ -166,8 +172,7 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
             if (archive_end_seq.has_value() &&
                 req->type != MessageType::ack_frame) {
                 send_error(client, "unexpected request after archive end");
-                return VolumeServeResult{false, volume_committed,
-                                         frames_served};
+                return disconnected();
             }
 
             switch (req->type) {
@@ -175,12 +180,10 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
                 int const window_result =
                     drain_acks_until(opts.retention_frame_count);
                 if (window_result < 0) {
-                    return VolumeServeResult{false, volume_committed,
-                                             frames_served};
+                    return disconnected();
                 }
                 if (window_result > 0) {
-                    return VolumeServeResult{true, volume_committed,
-                                             frames_served};
+                    return completed();
                 }
 
                 const std::vector<std::byte> *record_ptr =
@@ -204,8 +207,7 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
                             reason = "frame queue closed";
                         }
                         send_error(client, reason.c_str());
-                        return VolumeServeResult{false, volume_committed,
-                                                 frames_served};
+                        return disconnected();
                     }
                     if (next->tape_eof) {
                         NEOTAPE_DEBUG("{}: sending tape_eof\n", opts.log_label);
@@ -216,12 +218,10 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
                     if (next->done) {
                         int const ack_result = drain_acks_until(1);
                         if (ack_result < 0) {
-                            return VolumeServeResult{false, volume_committed,
-                                                     frames_served};
+                            return disconnected();
                         }
                         if (ack_result > 0) {
-                            return VolumeServeResult{true, volume_committed,
-                                                     frames_served};
+                            return completed();
                         }
 
                         uint64_t const ae_seq = next->global_seq_num;
@@ -243,8 +243,7 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
                     if (seq != next_send_seq) {
                         send_error(client,
                                    "requested frame is no longer retained");
-                        return VolumeServeResult{false, volume_committed,
-                                                 frames_served};
+                        return disconnected();
                     }
                     record = std::move(next->record);
                     retention.add(seq, record);
@@ -252,8 +251,7 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
 
                 if (record.size() != opts.volume_block_size) {
                     send_error(client, "frame size mismatch");
-                    return VolumeServeResult{false, volume_committed,
-                                             frames_served};
+                    return disconnected();
                 }
                 patch_volume_seq_num(record, state.next_volume_seq_num,
                                      opts.frame_signer ? &*opts.frame_signer
@@ -273,42 +271,36 @@ serve_volume_client(int client, const VolumeServerOptions &opts,
                     client, opts, state, retention, volume_committed,
                     archive_end_seq, req->payload);
                 if (ack_result < 0) {
-                    return VolumeServeResult{false, volume_committed,
-                                             frames_served};
+                    return disconnected();
                 }
                 if (ack_result > 0) {
-                    return VolumeServeResult{true, volume_committed,
-                                             frames_served};
+                    return completed();
                 }
                 break;
             }
 
             case MessageType::tape_eof:
                 send_error(client, "unexpected tape_eof request");
-                return VolumeServeResult{false, volume_committed,
-                                         frames_served};
+                return disconnected();
             case MessageType::auth_challenge:
                 send_error(client, "auth_challenge must be the first request");
-                return VolumeServeResult{false, volume_committed,
-                                         frames_served};
+                return disconnected();
             case MessageType::auth_response:
                 send_error(client, "unexpected auth_response request");
-                return VolumeServeResult{false, volume_committed,
-                                         frames_served};
+                return disconnected();
 
             default:
                 send_error(client, "unexpected request type");
-                return VolumeServeResult{false, volume_committed,
-                                         frames_served};
+                return disconnected();
             }
         }
     } catch (const neotape::tcp::ConnectionError &e) {
-        write_diagnostic(format("{}: warning: client connection failed: {}",
-                                opts.log_label, e.what()));
-        return VolumeServeResult{false, volume_committed, frames_served};
+        NEOTAPE_DEBUG("{}: client connection failed: {}\n", opts.log_label,
+                      e.what());
+        return disconnected(e.what());
     }
 
-    return VolumeServeResult{false, volume_committed, frames_served};
+    return disconnected();
 }
 
 VolumeServerSummary run_volume_server(const VolumeServerOptions &opts,
@@ -406,9 +398,13 @@ VolumeServerSummary run_volume_server(const VolumeServerOptions &opts,
             } else {
                 ++summary.uncommitted_disconnects;
                 write_diagnostic(
-                    format("{}: warning: client disconnected before commit; "
+                    format("{}: warning: client disconnected before commit{}; "
                            "retrying volume={}",
-                           opts.log_label, state.next_volume_seq_num));
+                           opts.log_label,
+                           result.disconnect_reason.empty()
+                               ? string()
+                               : " (" + result.disconnect_reason + ")",
+                           state.next_volume_seq_num));
             }
         }
     } catch (...) {

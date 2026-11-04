@@ -64,3 +64,9 @@ record counts, normalized retry equality, and the source-comparison result.
 Besides ACK 255, a record whose post-write status failed at real EOT is
 retried on the next volume; every retry must match after normalization.
 Keep controller logs and raw captures when any check fails.
+
+`spool_enospc.sh BIN_DIRECTORY` needs sudo for three small tmpfs mounts whose
+capacities are not multiples of the 1 MiB block size. It archives across them,
+expecting status 3 on the full ones, restores through the extractor, compares
+with the source, then appends a partial record to the first spool file and
+checks that the reader ignores it with a warning and restores the same bytes.
