@@ -12,12 +12,7 @@ PeriodicProgress::PeriodicProgress(std::function<void()> sample)
           while (!cv_.wait_for(lock, std::chrono::seconds(1),
                                [this] { return stopped_; })) {
               lock.unlock();
-              try {
-                  sample();
-              } catch (...) {
-                  // Progress must not terminate the data pipeline.
-                  return;
-              }
+              sample();
               lock.lock();
           }
       }) {}
