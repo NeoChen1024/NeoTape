@@ -267,14 +267,8 @@ void TapeDevice::space_to_eod() {
     try {
         do_mtop(MTEOM, 1);
     } catch (const Error &e) {
-        if (e.error_code() == EIO) {
-            try {
-                if (status().eod()) {
-                    return;
-                }
-            } catch (const Error &) {
-            }
-        }
+        if (e.error_code() == EIO && status().eod())
+            return;
         throw;
     }
 }
