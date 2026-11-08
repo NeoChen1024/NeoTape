@@ -162,7 +162,7 @@ TEST_CASE("tape flush errors leave the just-written record unacknowledged",
         DeferredFailure() : TapeDevice(-1, "deferred-error-tape") {}
         int writes = 0, status_calls = 0;
         void write_record(const void *, std::size_t) override { ++writes; }
-        mt::Status do_status() override {
+        mt::Status status() override {
             if (++status_calls == 2)
                 throw mt::Error("deferred-error-tape", "status flush", ENOSPC);
             return mt::Status(0, 0, 0, 0, 0, 0, 0);

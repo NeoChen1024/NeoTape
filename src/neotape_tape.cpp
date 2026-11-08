@@ -291,9 +291,7 @@ void TapeDevice::write_filemark(int count) { do_mtop(MTWEOF, count); }
 void TapeDevice::set_variable_block_mode() { do_mtop(MTSETBLK, 0); }
 // -- status queries ----------------------------------------------------
 
-Status TapeDevice::status() { return do_status(); }
-
-Status TapeDevice::do_status() {
+Status TapeDevice::status() {
     mtget raw{};
     NEOTAPE_DEBUG("[tape {}] status ioctl begin\n", device_path_);
     if (::ioctl(fd_, MTIOCGET, &raw) < 0) {
@@ -459,7 +457,7 @@ void SpoolTapeWriter::do_mtop(int op, int count) {
     }
 }
 
-Status SpoolTapeWriter::do_status() {
+Status SpoolTapeWriter::status() {
     long gstat = GMT_ONLINE;
     if (spool_fd_ >= 0) {
         gstat |= current_bytes_ == 0 ? GMT_BOT | GMT_EOD : GMT_EOD;
@@ -574,7 +572,7 @@ void SpoolTapeReader::do_mtop(int op, int count) {
     open_file(index_ + static_cast<std::size_t>(count));
 }
 
-Status SpoolTapeReader::do_status() {
+Status SpoolTapeReader::status() {
     long gstat = GMT_ONLINE;
     if (index_ >= files_.size())
         gstat |= GMT_EOD;

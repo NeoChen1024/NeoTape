@@ -120,7 +120,7 @@ class TapeDevice {
 
     // -- status queries ------------------------------------------------
 
-    Status status();
+    virtual Status status();
 
     // Virtual so spool devices and test doubles can present their own fd.
     [[nodiscard]] virtual int fd() const noexcept { return fd_; }
@@ -132,9 +132,6 @@ class TapeDevice {
 
     // All MTIOCTOP operations route through this single virtual dispatch.
     virtual void do_mtop(int op, int count);
-
-    // status() is a separate ioctl (no mtop struct).
-    virtual Status do_status();
 
   private:
     int fd_ = -1;
@@ -165,7 +162,7 @@ class SpoolTapeWriter final : public TapeDevice {
 
   protected:
     void do_mtop(int op, int count) override;
-    Status do_status() override;
+    Status status() override;
 
   private:
     std::filesystem::path root_;
@@ -202,7 +199,7 @@ class SpoolTapeReader final : public TapeDevice {
 
   protected:
     void do_mtop(int op, int count) override;
-    Status do_status() override;
+    Status status() override;
 
   private:
     std::vector<std::filesystem::path> files_;
