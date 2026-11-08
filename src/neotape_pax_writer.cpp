@@ -935,12 +935,7 @@ class SlicePipeline {
                   ArchiveStats &stats, blake3_hasher &hasher)
         : opts_(opts), callbacks_(callbacks), stats_(stats), hasher_(hasher) {}
 
-    ~SlicePipeline() noexcept {
-        try {
-            abort();
-        } catch (...) {
-        }
-    }
+    ~SlicePipeline() { abort(); }
 
     // Make `slice` the active slice, finishing the previous one first.
     void ensure_slice(uint64_t slice) {
@@ -1007,19 +1002,15 @@ class SlicePipeline {
         callbacks_.end_slice(slice);
     }
 
+    // Drop the active slice. Destroying the pipeline cancels its threads
+    // and joins them without reporting their failure.
     void abort() {
-        if (pipeline_ != nullptr) {
-            pipeline_->request_cancel(std::make_exception_ptr(
-                std::runtime_error("slice pipeline aborted")));
-            try {
-                pipeline_->join();
-            } catch (...) {
-            }
-        }
+        std::unique_ptr<PaxPipeline> pipeline;
         {
             std::scoped_lock lock(pipeline_mtx_);
-            pipeline_.reset();
+            pipeline = std::move(pipeline_);
         }
+        pipeline.reset();
         active_slice_.reset();
         next_seq_ = 0;
     }
