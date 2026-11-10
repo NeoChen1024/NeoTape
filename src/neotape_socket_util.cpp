@@ -6,6 +6,8 @@
 #include <format>
 #include <memory>
 #include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <stdexcept>
 #include <string>
 #include <sys/socket.h>
@@ -20,6 +22,23 @@ using neotape::tcp::Message;
 using neotape::tcp::MessageType;
 using neotape::tcp::parse_address;
 using std::format;
+
+namespace {
+
+// The protocol interleaves small ACK/control messages with bulk frames; Nagle
+// would hold those back behind unacknowledged data. Accepted sockets inherit
+// the option from the listener.
+void disable_nagle(int fd) {
+    int const yes = 1;
+    if (::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) < 0) {
+        int const saved_errno = errno;
+        ::close(fd);
+        throw std::runtime_error(format("setsockopt TCP_NODELAY: {}",
+                                        std::strerror(saved_errno)));
+    }
+}
+
+} // namespace
 
 int create_listener(const std::string &addr) {
     Address a = parse_address(addr);
@@ -65,6 +84,7 @@ int create_listener(const std::string &addr) {
         }
         int yes = 1;
         (void)::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+        disable_nagle(fd);
         if (bind(fd, res->ai_addr, res->ai_addrlen) < 0) {
             ::close(fd);
             throw std::runtime_error(
@@ -119,6 +139,7 @@ int connect_to_server(const std::string &addr) {
             throw std::runtime_error(
                 format("socket: {}", std::strerror(errno)));
         }
+        disable_nagle(fd);
         if (connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
             ::close(fd);
             throw std::runtime_error(format("connect {}:{}: {}", a.host, a.port,
